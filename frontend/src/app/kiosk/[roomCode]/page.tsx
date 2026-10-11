@@ -578,25 +578,32 @@ export default function KioskPage() {
                   <Stethoscope className="h-4 w-4" />
                   PHÂN CÔNG CA TRỰC HIỆN TẠI
                 </span>
-                <span className="text-xs font-mono bg-teal-600 text-white px-2.5 py-0.5 rounded-full font-bold">
-                  {scheduledDuty?.shiftName || 'Ca Khám bệnh'}
+                <span className={`text-xs font-mono px-2.5 py-0.5 rounded-full font-bold ${
+                  scheduledDuty ? 'bg-teal-600 text-white' : 'bg-slate-700 text-slate-300'
+                }`}>
+                  {scheduledDuty?.shiftName || 'Ngoài ca trực'}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <span className="text-xs opacity-70 block">Bác sĩ khám chính:</span>
-                  <span className="font-bold text-sm sm:text-base text-teal-400">
-                    {scheduledDuty?.title ? `${scheduledDuty.title} ` : ''}
-                    {scheduledDuty?.fullName || 'Chờ bác sĩ nhận ca...'}
+                  <span className={`font-bold text-sm sm:text-base ${
+                    scheduledDuty ? 'text-teal-400' : 'text-slate-400'
+                  }`}>
+                    {scheduledDuty?.fullName
+                      ? `${scheduledDuty.title ? `${scheduledDuty.title} ` : ''}${scheduledDuty.fullName}`
+                      : 'Không có ca trực hoạt động'}
                   </span>
                 </div>
                 <div>
                   <span className="text-xs opacity-70 block">Khung giờ trực:</span>
-                  <span className="font-semibold text-teal-600 dark:text-teal-300 font-mono">
+                  <span className={`font-semibold font-mono ${
+                    scheduledDuty ? 'text-teal-600 dark:text-teal-300' : 'text-slate-400'
+                  }`}>
                     {scheduledDuty?.startTime && scheduledDuty?.endTime
                       ? `${scheduledDuty.startTime} – ${scheduledDuty.endTime}`
-                      : '07:00 – 17:00'}
+                      : 'Đã hết giờ làm việc'}
                   </span>
                 </div>
               </div>

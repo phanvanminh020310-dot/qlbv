@@ -20,7 +20,7 @@ import {
 import { SettingsService } from '../settings/settings.service';
 import { IntegrationDutyService } from '../integration/integration-duty.service';
 import { bangkokToday, shiftInterval } from '../duty/duty-rules';
-import { coversInstant, bangkokIso } from '../integration/integration-time';
+import { coversInstant, bangkokIso, candidateDutyDates } from '../integration/integration-time';
 
 export interface KioskSession {
   sessionId: string;
@@ -220,8 +220,9 @@ export class KioskService {
 
     // 2. Tra cứu ca trực hiện tại của phòng từ IntegrationDutyService (chuẩn theo lịch trực bệnh viện)
     let currentScheduled = null;
+    const now = Date.now();
     try {
-      const onDutyRes = await this.integrationDuty.onDuty({ room: room.code });
+      const onDutyRes = await this.integrationDuty.onDuty({ room: room.code }, now);
       if (onDutyRes?.onDuty && onDutyRes.onDuty.length > 0) {
         const item = onDutyRes.onDuty[0];
         currentScheduled = {
@@ -237,23 +238,56 @@ export class KioskService {
           username: item.staff.username,
         };
       } else {
-        // Nếu hiện tại đang trước giờ ca hoặc chuyển ca, tra cứu ca trực trong ngày hôm nay của phòng
-        const today = bangkokToday(Date.now());
-        const todayRows = await this.loadTodayRoster(room.code, today);
-        if (todayRows.length > 0) {
-          const item = todayRows[0];
+        // Nếu hiện tại không có ca nào đang trực chính thức, kiểm tra xem có ca nào sắp bắt đầu (trong 60p)
+        // hoặc vừa kết thúc (trong 30p giao ca) hay ca kế tiếp trong ngày
+        const candidateDates = candidateDutyDates(now);
+        const allRosterRows = await this.loadActiveRoster(room.code, candidateDates);
+
+        const EARLY_BUFFER_MS = 60 * 60 * 1000; // Cho phép đến sớm 60 phút
+        const GRACE_BUFFER_MS = 30 * 60 * 1000; // Giao ca muộn 30 phút
+
+        let upcomingRow: any = null;
+        let recentRow: any = null;
+
+        for (const row of allRosterRows) {
+          const iv = shiftInterval(row.dutyDate, row.startTime, row.endTime, row.crossesMidnight);
+
+          // Trường hợp 1: Chuẩn bị nhận ca (đến sớm trong vòng 60 phút)
+          if (now >= iv.start - EARLY_BUFFER_MS && now < iv.start) {
+            upcomingRow = { row, iv };
+            break;
+          }
+
+          // Trường hợp 2: Ca trực vừa hết giờ nhưng còn trong 30 phút giao ca
+          if (now >= iv.end && now <= iv.end + GRACE_BUFFER_MS) {
+            recentRow = { row, iv };
+          }
+
+          // Trường hợp 3: Ca trực tiếp theo trong ngày (chưa tới giờ)
+          if (now < iv.start) {
+            if (!upcomingRow || iv.start < upcomingRow.iv.start) {
+              upcomingRow = { row, iv };
+            }
+          }
+        }
+
+        const selected = upcomingRow || recentRow;
+        if (selected) {
           currentScheduled = {
-            dutyDate: item.dutyDate,
-            roomCode: item.roomCode,
-            roomName: item.roomName,
-            shiftCode: item.shiftCode,
-            shiftName: item.shiftName,
-            startTime: item.startTime,
-            endTime: item.endTime,
-            fullName: item.fullName,
-            title: item.title,
-            username: item.username,
+            dutyDate: selected.row.dutyDate,
+            roomCode: selected.row.roomCode,
+            roomName: selected.row.roomName,
+            shiftCode: selected.row.shiftCode,
+            shiftName: selected.row.shiftName,
+            startTime: selected.row.startTime,
+            endTime: selected.row.endTime,
+            fullName: selected.row.fullName,
+            title: selected.row.title,
+            username: selected.row.username,
           };
+        } else {
+          // TẤT CẢ các ca trực trong ngày đã kết thúc hoàn toàn (ngoài giờ làm việc)
+          currentScheduled = null;
         }
       }
     } catch (e: any) {
@@ -366,9 +400,9 @@ export class KioskService {
   }
 
   /**
-   * Tra cứu danh sách phân công trong ngày của phòng khám (kể cả trước/sau giờ ca)
+   * Tra cứu danh sách phân công trong các ngày chỉ định của phòng khám
    */
-  async loadTodayRoster(roomCode: string, dutyDate: string) {
+  async loadActiveRoster(roomCode: string, dates: string[]) {
     const code = roomCode.toUpperCase().trim();
     return this.db.db
       .select({
@@ -394,7 +428,7 @@ export class KioskService {
       .innerJoin(users, eq(users.id, dutyAssignments.userId))
       .where(
         and(
-          eq(dutySlots.dutyDate, dutyDate),
+          inArray(dutySlots.dutyDate, dates),
           inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
           or(
             eq(dutyRooms.code, code),
@@ -408,6 +442,10 @@ export class KioskService {
         ),
       )
       .orderBy(asc(dutyShiftTypes.startTime));
+  }
+
+  async loadTodayRoster(roomCode: string, dutyDate: string) {
+    return this.loadActiveRoster(roomCode, [dutyDate]);
   }
 
   // --- 2. GỌI MÁY CHỦ AI (VPS 2) & SO KHỚP SINH TRẮC HỌC ---
@@ -527,29 +565,59 @@ export class KioskService {
     }
 
     // 4. KIỂM TRA LỊCH TRỰC CỦA BÁC SĨ TẠI PHÒNG KHÁM
-    let matchedSchedule = null;
-    const onDutyRes = await this.integrationDuty.onDuty({ room: session.roomCode });
-    if (onDutyRes?.onDuty) {
-      matchedSchedule = onDutyRes.onDuty.find((d: any) => d.staff.username === bestMatch.username);
-    }
+    const now = Date.now();
+    const candidateDates = candidateDutyDates(now);
+    const allRosterRows = await this.loadActiveRoster(session.roomCode, candidateDates);
+    const doctorSlots = allRosterRows.filter((s) => s.userId === bestMatch.userId);
 
-    // Nếu đến sớm hoặc giao ca, kiểm tra lịch trực cả ngày
-    if (!matchedSchedule) {
-      const today = bangkokToday(Date.now());
-      const todaySlots = await this.loadTodayRoster(session.roomCode, today);
-      const slot = todaySlots.find((s) => s.userId === bestMatch.userId);
-      if (slot) {
-        matchedSchedule = {
-          shift: { code: slot.shiftCode, name: slot.shiftName },
-        };
-      }
-    }
-
-    if (!matchedSchedule) {
+    if (doctorSlots.length === 0) {
       throw new ForbiddenException(
         `Bác sĩ ${bestMatch.title} ${bestMatch.fullName} nhận diện thành công (${(maxCosine * 100).toFixed(1)}%), nhưng KHÔNG CÓ LỊCH TRỰC hôm nay tại ${session.roomName}!`,
       );
     }
+
+    const EARLY_CHECKIN_MS = 60 * 60 * 1000; // Cho phép đến sớm tối đa 60 phút
+    const LATE_CHECKOUT_MS = 30 * 60 * 1000; // Cho phép hoàn tất sau ca tối đa 30 phút
+
+    let matchedSlot: any = null;
+    let closestSlot: any = null;
+    let minDiff = Infinity;
+
+    for (const slot of doctorSlots) {
+      const iv = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
+
+      // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - 60p) đến (giờ kết thúc + 30p)
+      if (now >= iv.start - EARLY_CHECKIN_MS && now <= iv.end + LATE_CHECKOUT_MS) {
+        matchedSlot = { slot, iv };
+        break;
+      }
+
+      const diff = now < iv.start ? iv.start - now : now - iv.end;
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestSlot = { slot, iv };
+      }
+    }
+
+    if (!matchedSlot) {
+      const closest = closestSlot?.slot;
+      const iv = closestSlot?.iv;
+      if (closest && iv && now > iv.end + LATE_CHECKOUT_MS) {
+        throw new ForbiddenException(
+          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) đã kết thúc lúc ${closest.endTime}. Hiện tại không trong giờ làm việc.`,
+        );
+      } else if (closest && iv) {
+        throw new ForbiddenException(
+          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) chưa đến giờ bắt đầu. Vui lòng quay lại trước giờ ca trực tối đa 60 phút.`,
+        );
+      } else {
+        throw new ForbiddenException(
+          `Hiện tại không trong giờ ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName}.`,
+        );
+      }
+    }
+
+    const currentShift = matchedSlot.slot;
 
     // 5. Ghi nhận điểm danh vào bảng duty_attendance trong CSDL Postgres
     const attendanceId = crypto.randomUUID();
@@ -561,8 +629,8 @@ export class KioskService {
       username: bestMatch.username,
       fullName: bestMatch.fullName,
       title: bestMatch.title,
-      shiftCode: (matchedSchedule as any).shift?.code || 'CA_TRUC',
-      shiftName: (matchedSchedule as any).shift?.name || 'Ca làm việc',
+      shiftCode: currentShift.shiftCode || 'CA_TRUC',
+      shiftName: currentShift.shiftName || 'Ca làm việc',
       status: 'ON_TIME',
       confidenceScore: maxCosine,
       method: 'AI_FACIAL_BIOMETRICS',
@@ -576,7 +644,7 @@ export class KioskService {
       username: bestMatch.username,
       fullName: bestMatch.fullName,
       title: bestMatch.title,
-      shiftName: (matchedSchedule as any).shift?.name || 'Ca làm việc',
+      shiftName: currentShift.shiftName || 'Ca làm việc',
     };
 
     const unlockPayload = {
