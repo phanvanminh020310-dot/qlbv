@@ -1,271 +1,150 @@
 @echo off
-chcp 65001 >nul
-title Cài Đặt Màn Hình Kiosk Phòng Khám — Bệnh Viện Quân Y 4
-:: ============================================================================
-::  BỆNH VIỆN QUÂN Y 4 — CÀI ĐẶT TRỌN GÓI MÀN HÌNH KIOSK PHÒNG KHÁM (A - Z)
-:: ============================================================================
-::  Tự động thực hiện toàn bộ:
-::   1. Cấu hình IP máy chủ và Mã phòng khám linh hoạt.
-::   2. Tạo thư mục bảo mật C:\ProgramData\QLBS_Kiosk chống người dùng xóa tệp.
-::   3. Khóa toàn diện phím tắt Windows (Win+D, Win+R, Ctrl+Shift+Esc, Task Manager,
-::      Shift 5 lần Sticky Keys, vuốt mép màn hình cảm ứng All-in-One PC).
-::   4. Cơ chế giải phóng Desktop khi mở khoá: Tự động thu nhỏ Kiosk xuống Taskbar,
-::      trả lại 100% màn hình Windows cho bác sĩ sử dụng HIS, PACS, Word mượt mà.
-::   5. Tự động khoá lại khi hết ca: Khi qua ca người khác và quá thời gian ân hạn,
-::      Kiosk tự động bật lại toàn màn hình và nạp mã QR cho ca tiếp theo.
-::   6. Đăng ký tự khởi động ngầm cùng Windows (Task Scheduler + HKLM Run).
-:: ============================================================================
+title Cai Dat Man Hinh Kiosk Phong Kham - Benh Vien Quan Y 4
+
+:: 1. Kiem tra va yeu cau quyen Administrator tu dong
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [THONG BAO] Dang yeu cau quyen Administrator...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
 
 echo ============================================================================
-echo      BỆNH VIỆN QUÂN Y 4 — HỆ THỐNG ĐIỂM DANH & KIOSK PHÒNG KHÁM
-echo              CÀI ĐẶT BẢO VỆ MÁY TRẠM PHÒNG KHÁM TRỌN GÓI (A - Z)
+echo      BENH VIEN QUAN Y 4 - HE THONG DIEM DANH VA KIOSK PHONG KHAM
+echo              CAI DAT MAY TRAM PHONG KHAM TRON GOI (A - Z)
 echo ============================================================================
 echo.
 
-:: 1. Kiểm tra quyền Quản trị viên Administrator
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [CẢNH BÁO] Bạn cần chạy tệp này bằng quyền Quản trị viên (Administrator)!
-    echo Vui lòng: Nhấp chuột phải vào file 'cai_dat_kiosk.bat' -> Chọn 'Run as administrator'.
+:: 2. Nhap thong tin cau hinh phong kham
+echo [BUOC 1/6] THIET LAP THONG SO PHONG KHAM
+echo ----------------------------------------------------------------------------
+set "DEFAULT_IP=192.168.1.50"
+set "DEFAULT_PORT=3000"
+set "DEFAULT_ROOM=PK01"
+
+set "SERVER_IP=%DEFAULT_IP%"
+set /p "SERVER_IP=Nhap IP May chu QLBV [Mac dinh: %DEFAULT_IP%]: "
+
+set "PORT=%DEFAULT_PORT%"
+set /p "PORT=Nhap Cong dich vu web [Mac dinh: %DEFAULT_PORT%]: "
+
+set "ROOM_CODE=%DEFAULT_ROOM%"
+set /p "ROOM_CODE=Nhap Ma phong kham (vd: PK01, PK02...) [Mac dinh: %DEFAULT_ROOM%]: "
+
+echo.
+echo ==> Dia chi Kiosk: http://%SERVER_IP%:%PORT%/kiosk/%ROOM_CODE%
+echo.
+
+:: 3. Kiem tra trinh duyet Microsoft Edge hoac Google Chrome
+echo [BUOC 2/6] KIEM TRA TRINH DUYET WEB
+echo ----------------------------------------------------------------------------
+set "BROWSER_PATH="
+set "BROWSER_NAME="
+
+if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    set "BROWSER_NAME=Microsoft Edge (32-bit)"
+) else if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_PATH=C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    set "BROWSER_NAME=Microsoft Edge (64-bit)"
+) else if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (64-bit)"
+) else if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_PATH=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (32-bit)"
+) else if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_PATH=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (User AppData)"
+) else if exist "%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_PATH=%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"
+    set "BROWSER_NAME=Microsoft Edge (User AppData)"
+)
+
+if "%BROWSER_PATH%"=="" (
+    echo [LOI] Khong tim thay trinh duyet Microsoft Edge hoac Google Chrome tren may!
+    echo Vui long cai dat Microsoft Edge hoac Google Chrome truoc khi tiep tuc.
     echo.
     pause
     exit /b 1
 )
 
-:: 2. Nhập thông tin cấu hình phòng khám (hoặc dùng mặc định)
-echo [BƯỚC 1/6] THIẾT LẬP THÔNG SỐ PHÒNG KHÁM
-echo ----------------------------------------------------------------------------
-set DEFAULT_IP=192.168.1.50
-set DEFAULT_PORT=3000
-set DEFAULT_ROOM=PK01
-
-set /p SERVER_IP="Nhập IP Máy chủ QLBV [Mặc định: %DEFAULT_IP%]: "
-if "%SERVER_IP%"=="" set SERVER_IP=%DEFAULT_IP%
-
-set /p PORT="Nhập Cổng dịch vụ web [Mặc định: %DEFAULT_PORT%]: "
-if "%PORT%"=="" set PORT=%DEFAULT_PORT%
-
-set /p ROOM_CODE="Nhập Mã phòng khám của máy này (vd: PK01, PK02...) [Mặc định: %DEFAULT_ROOM%]: "
-if "%ROOM_CODE%"=="" set ROOM_CODE=%DEFAULT_ROOM%
-
-echo.
-echo -> Địa chỉ Kiosk: http://%SERVER_IP%:%PORT%/kiosk/%ROOM_CODE%
+echo ==> Da tim thay trinh duyet: %BROWSER_NAME%
 echo.
 
-:: 3. Tìm đường dẫn trình duyệt Microsoft Edge hoặc Google Chrome
-echo [BƯỚC 2/6] KIỂM TRA TRÌNH DUYỆT WEB
+:: 4. Tao thu muc he thong bao mat C:\ProgramData\QLBS_Kiosk
+echo [BUOC 3/6] TAO THU MUC HE THONG BAO MAT
 echo ----------------------------------------------------------------------------
-set BROWSER_PATH=
-if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    set BROWSER_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-    set BROWSER_NAME=Microsoft Edge (x86)
-)
-if "%BROWSER_PATH%"=="" if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
-    set BROWSER_PATH=C:\Program Files\Microsoft\Edge\Application\msedge.exe
-    set BROWSER_NAME=Microsoft Edge (x64)
-)
-if "%BROWSER_PATH%"=="" if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    set BROWSER_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
-    set BROWSER_NAME=Google Chrome
-)
-if "%BROWSER_PATH%"=="" if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
-    set BROWSER_PATH=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
-    set BROWSER_NAME=Google Chrome (x86)
-)
-
-if "%BROWSER_PATH%"=="" (
-    echo [LỖI] Không tìm thấy Microsoft Edge hoặc Google Chrome trên máy tính này!
-    echo Vui lòng cài đặt Microsoft Edge hoặc Chrome trước khi chạy Kiosk.
-    pause
-    exit /b 1
-)
-echo -> Đã tìm thấy trình duyệt: %BROWSER_NAME%
-echo.
-
-:: 4. Tạo thư mục hệ thống bảo mật C:\ProgramData\QLBS_Kiosk
-echo [BƯỚC 3/6] TẠO THƯ MỤC HỆ THỐNG BẢO MẬT
-echo ----------------------------------------------------------------------------
-set KIOSK_DIR=C:\ProgramData\QLBS_Kiosk
+set "KIOSK_DIR=C:\ProgramData\QLBS_Kiosk"
 if not exist "%KIOSK_DIR%" mkdir "%KIOSK_DIR%"
 
-:: Tạo file cấu hình config.txt
 echo SERVER_IP=%SERVER_IP%> "%KIOSK_DIR%\config.txt"
 echo PORT=%PORT%>> "%KIOSK_DIR%\config.txt"
 echo ROOM_CODE=%ROOM_CODE%>> "%KIOSK_DIR%\config.txt"
 echo BROWSER_PATH=%BROWSER_PATH%>> "%KIOSK_DIR%\config.txt"
 
-:: Tạo script điều khiển giám sát tự động Kiosk bằng PowerShell
-:: Script này:
-::  - Khi trạng thái là LOCKED: Giữ Edge/Chrome toàn màn hình che taskbar, chống tắt.
-::  - Khi mở khoá (UNLOCKED): Tự động thu nhỏ trình duyệt xuống Taskbar, lộ 100% Desktop cho bác sĩ.
-::  - Khi hết ca trực + ân hạn: Tự động phục hồi Kiosk toàn màn hình cho ca tiếp theo.
-> "%KIOSK_DIR%\kiosk_supervisor.ps1" (
-    echo # ============================================================================
-    echo # BỆNH VIỆN QUÂN Y 4 — GIÁM SÁT KIOSK TỰ ĐỘNG & ĐIỀU KHIỂN CỬA SỔ WINDOWS
-    echo # ============================================================================
-    echo Add-Type -TypeDefinition @"
-    echo using System;
-    echo using System.Runtime.InteropServices;
-    echo public class WinKiosk {
-    echo     [DllImport("user32.dll"^)]
-    echo     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow^);
-    echo     [DllImport("user32.dll"^)]
-    echo     public static extern bool SetForegroundWindow(IntPtr hWnd^);
-    echo     [DllImport("user32.dll"^)]
-    echo     public static extern bool IsIconic(IntPtr hWnd^);
-    echo     [DllImport("user32.dll"^)]
-    echo     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags^);
-    echo }
-    echo "@
-    echo.
-    echo `$ServerIp = "%SERVER_IP%"
-    echo `$Port = "%PORT%"
-    echo `$RoomCode = "%ROOM_CODE%"
-    echo `$BrowserExe = "%BROWSER_PATH%"
-    echo `$KioskUrl = "http://${ServerIp}:${Port}/kiosk/${RoomCode}"
-    echo `$StatusUrl = "http://${ServerIp}:${Port}/api/kiosk/status?room=${RoomCode}"
-    echo.
-    echo function Launch-Kiosk {
-    echo     `$argsList = @(
-    echo         "--kiosk",
-    echo         "`$KioskUrl",
-    echo         "--edge-kiosk-type=fullscreen",
-    echo         "--no-first-run",
-    echo         "--disable-translate",
-    echo         "--disable-features=Translate,TranslateUI,TouchpadAndWheelScrollLatching",
-    echo         "--disable-infobars",
-    echo         "--disable-session-crashed-bubble",
-    echo         "--disable-notifications",
-    echo         "--overscroll-history-navigation=0",
-    echo         "--disable-pinch"
-    echo     ^)
-    echo     Start-Process -FilePath `$BrowserExe -ArgumentList `$argsList
-    echo }
-    echo.
-    echo function Get-KioskProcess {
-    echo     Get-Process -Name msedge, chrome -ErrorAction SilentlyContinue ^| Where-Object { `$_.MainWindowTitle -like "*Kiosk*" -or `$_.MainWindowHandle -ne [IntPtr]::Zero }
-    echo }
-    echo.
-    echo # Khởi chạy Kiosk ban đầu
-    echo Launch-Kiosk
-    echo Start-Sleep -Seconds 3
-    echo.
-    echo `$lastUnlocked = `$false
-    echo while (`$true^) {
-    echo     try {
-    echo         `$resp = Invoke-RestMethod -Uri `$StatusUrl -TimeoutSec 3 -ErrorAction SilentlyContinue
-    echo         if (`$resp -and `$resp.data^) { `$data = `$resp.data } else { `$data = `$resp }
-    echo         `$isUnlocked = [bool]`$data.isUnlocked
-    echo.
-    echo         `$procs = Get-KioskProcess
-    echo         `$mainProc = `$procs ^| Select-Object -First 1
-    echo.
-    echo         if (-not `$mainProc^) {
-    echo             if (-not `$isUnlocked^) {
-    echo                 Launch-Kiosk
-    echo             }
-    echo         } else {
-    echo             `$hwnd = `$mainProc.MainWindowHandle
-    echo             if (`$isUnlocked -and -not `$lastUnlocked^) {
-    echo                 # Bác sĩ vừa quét mặt mở khoá thành công -> Thu nhỏ Kiosk để giải phóng Desktop!
-    echo                 if (`$hwnd -ne [IntPtr]::Zero^) {
-    echo                     [WinKiosk]::ShowWindowAsync(`$hwnd, 2^) ^| Out-Null # SW_MINIMIZE
-    echo                     [WinKiosk]::ShowWindowAsync(`$hwnd, 6^) ^| Out-Null # SW_MINIMIZE alternative
-    echo                 }
-    echo                 `$lastUnlocked = `$true
-    echo             } elseif (-not `$isUnlocked -and `$lastUnlocked^) {
-    echo                 # Hết ca trực + quá thời gian ân hạn (hoặc bấm khoá) -> Bật lại Kiosk toàn màn hình!
-    echo                 if (`$hwnd -ne [IntPtr]::Zero^) {
-    echo                     [WinKiosk]::ShowWindowAsync(`$hwnd, 3^) ^| Out-Null # SW_MAXIMIZE
-    echo                     [WinKiosk]::SetForegroundWindow(`$hwnd^) ^| Out-Null
-    echo                 } else {
-    echo                     Launch-Kiosk
-    echo                 }
-    echo                 `$lastUnlocked = `$false
-    echo             } elseif (-not `$isUnlocked^) {
-    echo                 # Trong lúc khoá: Nếu người dùng cố tình thu nhỏ, tự động tối đa hoá lại
-    echo                 if (`$hwnd -ne [IntPtr]::Zero -and [WinKiosk]::IsIconic(`$hwnd^)^) {
-    echo                     [WinKiosk]::ShowWindowAsync(`$hwnd, 3^) ^| Out-Null
-    echo                     [WinKiosk]::SetForegroundWindow(`$hwnd^) ^| Out-Null
-    echo                 }
-    echo             }
-    echo         }
-    echo     } catch {}
-    echo     Start-Sleep -Seconds 2
-    echo }
-)
+echo ==> Dang tao kich ban giam sat Kiosk tu dong...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$b=[System.Convert]::FromBase64String('QWRkLVR5cGUgQCIKdXNpbmcgU3lzdGVtOwp1c2luZyBTeXN0ZW0uUnVudGltZS5JbnRlcm9wU2VydmljZXM7CnB1YmxpYyBjbGFzcyBXIHsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gYm9vbCBTaG93V2luZG93QXN5bmMoSW50UHRyIGgsIGludCBjKTsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gYm9vbCBTZXRGb3JlZ3JvdW5kV2luZG93KEludFB0ciBoKTsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gYm9vbCBJc0ljb25pYyhJbnRQdHIgaCk7Cn0KIkAKCiRLaW9za0RpciA9ICJDOlxQcm9ncmFtRGF0YVxRTEJTX0tpb3NrIgokQ29uZmlnRmlsZSA9IEpvaW4tUGF0aCAkS2lvc2tEaXIgImNvbmZpZy50eHQiCmlmICgtbm90IChUZXN0LVBhdGggJENvbmZpZ0ZpbGUpKSB7IGV4aXQgMSB9CgokY2ZnID0gQHt9CkdldC1Db250ZW50ICRDb25maWdGaWxlIHwgRm9yRWFjaC1PYmplY3QgewogICAgaWYgKCRfIC1tYXRjaCAiXihbXj1dKyk9KC4qKSQiKSB7ICRjZmdbJG1hdGNoZXNbMV0uVHJpbSgpXSA9ICRtYXRjaGVzWzJdLlRyaW0oKSB9Cn0KCiRTZXJ2ZXJJcCA9ICRjZmdbIlNFUlZFUl9JUCJdCiRQb3J0ID0gJGNmZ1siUE9SVCJdCiRSb29tQ29kZSA9ICRjZmdbIlJPT01fQ09ERSJdCiRCcm93c2VyRXhlID0gJGNmZ1siQlJPV1NFUl9QQVRIIl0KJEtpb3NrVXJsID0gImh0dHA6Ly8iICsgJFNlcnZlcklwICsgIjoiICsgJFBvcnQgKyAiL2tpb3NrLyIgKyAkUm9vbUNvZGUKJFN0YXR1c1VybCA9ICJodHRwOi8vIiArICRTZXJ2ZXJJcCArICI6IiArICRQb3J0ICsgIi9hcGkva2lvc2svc3RhdHVzP3Jvb21Db2RlPSIgKyAkUm9vbUNvZGUKCmZ1bmN0aW9uIExhdW5jaC1LaW9zayB7CiAgICAkYXJnc0xpc3QgPSBAKAogICAgICAgICItLWtpb3NrIiwKICAgICAgICAkS2lvc2tVcmwsCiAgICAgICAgIi0tZWRnZS1raW9zay10eXBlPWZ1bGxzY3JlZW4iLAogICAgICAgICItLW5vLWZpcnN0LXJ1biIsCiAgICAgICAgIi0tbm8tZGVmYXVsdC1icm93c2VyLWNoZWNrIiwKICAgICAgICAiLS1kaXNhYmxlLXBpbmNoIiwKICAgICAgICAiLS1vdmVyc2Nyb2xsLWhpc3RvcnktbmF2aWdhdGlvbj0wIiwKICAgICAgICAiLS1kaXNhYmxlLWZlYXR1cmVzPVRyYW5zbGF0ZVVJIgogICAgKQogICAgU3RhcnQtUHJvY2VzcyAtRmlsZVBhdGggJEJyb3dzZXJFeGUgLUFyZ3VtZW50TGlzdCAkYXJnc0xpc3QKfQoKZnVuY3Rpb24gR2V0LUtpb3NrUHJvY2VzcyB7CiAgICBHZXQtUHJvY2VzcyAtTmFtZSBtc2VkZ2UsIGNocm9tZSAtRXJyb3JBY3Rpb24gU2lsZW50bHlDb250aW51ZSB8IFdoZXJlLU9iamVjdCB7ICRfLk1haW5XaW5kb3dIYW5kbGUgLW5lIFtJbnRQdHJdOjpaZXJvIH0KfQoKTGF1bmNoLUtpb3NrClN0YXJ0LVNsZWVwIC1TZWNvbmRzIDMKCiRsYXN0VW5sb2NrZWQgPSAkZmFsc2UKCndoaWxlICgkdHJ1ZSkgewogICAgdHJ5IHsKICAgICAgICAkcmVzcCA9IEludm9rZS1SZXN0TWV0aG9kIC1VcmkgJFN0YXR1c1VybCAtTWV0aG9kIEdldCAtVGltZW91dFNlYyAyIC1FcnJvckFjdGlvbiBTdG9wCiAgICAgICAgJGlzVW5sb2NrZWQgPSBbYm9vbF0kcmVzcC5pc1VubG9ja2VkCgogICAgICAgICRwcm9jcyA9IEdldC1LaW9za1Byb2Nlc3MKICAgICAgICBpZiAoLW5vdCAkcHJvY3MpIHsKICAgICAgICAgICAgaWYgKC1ub3QgJGlzVW5sb2NrZWQpIHsKICAgICAgICAgICAgICAgIExhdW5jaC1LaW9zawogICAgICAgICAgICAgICAgU3RhcnQtU2xlZXAgLVNlY29uZHMgMgogICAgICAgICAgICB9CiAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgJG1haW5Qcm9jID0gJHByb2NzIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMQogICAgICAgICAgICAkaHduZCA9ICRtYWluUHJvYy5NYWluV2luZG93SGFuZGxlCgogICAgICAgICAgICBpZiAoJGlzVW5sb2NrZWQgLWFuZCAtbm90ICRsYXN0VW5sb2NrZWQpIHsKICAgICAgICAgICAgICAgIGlmICgkaHduZCAtbmUgW0ludFB0cl06Olplcm8pIHsKICAgICAgICAgICAgICAgICAgICBbV106OlNob3dXaW5kb3dBc3luYygkaHduZCwgNikgfCBPdXQtTnVsbAogICAgICAgICAgICAgICAgICAgIFtXXTo6U2hvd1dpbmRvd0FzeW5jKCRod25kLCAyKSB8IE91dC1OdWxsCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAkbGFzdFVubG9ja2VkID0gJHRydWUKICAgICAgICAgICAgfSBlbHNlaWYgKC1ub3QgJGlzVW5sb2NrZWQgLWFuZCAkbGFzdFVubG9ja2VkKSB7CiAgICAgICAgICAgICAgICBpZiAoJGh3bmQgLW5lIFtJbnRQdHJdOjpaZXJvKSB7CiAgICAgICAgICAgICAgICAgICAgW1ddOjpTaG93V2luZG93QXN5bmMoJGh3bmQsIDMpIHwgT3V0LU51bGwKICAgICAgICAgICAgICAgICAgICBbV106OlNldEZvcmVncm91bmRXaW5kb3coJGh3bmQpIHwgT3V0LU51bGwKICAgICAgICAgICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICAgICAgTGF1bmNoLUtpb3NrCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAkbGFzdFVubG9ja2VkID0gJGZhbHNlCiAgICAgICAgICAgIH0gZWxzZWlmICgtbm90ICRpc1VubG9ja2VkKSB7CiAgICAgICAgICAgICAgICBpZiAoJGh3bmQgLW5lIFtJbnRQdHJdOjpaZXJvIC1hbmQgW1ddOjpJc0ljb25pYygkaHduZCkpIHsKICAgICAgICAgICAgICAgICAgICBbV106OlNob3dXaW5kb3dBc3luYygkaHduZCwgMykgfCBPdXQtTnVsbAogICAgICAgICAgICAgICAgICAgIFtXXTo6U2V0Rm9yZWdyb3VuZFdpbmRvdygkaHduZCkgfCBPdXQtTnVsbAogICAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfSBjYXRjaCB7fQogICAgU3RhcnQtU2xlZXAgLVNlY29uZHMgMgp9'); [System.IO.File]::WriteAllBytes('%KIOSK_DIR%\kiosk_supervisor.ps1', $b)"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$b=[System.Convert]::FromBase64String('U2V0IFdzaFNoZWxsID0gQ3JlYXRlT2JqZWN0KCJXU2NyaXB0LlNoZWxsIikNCldzaFNoZWxsLlJ1biAicG93ZXJzaGVsbC5leGUgLUV4ZWN1dGlvblBvbGljeSBCeXBhc3MgLVdpbmRvd1N0eWxlIEhpZGRlbiAtRmlsZSAiIkM6XFByb2dyYW1EYXRhXFFMQlNfS2lvc2tca2lvc2tfc3VwZXJ2aXNvci5wczEiIiIsIDAsIEZhbHNl'); [System.IO.File]::WriteAllBytes('%KIOSK_DIR%\chay_ngam.vbs', $b)"
 
-:: Tạo tệp VBS để chạy PowerShell ngầm không hiện cửa sổ đen
-> "%KIOSK_DIR%\chay_ngam.vbs" (
-    echo Set WshShell = CreateObject("WScript.Shell"^)
-    echo WshShell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File ""%KIOSK_DIR%\kiosk_supervisor.ps1""", 0, False
-)
-
-:: 5. Khóa phím tắt Windows & chính sách an ninh Kiosk
-echo [BƯỚC 4/6] KÍCH HOẠT CHÍNH SÁCH BẢO VỆ & KHOÁ BÀN PHÍM TOÀN DIỆN
+:: 5. Khoa ban phim va chinh sach an ninh Kiosk
+echo.
+echo [BUOC 4/6] KHOA BAN PHIM VA CHINH SACH AN NINH KIOSK
 echo ----------------------------------------------------------------------------
-:: A. Vô hiệu hoá Win + D, Win + R, Win + M, Win + X, Win + S
-echo - Đang vô hiệu hoá phím Windows (Win+D, Win+R)...
+echo - Khoa phim Windows va to hop Win+D, Win+R...
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoRun" /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f >nul 2>&1
 
-:: B. Vô hiệu hoá Task Manager (Ctrl+Shift+Esc, Ctrl+Alt+Del)
-echo - Đang vô hiệu hoá Task Manager...
+echo - Khoa Task Manager (Ctrl+Shift+Esc, Ctrl+Alt+Del)...
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f >nul 2>&1
 
-:: C. Vô hiệu hoá cử chỉ vuốt mép màn hình cảm ứng All-in-One PC
-echo - Đang khoá cử chỉ vuốt mép màn hình cảm ứng...
+echo - Khoa cu chi vuot mep man hinh cam ung All-in-One PC...
 reg add "HKCU\Software\Policies\Microsoft\Windows\EdgeUI" /v "AllowEdgeSwipe" /t REG_DWORD /d 0 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" /v "AllowEdgeSwipe" /t REG_DWORD /d 0 /f >nul 2>&1
 
-:: D. Vô hiệu hoá Sticky Keys (Bấm phím Shift 5 lần)
-echo - Đang khoá phím dính trợ năng (Shift 5 lần)...
+echo - Khoa phim dinh tro nang (Shift 5 lan Sticky Keys)...
 reg add "HKCU\Control Panel\Accessibility\StickyKeys" /v "Flags" /t REG_SZ /d "506" /f >nul 2>&1
 reg add "HKCU\Control Panel\Accessibility\Keyboard Response" /v "Flags" /t REG_SZ /d "122" /f >nul 2>&1
 reg add "HKCU\Control Panel\Accessibility\ToggleKeys" /v "Flags" /t REG_SZ /d "58" /f >nul 2>&1
 
-:: E. Chặn AutoPlay khi cắm USB & chặn thông báo Toast nổi lên Kiosk
-echo - Đang chặn AutoPlay USB và thông báo Windows...
+echo - Chan AutoPlay khi cam USB va chan thong bao Windows...
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" /v "DisableAutoplay" /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoDriveTypeAutoRun" /t REG_DWORD /d 255 /f >nul 2>&1
 reg add "HKCU\Software\Policies\Microsoft\Windows\CurrentVersion\PushNotifications" /v "NoToastApplicationNotification" /t REG_DWORD /d 1 /f >nul 2>&1
 
-:: 6. Thiết lập cơ chế chống người dùng sửa hoặc xóa file Kiosk (NTFS Permissions)
+:: 6. Thiet lap phan quyen NTFS chong xoa tep
 echo.
-echo [BƯỚC 5/6] THIẾT LẬP BẢO MẬT NTFS CHỐNG XOÁ TỆP VĨNH VIỄN
+echo [BUOC 5/6] THIET LAP PHAN QUYEN NTFS CHONG NGUOI DUNG XOA TEP
 echo ----------------------------------------------------------------------------
 icacls "%KIOSK_DIR%" /inheritance:r /grant:r "SYSTEM":(OI)(CI)F /grant:r "Administrators":(OI)(CI)F /grant:r "Users":(OI)(CI)RX >nul 2>&1
 icacls "%KIOSK_DIR%\*.*" /inheritance:r /grant:r "SYSTEM":F /grant:r "Administrators":F /grant:r "Users":RX >nul 2>&1
-echo -> Đã khóa quyền NTFS: Người dùng thông thường BỊ CẤM XOÁ HOẶC SỬA TỆP.
+echo ==> Da khoa quyen NTFS: Nguoi dung thong thuong bi cam xoa hoac sua tep Kiosk.
 
-:: 7. Đăng ký tự động khởi động cùng Windows (Task Scheduler + HKLM Run)
+:: 7. Dang ky tu dong khoi dong cung Windows
 echo.
-echo [BƯỚC 6/6] ĐĂNG KÝ TỰ ĐỘNG KHỞI ĐỘNG CÙNG MÁY TÍNH
+echo [BUOC 6/6] DANG KY TU DONG KHOI DONG CUNG WINDOWS
 echo ----------------------------------------------------------------------------
-schtasks /create /tn "QLBS_Kiosk_Service" /tr "wscript.exe \"%KIOSK_DIR%\chay_ngam.vbs\"" /sc onlogon /rl highest /f >nul 2>&1
-reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Service" /t REG_SZ /d "wscript.exe \"%KIOSK_DIR%\chay_ngam.vbs\"" /f >nul 2>&1
+schtasks /create /tn "QLBS_Kiosk_Service" /tr "wscript.exe "%KIOSK_DIR%\chay_ngam.vbs"" /sc onlogon /rl highest /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Service" /t REG_SZ /d "wscript.exe "%KIOSK_DIR%\chay_ngam.vbs"" /f >nul 2>&1
 
-:: Dọn dẹp shortcut cũ trong Startup cá nhân nếu có
-set USER_STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+set "USER_STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 if exist "%USER_STARTUP%\chay_kiosk_phong_kham.bat" del /f /q "%USER_STARTUP%\chay_kiosk_phong_kham.bat" >nul 2>&1
 
-:: Khởi chạy ngay dịch vụ Kiosk
-echo -> Đang khởi chạy màn hình Kiosk phòng khám %ROOM_CODE% ngay bây giờ...
+echo ==> Dang khoi chay man hinh Kiosk phong kham %ROOM_CODE% ngay bay gio...
 wscript.exe "%KIOSK_DIR%\chay_ngam.vbs"
 
 echo.
 echo ============================================================================
-echo   [HOÀN TẤT THÀNH CÔNG 100%] KIOSK ĐÃ ĐƯỢC CÀI ĐẶT & BẢO VỆ TOÀN DIỆN!
+echo   [HOAN TAT THANH CONG] KIOSK PHONG KHAM DA DUOC CAI DAT VA BAO VE TOAN DIEN!
 echo ============================================================================
-echo  1. Màn hình Kiosk phòng %ROOM_CODE% đã kích hoạt và che toàn bộ thanh Taskbar.
-echo  2. Bàn phím đã bị khoá các phím tắt hệ thống (Win+D, Task Manager, Alt+F4...).
-echo  3. Tệp cài đặt được bảo vệ vĩnh viễn trong C:\ProgramData\QLBS_Kiosk.
-echo  4. Khi Bác sĩ quét mặt thành công: Kiosk tự động thu nhỏ, lộ 100% Desktop.
-echo  5. Khi hết ca trực + ân hạn: Kiosk tự động khoá lại và nạp QR cho ca mới.
-echo.
-echo  * Khi bộ phận IT cần gỡ bỏ hoặc bảo trì, chỉ cần chạy file: go_bo_kiosk.bat
+echo  - Man hinh Kiosk dang chay o che do toan man hinh (Fullscreen).
+echo  - Ban phim da duoc khoa toan dien (Win+D, Win+R, Task Manager Ctrl+Shift+Esc).
+echo  - Khi bac si quet mat mo khoa, Kiosk se tu dong thu nho xuong Taskbar
+echo    de giai phong 100%% Desktop cho bac si su dung HIS, PACS, Word muot ma.
+echo  - Khi het ca truc va qua thoi gian an han, Kiosk se tu dong phong to khoa lai.
+echo  - Khi IT can go bo de bao tri, hay chay file: go_bo_kiosk.bat (Run as admin).
 echo ============================================================================
 echo.
 pause
