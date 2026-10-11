@@ -310,6 +310,32 @@ export class KioskService {
     });
   }
 
+  /**
+   * Mở khoá khẩn cấp bằng mã PIN IT (ghi nhận trạng thái mở khoá cho phòng khám)
+   */
+  recordItOverrideUnlock(roomCode: string, terminalId?: string) {
+    const code = roomCode.toUpperCase().trim();
+    const now = Date.now();
+    // Mở khoá khẩn cấp IT kéo dài 12 tiếng hoặc đến khi có lệnh khoá lại
+    const shiftEndMs = now + 12 * 3600 * 1000;
+    const itDoctor = {
+      fullName: 'Kỹ thuật viên IT',
+      title: 'IT Support',
+      shiftName: 'Mở khoá Khẩn cấp',
+    };
+
+    this.activeRoomUnlocks.set(code, {
+      roomCode: code,
+      doctor: itDoctor,
+      shift: { shiftName: 'Mở khoá Khẩn cấp' },
+      unlockedAt: now,
+      shiftEndMs,
+      terminalId,
+    });
+
+    return { itDoctor, shiftEndMs };
+  }
+
   async getKioskStatus(
     roomCode: string,
     terminalId?: string,

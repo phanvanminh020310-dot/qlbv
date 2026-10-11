@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   },
   description:
     'Hệ thống quản lý bệnh viện: sửa hồ sơ bệnh án điện tử, báo cáo công tác của khoa, thiết kế bản in và quản trị tập trung.',
+  other: {
+    google: 'notranslate',
+  },
 };
 
 export const viewport: Viewport = {
@@ -19,7 +22,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi" suppressHydrationWarning>
+    <html lang="vi" translate="no" className="notranslate" suppressHydrationWarning>
+      <head>
+        <meta name="google" content="notranslate" />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>

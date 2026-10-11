@@ -167,15 +167,14 @@ export class KioskController {
       throw new UnauthorizedException('Mã PIN khẩn cấp IT không chính xác.');
     }
 
+    const { itDoctor, shiftEndMs } = this.service.recordItOverrideUnlock(body.roomCode, body.terminalId);
+
     const payload = {
       type: 'UNLOCK_SUCCESS',
-      doctor: {
-        fullName: 'Kỹ thuật viên IT',
-        title: 'IT Support',
-        shiftName: 'Mở khoá Khẩn cấp',
-      },
+      doctor: itDoctor,
       roomCode: body.roomCode,
       terminalId: body.terminalId,
+      shiftEndMs,
       method: 'IT_EMERGENCY_PIN',
     };
 
