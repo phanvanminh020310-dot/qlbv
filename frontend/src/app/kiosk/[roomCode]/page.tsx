@@ -388,98 +388,40 @@ export default function KioskPage() {
     }
   };
 
-  // --- TRẠNG THÁI 1: ĐÃ MỞ KHOÁ (HIỆN MINI DOCK GÓC MÀN HÌNH ĐỂ LỘ DESKTOP) ---
+  // Tự động đóng cửa sổ trình duyệt khi mở khoá thành công để lộ Desktop
+  useEffect(() => {
+    if (isUnlocked) {
+      try {
+        window.close();
+      } catch {}
+    }
+  }, [isUnlocked]);
+
+  // --- TRẠNG THÁI 1: ĐÃ MỞ KHOÁ (GIẢI PHÓNG MÀN HÌNH DESKTOP) ---
   if (isUnlocked) {
     return (
-      <div className="fixed top-3 right-3 z-50 select-none animate-in fade-in slide-in-from-top-4 duration-300">
-        {!isMinimized ? (
-          <div className="rounded-2xl border-2 border-teal-500/50 bg-slate-900/95 backdrop-blur-md p-3.5 shadow-2xl text-slate-100 flex items-center gap-4 max-w-lg">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30 shrink-0">
-              <Stethoscope className="h-5 w-5" />
-            </div>
-
-            <div className="min-w-[170px]">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider bg-teal-950 px-1.5 py-0.5 rounded border border-teal-800">
-                  {roomCode}
-                </span>
-                <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
-                  <CheckCircle2 className="h-3 w-3" /> Đã mở máy tính Windows
-                </span>
-              </div>
-              <h3 className="text-xs font-bold text-white mt-0.5 truncate">
-                {activeSession?.title ? `${activeSession.title} ` : 'BS '}
-                {activeSession?.fullName || 'Bác sĩ khám'}
-              </h3>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {activeSession?.shiftName || 'Ca làm việc'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0 border-l border-slate-800 pl-3">
-              <button
-                type="button"
-                onClick={() => setLockConfirmOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
-                title="Khoá màn hình máy tính ngay lập tức khi rời phòng"
-              >
-                <Lock className="h-3.5 w-3.5" />
-                <span>Khoá máy / Rời phòng</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsMinimized(true)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
-                title="Thu nhỏ thanh tiện ích"
-              >
-                <Minimize2 className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        ) : (
+      <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none text-white z-50">
+        <div className="h-16 w-16 rounded-3xl bg-emerald-500/20 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center mb-4 shadow-2xl animate-pulse">
+          <CheckCircle2 className="h-8 w-8" />
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">ĐÃ MỞ KHOÁ MÁY TÍNH THÀNH CÔNG</h2>
+        <p className="text-sm text-emerald-400 font-semibold mb-1">
+          {activeSession?.title ? `${activeSession.title} ` : 'BS '}
+          {activeSession?.fullName || 'Bác sĩ khám'} — {activeSession?.shiftName || 'Ca làm việc'}
+        </p>
+        <p className="text-xs text-slate-400 max-w-sm mt-2">
+          Đang giải phóng màn hình Desktop. Bác sĩ có thể thao tác các phần mềm khám bệnh Windows.
+        </p>
+        <div className="mt-6 flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setIsMinimized(false)}
-            className="flex items-center gap-2 px-3 py-2 rounded-full border border-teal-500/40 bg-slate-900/90 backdrop-blur-md shadow-xl text-teal-300 hover:text-white transition-all cursor-pointer"
+            onClick={handleLockRoom}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
           >
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-            </span>
-            <span className="text-xs font-bold font-mono">
-              {roomCode}: {activeSession?.fullName || 'Bác sĩ'}
-            </span>
+            <Lock className="h-4 w-4" />
+            <span>Khoá lại phòng khám</span>
           </button>
-        )}
-
-        {/* Hộp thoại xác nhận khoá máy */}
-        {lockConfirmOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-            <div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
-              <h3 className="text-base font-bold text-white mb-2">Khoá máy tính {roomInfo.name} [{roomCode}]?</h3>
-              <p className="text-xs text-slate-400 mb-6">
-                Màn hình máy tính Windows sẽ lập tức được phủ Kiosk toàn màn hình và yêu cầu Bác sĩ quét QR để mở khoá.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLockConfirmOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-semibold cursor-pointer"
-                >
-                  Huỷ bỏ
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLockRoom}
-                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold cursor-pointer"
-                >
-                  Khoá máy ngay
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     );
   }

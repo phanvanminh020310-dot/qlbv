@@ -25,7 +25,7 @@ set "KIOSK_DIR=C:\ProgramData\QLBS_Kiosk"
 if exist "%KIOSK_DIR%\config.txt" del /f /q "%KIOSK_DIR%\config.txt" >nul 2>&1
 
 :: Dong trinh duyet Edge/Chrome Kiosk
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*msedge*' -or $_.Name -like '*chrome*') -and $_.CommandLine -like '*kiosk*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*msedge*' -or $_.Name -like '*chrome*') -and ($_.CommandLine -like '*kiosk*' -or $_.CommandLine -like '*PK*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
 
 echo [2/5] Dang go bo tac vu tu khoi dong Task Scheduler...
 schtasks /end /tn "QLBS_Kiosk_Service" >nul 2>&1
@@ -51,7 +51,7 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableTaskMgr" /f >nul 2>&1
 
 reg delete "HKCU\Software\Policies\Microsoft\Windows\EdgeUI" /v "AllowEdgeSwipe" /f >nul 2>&1
-reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" /v "AllowEdgeSwipe" /f >nul 2>&1
+reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows\EdgeUI" /v "AllowEdgeSwipe" /t REG_DWORD /d 0 /f >nul 2>&1
 
 reg add "HKCU\Control Panel\Accessibility\StickyKeys" /v "Flags" /t REG_SZ /d "510" /f >nul 2>&1
 reg add "HKCU\Control Panel\Accessibility\Keyboard Response" /v "Flags" /t REG_SZ /d "126" /f >nul 2>&1
