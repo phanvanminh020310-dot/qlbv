@@ -15,6 +15,7 @@ import {
   Moon,
   AlertCircle,
   Loader2,
+  ArrowRight,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { KioskLockdown } from '@/lib/kiosk-lockdown';
@@ -61,16 +62,47 @@ export default function KioskPage() {
     setTerminalId(tid);
   }, [roomCode]);
 
-  // 1. Đồng hồ thời gian thực
+  // 1. Đồng hồ thời gian thực đồng bộ máy chủ bệnh viện (Chống người dùng chỉnh sửa giờ máy phòng khám)
+  const serverBaseTimeRef = useRef<number>(Date.now());
+  const perfBaseTimeRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : 0);
+
+  const syncServerTime = (serverTimeMs?: number) => {
+    if (serverTimeMs && typeof serverTimeMs === 'number') {
+      serverBaseTimeRef.current = serverTimeMs;
+      perfBaseTimeRef.current = typeof performance !== 'undefined' ? performance.now() : 0;
+    }
+  };
+
   useEffect(() => {
+    // Lấy giờ máy chủ chuẩn ban đầu
+    fetch('/api/kiosk/time')
+      .then((res) => res.json())
+      .then((raw) => {
+        const data = raw?.data ?? raw;
+        if (data?.serverTime) {
+          syncServerTime(data.serverTime);
+        }
+      })
+      .catch(() => {});
+
     const updateTime = () => {
       try {
-        const now = new Date();
-        setCurrentTime(
-          now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
-            ' · ' +
-            now.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }),
-        );
+        const elapsed = typeof performance !== 'undefined' ? performance.now() - perfBaseTimeRef.current : 0;
+        const now = new Date(serverBaseTimeRef.current + elapsed);
+        const timeStr = now.toLocaleTimeString('vi-VN', {
+          timeZone: 'Asia/Bangkok',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        const dateStr = now.toLocaleDateString('vi-VN', {
+          timeZone: 'Asia/Bangkok',
+          weekday: 'long',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+        setCurrentTime(`${timeStr} · ${dateStr}`);
       } catch {}
     };
     updateTime();
@@ -99,6 +131,9 @@ export default function KioskPage() {
       // Bóc lớp { success: true, data: { ... } } do TransformInterceptor của NestJS tạo ra
       const data = raw?.data ?? raw;
 
+      if (data?.serverTime) {
+        syncServerTime(data.serverTime);
+      }
       if (data?.room) {
         setRoomInfo(data.room);
       }
@@ -144,6 +179,9 @@ export default function KioskPage() {
       if (resp.ok) {
         const raw = await resp.json();
         const data = raw?.data ?? raw;
+        if (data?.serverTime) {
+          syncServerTime(data.serverTime);
+        }
         if (data?.sessionId) {
           const scanUrl = `${origin}/scan/${data.sessionId}`;
           setQrUrl(scanUrl);
@@ -517,7 +555,7 @@ export default function KioskPage() {
                 Quét mã QR bằng Camera điện thoại để mở khoá ca làm việc
               </h2>
               <p className="mt-2 text-xs sm:text-sm opacity-75 leading-relaxed">
-                Hệ thống xác thực khuôn mặt người thật (ISO 30107 PAD) và tự động đối soát với bảng phân công ca trực của bệnh viện.
+                Hệ thống xác thực khuôn mặt và tự động đối soát với bảng phân công ca trực của bệnh viện.
               </p>
             </div>
 
@@ -556,30 +594,43 @@ export default function KioskPage() {
               </div>
             </div>
 
-            {/* 3 Bước hướng dẫn */}
-            <div className="grid grid-cols-3 gap-2.5 pt-1">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
+            {/* 3 Bước hướng dẫn với mũi tên điều hướng */}
+            <div className="flex items-center justify-between gap-1.5 sm:gap-2.5 pt-1">
+              {/* Bước 1 */}
+              <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
                 <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-xs mb-1">
                   1
                 </div>
-                <p className="text-xs font-bold">Quét mã QR</p>
-                <p className="text-[10px] opacity-70">Camera điện thoại</p>
+                <p className="text-xs font-bold leading-tight">Quét mã QR</p>
+                <p className="text-[10px] opacity-70 mt-0.5">Camera điện thoại</p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
+              {/* Mũi tên 1 -> 2 */}
+              <div className="text-teal-500/70 dark:text-teal-400/70 shrink-0">
+                <ArrowRight className="h-4 w-4" />
+              </div>
+
+              {/* Bước 2 */}
+              <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
                 <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-xs mb-1">
                   2
                 </div>
-                <p className="text-xs font-bold">Quét khuôn mặt</p>
-                <p className="text-[10px] opacity-70">Chớp mắt xác thực</p>
+                <p className="text-xs font-bold leading-tight">Nhìn thẳng camera điện thoại để xác thực</p>
+                <p className="text-[10px] opacity-70 mt-0.5">Xác thực tự động</p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
+              {/* Mũi tên 2 -> 3 */}
+              <div className="text-teal-500/70 dark:text-teal-400/70 shrink-0">
+                <ArrowRight className="h-4 w-4" />
+              </div>
+
+              {/* Bước 3 */}
+              <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-center bg-white/50 dark:bg-slate-900/30">
                 <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-xs mb-1">
                   3
                 </div>
-                <p className="text-xs font-bold">Mở khoá tức thì</p>
-                <p className="text-[10px] opacity-70">Vào màn hình Desktop</p>
+                <p className="text-xs font-bold leading-tight">Mở khóa màn hình thành công</p>
+                <p className="text-[10px] opacity-70 mt-0.5">Vào màn hình Desktop</p>
               </div>
             </div>
           </div>
@@ -614,17 +665,11 @@ export default function KioskPage() {
 
       {/* Footer đáy màn hình */}
       <footer
-        className={`px-6 sm:px-8 py-3.5 border-t text-xs flex items-center justify-between opacity-75 ${
-          isDarkMode ? 'border-slate-800/80 bg-slate-950/80' : 'border-slate-200 bg-white/80'
+        className={`px-6 sm:px-8 py-3.5 border-t text-xs flex items-center justify-center text-center font-bold tracking-wider uppercase opacity-85 ${
+          isDarkMode ? 'border-slate-800/80 bg-slate-950/80 text-slate-300' : 'border-slate-200 bg-white/80 text-slate-700'
         }`}
       >
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-          <span>Bảo vệ Kiosk: Bật · Khóa Win+D, Task Manager & Phím điều hướng</span>
-        </div>
-        <div>
-          <span>Phím IT khẩn cấp: <kbd className="px-1.5 py-0.5 rounded border font-mono text-[10px]">Ctrl + Shift + Alt + F12</kbd></span>
-        </div>
+        <span>Bệnh viện quân y 4</span>
       </footer>
 
       {/* Hộp thoại mở khoá IT khẩn cấp */}

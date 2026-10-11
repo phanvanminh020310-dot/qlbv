@@ -13,6 +13,16 @@ export class KioskController {
   constructor(private readonly service: KioskService) {}
 
   @Public()
+  @Get('time')
+  @ApiOperation({ summary: 'Lấy thời gian chuẩn của máy chủ bệnh viện' })
+  async getServerTime() {
+    return {
+      serverTime: Date.now(),
+      timeZone: 'Asia/Bangkok',
+    };
+  }
+
+  @Public()
   @Get('status')
   @ApiOperation({ summary: 'Trạng thái Kiosk phòng khám & phiên mã QR động' })
   async getStatus(
@@ -55,6 +65,7 @@ export class KioskController {
       qrUrl: session.qrUrl,
       expiresInSeconds: 90,
       challengeSequence: session.challengeSequence,
+      serverTime: Date.now(),
     };
   }
 

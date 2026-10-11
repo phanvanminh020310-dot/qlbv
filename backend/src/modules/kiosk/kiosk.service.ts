@@ -244,6 +244,7 @@ export class KioskService {
       room: { code: room.code, name: room.name },
       isUnlocked: false,
       currentScheduled,
+      serverTime: Date.now(),
       qrSession: {
         sessionId: activeSession.sessionId,
         qrUrl: activeSession.qrUrl,
