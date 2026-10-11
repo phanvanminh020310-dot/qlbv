@@ -179,15 +179,15 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
       title="Đăng ký Sinh trắc học Khuôn mặt"
       size="md"
       footer={
-        <div className="flex items-center justify-between w-full">
-          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 w-full">
+          <Button variant="outline" onClick={onClose} disabled={isSubmitting} className="w-full sm:w-auto">
             Đóng
           </Button>
           <Button
             disabled={!capturedImage || isSubmitting}
             loading={isSubmitting}
             onClick={handleSubmit}
-            className="bg-teal-600 hover:bg-teal-500 text-white"
+            className="w-full sm:w-auto bg-teal-600 hover:bg-teal-500 text-white font-medium shadow-sm"
           >
             <ShieldCheck className="h-4 w-4 mr-1.5" />
             Lưu hồ sơ sinh trắc học
@@ -198,23 +198,23 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
       <div className="space-y-4">
         {/* Thông tin nhân viên */}
         <div className="flex items-center justify-between rounded-xl bg-slate-50 dark:bg-slate-900/50 p-3 border border-slate-200 dark:border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 flex items-center justify-center border border-slate-300 dark:border-slate-700">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 flex items-center justify-center border border-slate-300 dark:border-slate-700 shrink-0">
               {bioStatus?.avatarUrl ? (
                 <img src={bioStatus.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
               ) : (
                 <User className="h-6 w-6 text-slate-400" />
               )}
             </div>
-            <div>
-              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
                 {user.title ? `${user.title} ` : ''}{user.fullName}
               </div>
-              <div className="text-xs font-mono text-slate-500">@{user.username}</div>
+              <div className="text-xs font-mono text-slate-500 truncate">@{user.username}</div>
             </div>
           </div>
 
-          <div>
+          <div className="shrink-0 ml-2">
             {statusLoading ? (
               <RefreshCw className="h-4 w-4 animate-spin text-slate-400" />
             ) : bioStatus?.enrolled ? (
@@ -237,14 +237,14 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
               setMode('camera');
               setCapturedImage(null);
             }}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 px-2 text-[11px] sm:text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
               mode === 'camera'
                 ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            <Camera className="h-3.5 w-3.5" />
-            Chụp trực tiếp từ Webcam
+            <Camera className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Chụp bằng Camera</span>
           </button>
           <button
             type="button"
@@ -252,23 +252,23 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
               setMode('upload');
               stopWebcam();
             }}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 px-2 text-[11px] sm:text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
               mode === 'upload'
                 ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            <Upload className="h-3.5 w-3.5" />
-            Tải tệp ảnh chân dung
+            <Upload className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Tải ảnh chân dung</span>
           </button>
         </div>
 
         {/* Khu vực hiển thị Video hoặc Ảnh xem trước */}
-        <div className="relative aspect-square w-full max-w-[320px] mx-auto rounded-2xl overflow-hidden bg-black border-2 border-teal-500/40 flex items-center justify-center shadow-inner">
+        <div className="relative aspect-square w-full max-w-[280px] sm:max-w-[320px] mx-auto rounded-2xl overflow-hidden bg-black border-2 border-teal-500/40 flex items-center justify-center shadow-inner">
           {capturedImage ? (
             <div className="relative w-full h-full">
               <img src={capturedImage} alt="Captured" className="w-full h-full object-cover" />
-              <div className="absolute bottom-2 left-0 right-0 flex justify-center">
+              <div className="absolute bottom-2 left-0 right-0 flex justify-center px-2">
                 <Button
                   size="sm"
                   variant="outline"
@@ -293,7 +293,7 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
                 <>
                   <video ref={videoRef} playsInline muted autoPlay className="w-full h-full object-cover -scale-x-100" />
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-44 h-56 rounded-[50%] border-2 border-dashed border-teal-400/80 animate-pulse"></div>
+                    <div className="w-40 h-52 sm:w-44 sm:h-56 rounded-[50%] border-2 border-dashed border-teal-400/80 animate-pulse"></div>
                   </div>
                   <button
                     type="button"
@@ -309,8 +309,8 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
             </>
           ) : (
             <div className="p-6 text-center space-y-3">
-              <div className="h-16 w-16 mx-auto rounded-2xl bg-teal-500/10 border border-teal-500/30 text-teal-400 flex items-center justify-center">
-                <Upload className="h-8 w-8" />
+              <div className="h-14 w-14 sm:h-16 sm:w-16 mx-auto rounded-2xl bg-teal-500/10 border border-teal-500/30 text-teal-400 flex items-center justify-center">
+                <Upload className="h-7 w-7 sm:h-8 sm:w-8" />
               </div>
               <div className="space-y-1">
                 <p className="text-xs font-semibold text-slate-300">Tải ảnh chân dung rõ mặt (.jpg, .png)</p>
@@ -328,14 +328,14 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
                 onClick={() => fileInputRef.current?.click()}
                 className="bg-teal-600 hover:bg-teal-500 text-white text-xs"
               >
-                Chọn tệp từ máy tính
+                Chọn ảnh từ thiết bị
               </Button>
             </div>
           )}
         </div>
 
-        <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center">
-          Dữ liệu khuôn mặt được AI trích xuất vector 128 chiều, mã hoá <strong>AES-256</strong> lưu tại máy chủ bệnh viện và tuân thủ Nghị định 13/2023/NĐ-CP.
+        <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center leading-relaxed">
+          Dữ liệu khuôn mặt được AI trích xuất vector 512D, mã hoá <strong>AES-256</strong> lưu tại máy chủ bệnh viện và tuân thủ Nghị định 13/2023/NĐ-CP.
         </div>
       </div>
     </Dialog>

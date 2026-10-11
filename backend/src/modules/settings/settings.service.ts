@@ -3,7 +3,7 @@
  * Cho phép quản trị thay đổi thông tin bệnh viện, quy tắc nghiệp vụ, mẫu in mặc định…
  * mà không cần sửa mã nguồn hay triển khai lại.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { settings } from '../../db/schema';
@@ -22,11 +22,19 @@ export interface SettingItem {
 const CACHE_PREFIX = 'setting:';
 
 @Injectable()
-export class SettingsService {
+export class SettingsService implements OnModuleInit {
   constructor(
     private readonly db: DbService,
     private readonly cache: CacheService,
   ) {}
+
+  async onModuleInit() {
+    try {
+      await this.ensureDefaults();
+    } catch (e: any) {
+      console.warn('[SettingsService] Lỗi nạp cấu hình mặc định:', e?.message || e);
+    }
+  }
 
   private async invalidate(key?: string): Promise<void> {
     if (key) await this.cache.del(`${CACHE_PREFIX}${key}`);
@@ -35,6 +43,7 @@ export class SettingsService {
   }
 
   async all() {
+    await this.ensureDefaults();
     const rows = await this.db.db
       .select()
       .from(settings)
@@ -141,10 +150,15 @@ export class SettingsService {
 
   async ensureDefaults(userId?: number): Promise<number> {
     const defaults = defaultSettings();
-    const [countRow] = await this.db.db.select({ total: sql<number>`count(*)::int` }).from(settings);
-    if ((countRow?.total ?? 0) > 0) return 0;
-    await this.setMany(defaults, userId);
-    return defaults.length;
+    const existing = await this.db.db.select({ key: settings.key }).from(settings);
+    const existingKeys = new Set(existing.map((r) => r.key));
+    const missing = defaults.filter((d) => !existingKeys.has(d.key));
+    if (missing.length > 0) {
+      for (const item of missing) {
+        await this.set(item, userId);
+      }
+    }
+    return missing.length;
   }
 
   private inferType(value: unknown): string {
@@ -220,6 +234,24 @@ export function defaultSettings(): SettingItem[] {
       group: 'kiosk',
       label: 'Thời gian hiệu lực mã QR Kiosk (giây)',
       description: 'Thời gian sống của mỗi mã QR động và mã hiện diện 4 số trước khi tự động đổi mới',
+      valueType: 'number',
+      isPublic: true,
+    },
+    {
+      key: 'kiosk.earlyCheckinMinutes',
+      value: 60,
+      group: 'kiosk',
+      label: 'Thời gian cho phép đến sớm trước ca (phút)',
+      description: 'Số phút trước khi ca trực bắt đầu mà Bác sĩ được phép quét QR mở khoá phòng khám và Kiosk hiển thị ca sắp tới',
+      valueType: 'number',
+      isPublic: true,
+    },
+    {
+      key: 'kiosk.lateCheckoutMinutes',
+      value: 30,
+      group: 'kiosk',
+      label: 'Thời gian ân hạn sau ca trực (phút)',
+      description: 'Số phút sau khi ca trực kết thúc mà Bác sĩ vẫn được phép quét QR mở khoá Kiosk để hoàn tất bàn giao ca',
       valueType: 'number',
       isPublic: true,
     },

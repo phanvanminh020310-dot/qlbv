@@ -113,6 +113,42 @@ export class KioskService {
     return 90;
   }
 
+  /**
+   * Lấy thời gian cho phép bác sĩ đến sớm trước ca (phút) từ CSDL cấu hình
+   */
+  async getEarlyCheckinMinutes(): Promise<number> {
+    try {
+      const dbVal = await this.settings.get<any>('kiosk.earlyCheckinMinutes');
+      if (dbVal !== null && dbVal !== undefined) {
+        const num = Number(dbVal);
+        if (Number.isFinite(num) && num >= 0 && num <= 240) {
+          return Math.floor(num);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi lấy cấu hình earlyCheckinMinutes:', e?.message || e);
+    }
+    return 60;
+  }
+
+  /**
+   * Lấy thời gian ân hạn sau ca trực để bàn giao (phút) từ CSDL cấu hình
+   */
+  async getLateCheckoutMinutes(): Promise<number> {
+    try {
+      const dbVal = await this.settings.get<any>('kiosk.lateCheckoutMinutes');
+      if (dbVal !== null && dbVal !== undefined) {
+        const num = Number(dbVal);
+        if (Number.isFinite(num) && num >= 0 && num <= 240) {
+          return Math.floor(num);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi lấy cấu hình lateCheckoutMinutes:', e?.message || e);
+    }
+    return 30;
+  }
+
   private get aiServiceUrl(): string {
     return (
       process.env.AI_SERVICE_URL ||
@@ -243,8 +279,10 @@ export class KioskService {
         const candidateDates = candidateDutyDates(now);
         const allRosterRows = await this.loadActiveRoster(room.code, candidateDates);
 
-        const EARLY_BUFFER_MS = 60 * 60 * 1000; // Cho phép đến sớm 60 phút
-        const GRACE_BUFFER_MS = 30 * 60 * 1000; // Giao ca muộn 30 phút
+        const earlyMinutes = await this.getEarlyCheckinMinutes();
+        const lateMinutes = await this.getLateCheckoutMinutes();
+        const EARLY_BUFFER_MS = earlyMinutes * 60 * 1000;
+        const GRACE_BUFFER_MS = lateMinutes * 60 * 1000;
 
         let upcomingRow: any = null;
         let recentRow: any = null;
@@ -576,8 +614,10 @@ export class KioskService {
       );
     }
 
-    const EARLY_CHECKIN_MS = 60 * 60 * 1000; // Cho phép đến sớm tối đa 60 phút
-    const LATE_CHECKOUT_MS = 30 * 60 * 1000; // Cho phép hoàn tất sau ca tối đa 30 phút
+    const earlyMinutes = await this.getEarlyCheckinMinutes();
+    const lateMinutes = await this.getLateCheckoutMinutes();
+    const EARLY_CHECKIN_MS = earlyMinutes * 60 * 1000;
+    const LATE_CHECKOUT_MS = lateMinutes * 60 * 1000;
 
     let matchedSlot: any = null;
     let closestSlot: any = null;
@@ -586,7 +626,7 @@ export class KioskService {
     for (const slot of doctorSlots) {
       const iv = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
 
-      // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - 60p) đến (giờ kết thúc + 30p)
+      // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - earlyMinutes) đến (giờ kết thúc + lateMinutes)
       if (now >= iv.start - EARLY_CHECKIN_MS && now <= iv.end + LATE_CHECKOUT_MS) {
         matchedSlot = { slot, iv };
         break;
@@ -604,11 +644,11 @@ export class KioskService {
       const iv = closestSlot?.iv;
       if (closest && iv && now > iv.end + LATE_CHECKOUT_MS) {
         throw new ForbiddenException(
-          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) đã kết thúc lúc ${closest.endTime}. Hiện tại không trong giờ làm việc.`,
+          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) đã kết thúc lúc ${closest.endTime}. Đã quá thời gian ân hạn (${lateMinutes} phút).`,
         );
       } else if (closest && iv) {
         throw new ForbiddenException(
-          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) chưa đến giờ bắt đầu. Vui lòng quay lại trước giờ ca trực tối đa 60 phút.`,
+          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) chưa đến giờ bắt đầu. Vui lòng quay lại trước giờ ca trực tối đa ${earlyMinutes} phút.`,
         );
       } else {
         throw new ForbiddenException(
