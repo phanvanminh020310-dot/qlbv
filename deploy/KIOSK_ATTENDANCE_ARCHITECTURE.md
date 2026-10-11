@@ -84,13 +84,11 @@ Hệ thống điểm danh bác sĩ và kiểm soát máy trạm phòng khám ho�
 
 ---
 
-## 3. CƠ CHẾ BẢO VỆ CHỐNG XOÁ FILE VĨNH VIỄN TRÊN WINDOWS
+## 3. CƠ CHẾ BẢO VỆ MÁY TRẠM & BẢN CÀI ĐẶT WINDOWS TINH GỌN (2 FILE DUY NHẤT)
 
-Các tệp cấu hình tại thư mục `deploy/windows/`:
-1. `khoa_toan_dien_kiosk.bat`: Khóa phím Windows, Win+D, Task Manager, thanh tác vụ Taskbar.
-2. `cai_dat_chong_xoa_vinh_vien.bat`: Đưa file vào thư mục ẩn `C:\ProgramData\QLBS_Kiosk`, phân quyền NTFS `icacls` cấm người dùng xoá (`Deny Delete`), đồng thời đăng ký Windows Task Scheduler khởi động ngầm.
-3. `chay_kiosk_phong_kham.bat`: Khởi chạy Edge/Chrome Kiosk kết nối tới VPS 1.
-4. `go_bo_kiosk_it.bat` & `khoi_phuc_windows_mac_dinh.bat`: Kịch bản dành riêng cho IT bệnh viện khi cần bảo trì, khôi phục cài đặt mặc định của Windows.
+Tại thư mục `deploy/windows/`, hệ thống đã được tinh giản thành đúng 2 file tự động hóa:
+1. `cai_dat_kiosk.bat`: Cài đặt trọn gói A-Z. Cấu hình IP và mã phòng khám, khóa toàn diện bàn phím (`Win+D`, Task Manager...), khóa quyền NTFS tệp tin, tự động thu nhỏ giải phóng Desktop khi mở khóa, tự động khóa lại khi hết ca trực, và tự khởi động ngầm cùng Windows.
+2. `go_bo_kiosk.bat`: Kịch bản dự phòng cho bộ phận IT khi cần bảo trì hoặc gỡ bỏ triệt để Kiosk, khôi phục 100% cài đặt mặc định của Windows.
 
 ---
 

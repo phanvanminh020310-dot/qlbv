@@ -46,6 +46,7 @@ export default function KioskPage() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
+  const [shiftEndMs, setShiftEndMs] = useState<number | null>(null);
 
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const secretClickCountRef = useRef(0);
@@ -144,8 +145,13 @@ export default function KioskPage() {
 
       if (data?.isUnlocked) {
         setIsUnlocked(true);
-        setActiveSession(data.activeSession);
+        if (data.activeDoctor) setActiveSession(data.activeDoctor);
+        if (data.shiftEndMs) setShiftEndMs(data.shiftEndMs);
         return;
+      } else {
+        setIsUnlocked(false);
+        setActiveSession(null);
+        setShiftEndMs(null);
       }
 
       if (data?.qrSession?.totalExpiresSeconds) {
@@ -257,6 +263,7 @@ export default function KioskPage() {
           if (payload.type === 'UNLOCK_SUCCESS') {
             setIsUnlocked(true);
             setActiveSession(payload.doctor);
+            if (payload.shiftEndMs) setShiftEndMs(payload.shiftEndMs);
             KioskLockdown.exitFullscreen().catch(() => {});
           }
         } catch (err) {
@@ -267,6 +274,7 @@ export default function KioskPage() {
       eventSource.addEventListener('LOCK_EVENT', () => {
         setIsUnlocked(false);
         setActiveSession(null);
+        setShiftEndMs(null);
         KioskLockdown.enterFullscreen().catch(() => {});
         fetchKioskStatus(terminalId);
       });
@@ -284,6 +292,25 @@ export default function KioskPage() {
       }
     };
   }, [roomCode, terminalId]);
+
+  // 6b. Tự động khoá máy khi qua ca người khác và quá thời gian ân hạn
+  useEffect(() => {
+    if (!isUnlocked || !shiftEndMs) return;
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      if (now >= shiftEndMs) {
+        console.log('[Kiosk] Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá máy cho ca tiếp theo...');
+        setIsUnlocked(false);
+        setActiveSession(null);
+        setShiftEndMs(null);
+        KioskLockdown.enterFullscreen().catch(() => {});
+        fetchKioskStatus(terminalId);
+      }
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [isUnlocked, shiftEndMs, terminalId]);
 
   // 7. Khoá tính năng Kiosk chống can thiệp (Anti-Tamper Lockdown)
   useEffect(() => {

@@ -194,11 +194,7 @@ export class KioskController {
   @Post('lock')
   @ApiOperation({ summary: 'Khoá lại màn hình phòng khám khi Bác sĩ rời phòng' })
   async lockRoom(@Body() body: { roomCode: string }) {
-    this.service.broadcastToRoom(body.roomCode, 'LOCK_EVENT', {
-      type: 'LOCK_TRIGGERED',
-      roomCode: body.roomCode,
-      timestamp: new Date().toISOString(),
-    });
+    this.service.lockRoom(body.roomCode);
     return { success: true, message: 'Đã khoá phòng khám.' };
   }
 

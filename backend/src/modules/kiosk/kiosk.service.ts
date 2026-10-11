@@ -40,6 +40,16 @@ export interface KioskSession {
   verifiedDoctor?: any;
 }
 
+export interface ActiveRoomUnlock {
+  roomCode: string;
+  doctor: any;
+  shift: any;
+  unlockedAt: number;
+  shiftEndMs: number;
+  terminalId?: string;
+  attendanceId?: string;
+}
+
 @Injectable()
 export class KioskService {
   private readonly sessions = new Map<string, KioskSession>();
@@ -47,6 +57,8 @@ export class KioskService {
   private readonly terminalClients = new Map<string, Response>();
   // Lưu danh sách terminal theo từng roomCode
   private readonly roomTerminals = new Map<string, Set<string>>();
+  // Lưu trạng thái phòng khám đã mở khoá và thời điểm hết hạn ca trực (+ ân hạn)
+  private readonly activeRoomUnlocks = new Map<string, ActiveRoomUnlock>();
 
   // Thư mục lưu ảnh khuôn mặt bác sĩ
   private readonly uploadDir = path.resolve(process.cwd(), 'uploads', 'faces');
@@ -79,6 +91,29 @@ export class KioskService {
         }
       }
     }, 10 * 60 * 1000);
+
+    // Tự động kiểm tra và khoá phòng khám khi ca trực kết thúc + quá thời gian ân hạn
+    setInterval(() => {
+      const now = Date.now();
+      for (const [rCode, info] of this.activeRoomUnlocks.entries()) {
+        if (now > info.shiftEndMs) {
+          this.activeRoomUnlocks.delete(rCode);
+          this.broadcastToRoom(rCode, 'LOCK_EVENT', {
+            type: 'AUTO_LOCK_SHIFT_EXPIRED',
+            roomCode: rCode,
+            reason: 'Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá phòng khám cho ca tiếp theo.',
+            timestamp: new Date().toISOString(),
+          });
+          void this.audit.log({
+            action: 'KIOSK_AUTO_LOCK',
+            module: 'KIOSK',
+            entity: 'duty_attendance',
+            description: `Hệ thống tự động khoá máy tính phòng khám ${rCode} do ca trực của ${info.doctor?.title || ''} ${info.doctor?.fullName || ''} đã kết thúc và quá thời gian ân hạn`,
+            entityId: rCode,
+          });
+        }
+      }
+    }, 10 * 1000);
   }
 
   /**
@@ -261,6 +296,20 @@ export class KioskService {
     }
   }
 
+  /**
+   * Khoá phòng khám và thông báo cho máy trạm (xoá trạng thái mở khoá)
+   */
+  lockRoom(roomCode: string, reason?: string) {
+    const code = roomCode.toUpperCase().trim();
+    this.activeRoomUnlocks.delete(code);
+    this.broadcastToRoom(code, 'LOCK_EVENT', {
+      type: 'LOCK_TRIGGERED',
+      roomCode: code,
+      reason: reason || 'Khoá phòng khám theo yêu cầu',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   async getKioskStatus(
     roomCode: string,
     terminalId?: string,
@@ -376,7 +425,30 @@ export class KioskService {
 
     const qrExpiresSec = await this.getQrExpiresSeconds();
 
-    // 3. Tạo hoặc lấy phiên QR còn hạn của đúng máy trạm (terminalId) này
+    // 3. Kiểm tra trạng thái mở khoá ca trực của phòng khám
+    const activeUnlock = this.activeRoomUnlocks.get(code);
+    let isUnlocked = false;
+    let unlockedDoctor = null;
+    let shiftEndMs: number | null = null;
+
+    if (activeUnlock) {
+      if (now > activeUnlock.shiftEndMs) {
+        // Đã quá hạn ca trực + ân hạn -> Tự động xoá và khoá lại
+        this.activeRoomUnlocks.delete(code);
+        this.broadcastToRoom(code, 'LOCK_EVENT', {
+          type: 'AUTO_LOCK_SHIFT_EXPIRED',
+          roomCode: code,
+          reason: 'Ca trực đã kết thúc và quá thời gian ân hạn.',
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        isUnlocked = true;
+        unlockedDoctor = activeUnlock.doctor;
+        shiftEndMs = activeUnlock.shiftEndMs;
+      }
+    }
+
+    // 4. Tạo hoặc lấy phiên QR còn hạn của đúng máy trạm (terminalId) này
     let activeSession = Array.from(this.sessions.values()).find(
       (s) =>
         s.roomCode === code &&
@@ -393,7 +465,9 @@ export class KioskService {
 
     return {
       room: { code: room.code, name: room.name },
-      isUnlocked: false,
+      isUnlocked,
+      activeDoctor: unlockedDoctor,
+      shiftEndMs,
       currentScheduled,
       serverTime: Date.now(),
       qrSession: {
@@ -729,12 +803,29 @@ export class KioskService {
       shiftName: currentShift.shiftName || 'Ca làm việc',
     };
 
+    // Tính toán mốc thời gian hết ca + thời gian ân hạn sau ca trực
+    const iv = matchedSlot.iv;
+    const shiftEndMs = iv.end + lateMinutes * 60 * 1000;
+
+    // Lưu vào danh sách phòng khám đang mở khoá để tự động khoá khi hết ca
+    this.activeRoomUnlocks.set(session.roomCode, {
+      roomCode: session.roomCode,
+      doctor: session.verifiedDoctor,
+      shift: currentShift,
+      unlockedAt: now,
+      shiftEndMs,
+      terminalId: session.terminalId,
+      attendanceId,
+    });
+
     const unlockPayload = {
       type: 'UNLOCK_SUCCESS',
       doctor: session.verifiedDoctor,
       roomCode: session.roomCode,
       terminalId: session.terminalId,
       attendanceId,
+      shiftEndMs,
+      lateCheckoutMinutes: lateMinutes,
     };
 
     // Bắn đích danh máy tính phòng khám đã sinh mã QR này (Unicast)
