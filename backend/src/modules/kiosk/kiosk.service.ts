@@ -372,6 +372,7 @@ export class KioskService {
   // --- 2. GỌI MÁY CHỦ AI (VPS 2) & SO KHỚP SINH TRẮC HỌC ---
 
   async extractEmbeddingFromAi(imageBase64: string): Promise<number[]> {
+    let errorDetail = '';
     try {
       const resp = await fetch(`${this.aiServiceUrl}/api/ai/extract-embedding`, {
         method: 'POST',
@@ -383,9 +384,17 @@ export class KioskService {
         if (data.success && Array.isArray(data.embedding)) {
           return data.embedding;
         }
+      } else {
+        const errJson: any = await resp.json().catch(() => null);
+        if (errJson?.detail) {
+          errorDetail = errJson.detail;
+        }
       }
     } catch (err: any) {
       console.warn(`[KioskService] Không gọi được AI Engine (${this.aiServiceUrl}):`, err?.message);
+    }
+    if (errorDetail) {
+      throw new BadRequestException(errorDetail);
     }
     throw new BadRequestException('Máy chủ AI không thể trích xuất vector khuôn mặt. Vui lòng thử lại.');
   }
@@ -469,9 +478,9 @@ export class KioskService {
       }
     }
 
-    if (!bestMatch || maxCosine < 0.60) {
+    if (!bestMatch || maxCosine < 0.50) {
       throw new ForbiddenException(
-        `Khuôn mặt không khớp với hồ sơ Bác sĩ nào trong CSDL bệnh viện (Độ tương đồng: ${(maxCosine * 100).toFixed(1)}%).`,
+        `Khuôn mặt không khớp với hồ sơ Bác sĩ nào trong CSDL bệnh viện (Độ tương đồng: ${(Math.max(0, maxCosine) * 100).toFixed(1)}%).`,
       );
     }
 
