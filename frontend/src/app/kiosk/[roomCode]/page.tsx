@@ -83,12 +83,15 @@ export default function KioskPage() {
     if (!roomCode) return;
     const tid = curTid || terminalId;
     try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const query = new URLSearchParams({ room: roomCode });
       if (tid) query.set('terminalId', tid);
+      if (origin) query.set('clientOrigin', origin);
+
       const resp = await fetch(`/api/kiosk/status?${query.toString()}`);
       if (!resp.ok) {
         // Dự phòng phiên QR cục bộ nếu API trả lỗi
-        const fallbackUrl = `${window.location.origin}/scan/${roomCode}_${Date.now()}`;
+        const fallbackUrl = `${origin}/scan/${roomCode}_${Date.now()}`;
         setQrUrl((prev) => prev || fallbackUrl);
         return;
       }
@@ -109,12 +112,15 @@ export default function KioskPage() {
         return;
       }
 
-      if (data?.qrSession?.qrUrl) {
+      if (data?.qrSession?.sessionId) {
+        // Bắt buộc dùng window.location.origin của trình duyệt đang mở Kiosk
+        // Đảm bảo điện thoại quét QR luôn mở đúng địa chỉ IP/domain của web (vd: http://172.16.13.75:3000/scan/...)
+        const scanUrl = `${origin}/scan/${data.qrSession.sessionId}`;
+        setQrUrl(scanUrl);
+        setExpiresInSeconds(data.qrSession.expiresInSeconds || 90);
+      } else if (data?.qrSession?.qrUrl) {
         setQrUrl(data.qrSession.qrUrl);
         setExpiresInSeconds(data.qrSession.expiresInSeconds || 90);
-        if (data.qrSession.handshakePin) {
-          setHandshakePin(data.qrSession.handshakePin);
-        }
       }
     } catch (err: any) {
       console.warn('Lỗi nạp trạng thái Kiosk:', err?.message || err);
@@ -129,20 +135,22 @@ export default function KioskPage() {
   const refreshQrSession = async () => {
     setIsRefreshing(true);
     try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const resp = await fetch('/api/kiosk/session/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode, roomName: roomInfo.name, terminalId }),
+        body: JSON.stringify({ roomCode, roomName: roomInfo.name, terminalId, clientOrigin: origin }),
       });
       if (resp.ok) {
         const raw = await resp.json();
         const data = raw?.data ?? raw;
-        if (data?.qrUrl) {
+        if (data?.sessionId) {
+          const scanUrl = `${origin}/scan/${data.sessionId}`;
+          setQrUrl(scanUrl);
+          setExpiresInSeconds(data.expiresInSeconds || 90);
+        } else if (data?.qrUrl) {
           setQrUrl(data.qrUrl);
           setExpiresInSeconds(data.expiresInSeconds || 90);
-          if (data.handshakePin) {
-            setHandshakePin(data.handshakePin);
-          }
         }
       }
     } catch (err) {

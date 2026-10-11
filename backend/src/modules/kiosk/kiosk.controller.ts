@@ -18,36 +18,41 @@ export class KioskController {
   async getStatus(
     @Query('room') room: string,
     @Query('terminalId') terminalId: string,
+    @Query('clientOrigin') clientOrigin: string,
+    @Headers('x-forwarded-host') fwdHost: string,
     @Headers('host') host: string,
     @Headers('x-forwarded-proto') proto?: string,
   ) {
     const isHttps = proto === 'https' || (host && !host.includes(':') && !/^(\d+\.){3}\d+/.test(host));
     const protocol = isHttps ? 'https' : 'http';
-    return this.service.getKioskStatus(room || 'PK01', terminalId, host, protocol);
+    const effectiveHost = (fwdHost && !fwdHost.includes('api:')) ? fwdHost : host;
+    return this.service.getKioskStatus(room || 'PK01', terminalId, clientOrigin, effectiveHost, protocol);
   }
 
   @Public()
   @Post('session/refresh')
   @ApiOperation({ summary: 'Làm mới mã QR cho phòng khám' })
   async refreshSession(
-    @Body() body: { roomCode: string; roomName?: string; terminalId?: string },
+    @Body() body: { roomCode: string; roomName?: string; terminalId?: string; clientOrigin?: string },
+    @Headers('x-forwarded-host') fwdHost: string,
     @Headers('host') host: string,
     @Headers('x-forwarded-proto') proto?: string,
   ) {
     const isHttps = proto === 'https' || (host && !host.includes(':') && !/^(\d+\.){3}\d+/.test(host));
     const protocol = isHttps ? 'https' : 'http';
+    const effectiveHost = (fwdHost && !fwdHost.includes('api:')) ? fwdHost : host;
     const session = this.service.createQrSession(
       body.roomCode || 'PK01',
       body.roomName || `Phòng khám ${body.roomCode}`,
       body.terminalId,
-      host,
+      body.clientOrigin,
+      effectiveHost,
       protocol,
     );
     return {
       success: true,
       sessionId: session.sessionId,
       qrUrl: session.qrUrl,
-      handshakePin: session.handshakePin,
       expiresInSeconds: 90,
       challengeSequence: session.challengeSequence,
     };

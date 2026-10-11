@@ -27,7 +27,7 @@ export interface KioskSession {
   roomCode: string;
   roomName: string;
   terminalId: string;       // ID máy trạm duy nhất gắn với phiên này
-  handshakePin: string;     // Mã 4 số xác nhận hiện diện tại chỗ (Live Visual Handshake PIN)
+  handshakePin?: string;    // Mã 4 số xác nhận hiện diện (tuỳ chọn)
   createdAt: number;
   expiresAt: number;
   qrUrl: string;
@@ -150,7 +150,13 @@ export class KioskService {
     }
   }
 
-  async getKioskStatus(roomCode: string, terminalId?: string, hostHeader?: string, protocol: string = 'http') {
+  async getKioskStatus(
+    roomCode: string,
+    terminalId?: string,
+    clientOrigin?: string,
+    hostHeader?: string,
+    protocol: string = 'http',
+  ) {
     const code = roomCode.toUpperCase().trim();
     const tid = terminalId?.trim() || '';
 
@@ -231,7 +237,7 @@ export class KioskService {
     );
 
     if (!activeSession) {
-      activeSession = this.createQrSession(code, room.name, tid, hostHeader, protocol);
+      activeSession = this.createQrSession(code, room.name, tid, clientOrigin, hostHeader, protocol);
     }
 
     return {
@@ -241,7 +247,6 @@ export class KioskService {
       qrSession: {
         sessionId: activeSession.sessionId,
         qrUrl: activeSession.qrUrl,
-        handshakePin: activeSession.handshakePin,
         expiresInSeconds: Math.max(0, Math.round((activeSession.expiresAt - Date.now()) / 1000)),
         challengeSequence: activeSession.challengeSequence,
       },
@@ -252,19 +257,36 @@ export class KioskService {
     roomCode: string,
     roomName: string,
     terminalId?: string,
+    clientOrigin?: string,
     hostHeader?: string,
     protocol: string = 'http',
   ): KioskSession {
     const code = roomCode.toUpperCase().trim();
     const tid = terminalId?.trim() || '';
     const sessionId = crypto.randomUUID();
-    const host = hostHeader || process.env.PUBLIC_URL || 'localhost:3000';
-    const qrUrl = `${protocol}://${host}/scan/${sessionId}`;
 
-    // Sinh mã xác nhận hiện diện 4 số ngẫu nhiên (1000 - 9999)
-    const handshakePin = Math.floor(1000 + Math.random() * 9000).toString();
+    // Xác định URL cơ sở công khai (Tránh địa chỉ nội bộ container Docker như api:4000)
+    let baseUrl = '';
+    if (clientOrigin && clientOrigin.startsWith('http')) {
+      baseUrl = clientOrigin.replace(/\/+$/, '');
+    } else {
+      let host = hostHeader || process.env.PUBLIC_URL || 'localhost:3000';
+      if (host.includes('api:') || host === 'api' || host.endsWith(':4000')) {
+        const publicUrl = process.env.PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL;
+        if (publicUrl) {
+          baseUrl = publicUrl.replace(/\/+$/, '');
+        } else {
+          host = host.replace(/api:4000/g, 'localhost:3000').replace(/:4000$/, ':3000');
+          baseUrl = `${protocol}://${host}`;
+        }
+      } else {
+        baseUrl = `${protocol}://${host}`;
+      }
+    }
 
-    const challengeSequence = ['BLINK', 'HEAD_TURN_LEFT', 'COLOR_FLASH'];
+    const qrUrl = `${baseUrl}/scan/${sessionId}`;
+
+    const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
 
     const session: KioskSession = {
@@ -272,7 +294,6 @@ export class KioskService {
       roomCode: code,
       roomName,
       terminalId: tid,
-      handshakePin,
       createdAt: Date.now(),
       expiresAt: Date.now() + 90 * 1000, // 90 giây
       qrUrl,
