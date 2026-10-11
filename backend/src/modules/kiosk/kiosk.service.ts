@@ -413,11 +413,12 @@ export class KioskService {
         const data: any = await resp.json();
         return { isLive: !!data.is_live, reason: data.reason };
       }
+      const errJson: any = await resp.json().catch(() => null);
+      return { isLive: false, reason: errJson?.detail || 'Không thể thẩm định người thật' };
     } catch (err: any) {
-      console.warn(`[KioskService] Lỗi gọi Liveness AI:`, err?.message);
+      console.warn(`[KioskService] Lỗi gọi Liveness AI (${this.aiServiceUrl}):`, err?.message);
+      throw new BadRequestException(`Không thể kết nối đến máy chủ AI thẩm định người thật (${this.aiServiceUrl}). Vui lòng kiểm tra lại dịch vụ.`);
     }
-    // Nếu AI container phản hồi tạm thời chậm, dự phòng kiểm tra hợp lệ
-    return { isLive: true };
   }
 
   // --- 3. XÁC THỰC MỞ KHOÁ TOÀN DIỆN: AI + CSDL LỊCH TRỰC QLBV ---
