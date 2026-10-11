@@ -51,6 +51,7 @@ export class KioskController {
     const isHttps = proto === 'https' || (host && !host.includes(':') && !/^(\d+\.){3}\d+/.test(host));
     const protocol = isHttps ? 'https' : 'http';
     const effectiveHost = (fwdHost && !fwdHost.includes('api:')) ? fwdHost : host;
+    const qrExpiresSec = await this.service.getQrExpiresSeconds();
     const session = this.service.createQrSession(
       body.roomCode || 'PK01',
       body.roomName || `Phòng khám ${body.roomCode}`,
@@ -58,12 +59,14 @@ export class KioskController {
       body.clientOrigin,
       effectiveHost,
       protocol,
+      qrExpiresSec,
     );
     return {
       success: true,
       sessionId: session.sessionId,
       qrUrl: session.qrUrl,
-      expiresInSeconds: 90,
+      expiresInSeconds: qrExpiresSec,
+      totalExpiresSeconds: qrExpiresSec,
       challengeSequence: session.challengeSequence,
       serverTime: Date.now(),
     };
@@ -160,7 +163,7 @@ export class KioskController {
   @ApiOperation({ summary: 'Mở khoá khẩn cấp tại chỗ bằng mã PIN IT' })
   async overridePin(@Body() body: { roomCode: string; pin: string; terminalId?: string; reason?: string }) {
     const masterPin = await this.service.getItMasterPin();
-    if (body.pin !== masterPin) {
+    if (String(body.pin || '').trim() !== String(masterPin || '').trim()) {
       throw new UnauthorizedException('Mã PIN khẩn cấp IT không chính xác.');
     }
 

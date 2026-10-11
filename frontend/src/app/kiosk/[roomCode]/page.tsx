@@ -34,6 +34,7 @@ export default function KioskPage() {
   const [handshakePin, setHandshakePin] = useState<string>('');
   const [terminalId, setTerminalId] = useState<string>('');
   const [expiresInSeconds, setExpiresInSeconds] = useState<number>(90);
+  const totalExpiresRef = useRef<number>(90);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -147,15 +148,19 @@ export default function KioskPage() {
         return;
       }
 
+      if (data?.qrSession?.totalExpiresSeconds) {
+        totalExpiresRef.current = data.qrSession.totalExpiresSeconds;
+      }
+
       if (data?.qrSession?.sessionId) {
         // Bắt buộc dùng window.location.origin của trình duyệt đang mở Kiosk
         // Đảm bảo điện thoại quét QR luôn mở đúng địa chỉ IP/domain của web (vd: http://172.16.13.75:3000/scan/...)
         const scanUrl = `${origin}/scan/${data.qrSession.sessionId}`;
         setQrUrl(scanUrl);
-        setExpiresInSeconds(data.qrSession.expiresInSeconds || 90);
+        setExpiresInSeconds(data.qrSession.expiresInSeconds ?? totalExpiresRef.current);
       } else if (data?.qrSession?.qrUrl) {
         setQrUrl(data.qrSession.qrUrl);
-        setExpiresInSeconds(data.qrSession.expiresInSeconds || 90);
+        setExpiresInSeconds(data.qrSession.expiresInSeconds ?? totalExpiresRef.current);
       }
     } catch (err: any) {
       console.warn('Lỗi nạp trạng thái Kiosk:', err?.message || err);
@@ -182,13 +187,16 @@ export default function KioskPage() {
         if (data?.serverTime) {
           syncServerTime(data.serverTime);
         }
+        if (data?.totalExpiresSeconds) {
+          totalExpiresRef.current = data.totalExpiresSeconds;
+        }
         if (data?.sessionId) {
           const scanUrl = `${origin}/scan/${data.sessionId}`;
           setQrUrl(scanUrl);
-          setExpiresInSeconds(data.expiresInSeconds || 90);
+          setExpiresInSeconds(data.expiresInSeconds ?? totalExpiresRef.current);
         } else if (data?.qrUrl) {
           setQrUrl(data.qrUrl);
-          setExpiresInSeconds(data.expiresInSeconds || 90);
+          setExpiresInSeconds(data.expiresInSeconds ?? totalExpiresRef.current);
         }
       }
     } catch (err) {
@@ -221,7 +229,7 @@ export default function KioskPage() {
       setExpiresInSeconds((prev) => {
         if (prev <= 1) {
           refreshQrSession();
-          return 90;
+          return totalExpiresRef.current;
         }
         return prev - 1;
       });

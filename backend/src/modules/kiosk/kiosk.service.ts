@@ -65,6 +65,16 @@ export class KioskService {
         fs.mkdirSync(this.uploadDir, { recursive: true });
       } catch {}
     }
+
+    // Tự động dọn dẹp các phiên QR hết hạn quá 30 phút để giải phóng hoàn toàn bộ nhớ RAM
+    setInterval(() => {
+      const now = Date.now();
+      for (const [sId, s] of this.sessions.entries()) {
+        if (s.expiresAt < now - 30 * 60 * 1000) {
+          this.sessions.delete(sId);
+        }
+      }
+    }, 10 * 60 * 1000);
   }
 
   /**
@@ -72,12 +82,35 @@ export class KioskService {
    */
   async getItMasterPin(): Promise<string> {
     try {
-      const dbPin = await this.settings.get<string>('kiosk.itMasterPin');
-      if (dbPin && typeof dbPin === 'string' && dbPin.trim().length > 0) {
-        return dbPin.trim();
+      const dbPin = await this.settings.get<any>('kiosk.itMasterPin');
+      if (dbPin !== null && dbPin !== undefined) {
+        const pinStr = String(dbPin).trim();
+        if (pinStr.length > 0) {
+          return pinStr;
+        }
       }
-    } catch {}
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi lấy mã PIN IT từ CSDL:', e?.message || e);
+    }
     return (process.env.IT_MASTER_PIN || '999888').trim();
+  }
+
+  /**
+   * Lấy thời gian hiệu lực của mã QR từ CSDL (Quản trị cấu hình)
+   */
+  async getQrExpiresSeconds(): Promise<number> {
+    try {
+      const dbSec = await this.settings.get<any>('kiosk.qrExpiresSeconds');
+      if (dbSec !== null && dbSec !== undefined) {
+        const num = Number(dbSec);
+        if (Number.isFinite(num) && num >= 10 && num <= 600) {
+          return Math.floor(num);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
+    }
+    return 90;
   }
 
   private get aiServiceUrl(): string {
@@ -227,6 +260,8 @@ export class KioskService {
       console.warn('[KioskService] Lỗi tra cứu lịch trực:', e?.message || e);
     }
 
+    const qrExpiresSec = await this.getQrExpiresSeconds();
+
     // 3. Tạo hoặc lấy phiên QR còn hạn của đúng máy trạm (terminalId) này
     let activeSession = Array.from(this.sessions.values()).find(
       (s) =>
@@ -237,8 +272,10 @@ export class KioskService {
     );
 
     if (!activeSession) {
-      activeSession = this.createQrSession(code, room.name, tid, clientOrigin, hostHeader, protocol);
+      activeSession = this.createQrSession(code, room.name, tid, clientOrigin, hostHeader, protocol, qrExpiresSec);
     }
+
+    const remainingSec = Math.max(0, Math.round((activeSession.expiresAt - Date.now()) / 1000));
 
     return {
       room: { code: room.code, name: room.name },
@@ -248,7 +285,8 @@ export class KioskService {
       qrSession: {
         sessionId: activeSession.sessionId,
         qrUrl: activeSession.qrUrl,
-        expiresInSeconds: Math.max(0, Math.round((activeSession.expiresAt - Date.now()) / 1000)),
+        expiresInSeconds: remainingSec,
+        totalExpiresSeconds: qrExpiresSec,
         challengeSequence: activeSession.challengeSequence,
       },
     };
@@ -261,6 +299,7 @@ export class KioskService {
     clientOrigin?: string,
     hostHeader?: string,
     protocol: string = 'http',
+    expiresInSeconds: number = 90,
   ): KioskSession {
     const code = roomCode.toUpperCase().trim();
     const tid = terminalId?.trim() || '';
@@ -289,6 +328,7 @@ export class KioskService {
 
     const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
+    const ttlSeconds = Math.max(10, Math.min(600, expiresInSeconds || 90));
 
     const session: KioskSession = {
       sessionId,
@@ -296,7 +336,7 @@ export class KioskService {
       roomName,
       terminalId: tid,
       createdAt: Date.now(),
-      expiresAt: Date.now() + 90 * 1000, // 90 giây
+      expiresAt: Date.now() + ttlSeconds * 1000,
       qrUrl,
       challengeSequence,
       flashColorSequence,
