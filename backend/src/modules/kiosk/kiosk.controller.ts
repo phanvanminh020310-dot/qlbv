@@ -3,11 +3,11 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Public } from '../../common/decorators';
+import { ClientInfo, CurrentUser, Public } from '../../common/decorators';
+import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 import { KioskService } from './kiosk.service';
 
 @ApiTags('Kiosk · Điểm danh Sinh trắc học & Mở khoá Phòng khám')
-@Public()
 @Controller('kiosk')
 export class KioskController {
   constructor(private readonly service: KioskService) {}
@@ -154,8 +154,8 @@ export class KioskController {
   @Public()
   @Get('biometrics/status/:userId')
   @ApiOperation({ summary: 'Kiểm tra trạng thái đăng ký sinh trắc học của nhân viên' })
-  async getBiometricStatus(@Param('userId') userId: string) {
-    return this.service.getBiometricStatus(parseInt(userId, 10));
+  async getBiometricStatus(@Param('userId') userId: string, @CurrentUser() user?: AccessContext) {
+    return this.service.getBiometricStatus(parseInt(userId, 10), user);
   }
 
   @Public()
@@ -202,11 +202,14 @@ export class KioskController {
     return { success: true, message: 'Đã khoá phòng khám.' };
   }
 
-  @Public()
   @Post('enroll')
-  @ApiOperation({ summary: 'Đăng ký khuôn mặt Bác sĩ (gọi sang VPS 2 AI Engine & lưu vào CSDL QLBV)' })
-  async enrollBiometrics(@Body() body: { userId: number; imageBase64: string }) {
-    return this.service.enrollUserBiometrics(body.userId, body.imageBase64);
+  @ApiOperation({ summary: 'Đăng ký khuôn mặt Bác sĩ (Kiểm soát quyền & rà soát trùng lặp)' })
+  async enrollBiometrics(
+    @Body() body: { userId: number; imageBase64: string },
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
+  ) {
+    return this.service.enrollUserBiometrics(body.userId, body.imageBase64, user, client);
   }
 
   @Public()

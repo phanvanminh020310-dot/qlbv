@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DbService } from '../../db/db.service';
 import {
+  departments,
   dutyAbsences,
   dutyAssignments,
   dutyAttendance,
@@ -18,9 +19,11 @@ import {
   users,
 } from '../../db/schema';
 import { SettingsService } from '../settings/settings.service';
+import { AuditService } from '../audit/audit.service';
 import { IntegrationDutyService } from '../integration/integration-duty.service';
 import { bangkokToday, shiftInterval } from '../duty/duty-rules';
 import { coversInstant, bangkokIso, candidateDutyDates } from '../integration/integration-time';
+import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 
 export interface KioskSession {
   sessionId: string;
@@ -59,6 +62,7 @@ export class KioskService {
     private readonly db: DbService,
     private readonly integrationDuty: IntegrationDutyService,
     private readonly settings: SettingsService,
+    private readonly audit: AuditService,
   ) {
     if (!fs.existsSync(this.uploadDir)) {
       try {
@@ -147,6 +151,44 @@ export class KioskService {
       console.warn('[KioskService] Lỗi lấy cấu hình lateCheckoutMinutes:', e?.message || e);
     }
     return 30;
+  }
+
+  /**
+   * Cấu hình cho phép bác sĩ tự chụp đăng ký khuôn mặt lần đầu trên trang Cá nhân
+   */
+  async getAllowSelfEnroll(): Promise<boolean> {
+    try {
+      const val = await this.settings.get<any>('kiosk.allowSelfEnroll');
+      return val === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Cấu hình cho phép bác sĩ tự chụp đổi lại khuôn mặt đã có (mặc định: false - chống gian lận)
+   */
+  async getAllowSelfUpdate(): Promise<boolean> {
+    try {
+      const val = await this.settings.get<any>('kiosk.allowSelfUpdate');
+      return val === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ngưỡng phát hiện trùng lặp khuôn mặt toàn viện (1:N)
+   */
+  async getFaceDuplicateThreshold(): Promise<number> {
+    try {
+      const val = await this.settings.get<any>('kiosk.faceDuplicateThreshold');
+      const num = Number(val);
+      if (Number.isFinite(num) && num >= 0.4 && num <= 0.95) {
+        return num;
+      }
+    } catch {}
+    return 0.65;
   }
 
   private get aiServiceUrl(): string {
@@ -715,7 +757,14 @@ export class KioskService {
 
   // --- 4. ĐĂNG KÝ KHUÔN MẶT BÁC SĨ TẬP TRUNG (LƯU VÀO CSDL QLBV) ---
 
-  async enrollUserBiometrics(userId: number, imageBase64: string) {
+  // --- 4. ĐĂNG KÝ KHUÔN MẶT BÁC SĨ TẬP TRUNG (LƯU VÀO CSDL QLBV & KIỂM SOÁT GIAN LẬN) ---
+
+  async enrollUserBiometrics(
+    userId: number,
+    imageBase64: string,
+    currentUser?: AccessContext,
+    clientMeta?: ClientMeta,
+  ) {
     const usersList = await this.db.db
       .select()
       .from(users)
@@ -725,15 +774,110 @@ export class KioskService {
     const user = usersList[0];
     if (!user) throw new NotFoundException(`Không tìm thấy người dùng với ID ${userId}`);
 
-    // 1. Lưu ảnh vào thư mục uploads/faces/
+    // LỚP 1: KIỂM TRA PHÂN QUYỀN ĐĂNG KÝ / CẬP NHẬT
+    const isAdmin =
+      currentUser?.isSuperAdmin ||
+      currentUser?.roles?.includes('SUPER_ADMIN') ||
+      currentUser?.roles?.includes('ADMIN') ||
+      currentUser?.permissions?.includes('user.manage') ||
+      currentUser?.permissions?.includes('kiosk.admin');
+
+    const isSelf = currentUser ? currentUser.id === userId : false;
+
+    if (!isAdmin && !isSelf) {
+      throw new ForbiddenException('Bạn không có quyền đăng ký hoặc thay đổi sinh trắc học cho nhân sự khác!');
+    }
+
+    const [existingBio] = await this.db.db
+      .select({
+        id: userBiometrics.id,
+        avatarPath: userBiometrics.avatarPath,
+        enrolledAt: userBiometrics.enrolledAt,
+      })
+      .from(userBiometrics)
+      .where(eq(userBiometrics.userId, userId))
+      .limit(1);
+
+    const isEnrolled = !!existingBio;
+
+    // Nếu không phải Admin (mà là bác sĩ tự thao tác trên tài khoản cá nhân)
+    if (!isAdmin && isSelf) {
+      if (isEnrolled) {
+        const allowSelfUpdate = await this.getAllowSelfUpdate();
+        if (!allowSelfUpdate) {
+          throw new ForbiddenException(
+            'Hồ sơ khuôn mặt của bạn đã được khoá an ninh điểm danh. Để phòng ngừa gian lận ca trực, việc cấp đổi khuôn mặt chỉ được thực hiện tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT!',
+          );
+        }
+      } else {
+        const allowSelfEnroll = await this.getAllowSelfEnroll();
+        if (!allowSelfEnroll) {
+          throw new ForbiddenException(
+            'Quy định bệnh viện yêu cầu đăng ký sinh trắc học trực tiếp tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT. Vui lòng liên hệ quản trị viên!',
+          );
+        }
+      }
+
+      // LỚP 3: SHIFT LOCK — Khóa cứng nếu nhân viên đang có lịch trực hôm nay
+      const now = Date.now();
+      const candidateDates = candidateDutyDates(now);
+      const activeDuty = await this.db.db
+        .select({ id: dutyAssignments.id })
+        .from(dutyAssignments)
+        .innerJoin(dutySlots, eq(dutySlots.id, dutyAssignments.slotId))
+        .innerJoin(dutyPeriods, eq(dutyPeriods.id, dutySlots.periodId))
+        .where(
+          and(
+            eq(dutyAssignments.userId, userId),
+            inArray(dutySlots.dutyDate, candidateDates),
+            inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
+          ),
+        )
+        .limit(1);
+
+      if (activeDuty.length > 0) {
+        throw new ForbiddenException(
+          `Bác sĩ ${user.title || ''} ${user.fullName} đang có lịch trực trong ngày. Để bảo đảm tính minh bạch, hệ thống không cho phép thay đổi dữ liệu sinh trắc học khi đang trong ca trực!`,
+        );
+      }
+    }
+
+    // 1. Gửi ảnh sang AI Engine trích xuất vector ArcFace (512 chiều)
+    const descriptor = await this.extractEmbeddingFromAi(imageBase64);
+
+    // LỚP 2: KIỂM TRA TRÙNG LẶP TOÀN VIỆN (1:N ANTI-DUPLICATION CHECK)
+    const duplicateThreshold = await this.getFaceDuplicateThreshold();
+    const otherBiometrics = await this.db.db
+      .select({
+        userId: userBiometrics.userId,
+        faceDescriptor: userBiometrics.faceDescriptor,
+        fullName: users.fullName,
+        title: users.title,
+        username: users.username,
+        departmentName: departments.name,
+      })
+      .from(userBiometrics)
+      .innerJoin(users, eq(users.id, userBiometrics.userId))
+      .leftJoin(departments, eq(departments.id, users.departmentId))
+      .where(sql`${userBiometrics.userId} != ${userId}`);
+
+    for (const bio of otherBiometrics) {
+      const otherVector = this.decryptDescriptor(bio.faceDescriptor);
+      if (!otherVector) continue;
+      const sim = this.calculateCosineSimilarity(descriptor, otherVector);
+      if (sim >= duplicateThreshold) {
+        throw new BadRequestException(
+          `CẢNH BÁO AN NINH: Khuôn mặt đăng ký trùng khớp (${(sim * 100).toFixed(1)}%) với nhân sự khác trong bệnh viện: ${bio.title ? `${bio.title} ` : ''}${bio.fullName} (@${bio.username}${bio.departmentName ? ` - ${bio.departmentName}` : ''})! Quy định bệnh viện nghiêm cấm đăng ký khuôn mặt của người khác để phòng ngừa gian lận điểm danh.`,
+        );
+      }
+    }
+
+    // 2. Lưu ảnh đại diện vào thư mục uploads/faces/
     let b64 = imageBase64;
     if (b64.includes(',')) b64 = b64.split(',')[1];
     const filename = `user_${userId}_avatar.jpg`;
     const filePath = path.join(this.uploadDir, filename);
     fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
-
-    // 2. Gửi ảnh sang AI Engine trích xuất vector ArcFace
-    const descriptor = await this.extractEmbeddingFromAi(imageBase64);
 
     // 3. Mã hoá AES-256 trước khi lưu CSDL
     const encryptedDescriptor = this.encryptDescriptor(descriptor);
@@ -756,14 +900,32 @@ export class KioskService {
         },
       });
 
+    // LỚP 4: GHI NHẬT KÝ KIỂM TOÁN HỆ THỐNG (AUDIT TRAIL)
+    const isNew = !isEnrolled;
+    await this.audit.log({
+      userId: currentUser?.id ?? userId,
+      username: currentUser?.username ?? user.username,
+      fullName: currentUser?.fullName ?? user.fullName,
+      action: isNew ? 'BIOMETRIC_ENROLL' : 'BIOMETRIC_UPDATE',
+      module: 'KIOSK',
+      entity: 'user_biometrics',
+      entityId: String(userId),
+      description: `${currentUser?.fullName || 'Người dùng'} đã ${isNew ? 'đăng ký mới' : 'cập nhật'} sinh trắc học khuôn mặt cho ${user.title || ''} ${user.fullName} (@${user.username})`,
+      beforeData: isEnrolled ? { avatarPath: existingBio?.avatarPath, enrolledAt: existingBio?.enrolledAt } : null,
+      afterData: { avatarPath: `/uploads/faces/${filename}`, updatedAt: new Date().toISOString() },
+      ip: clientMeta?.ip,
+      userAgent: clientMeta?.userAgent,
+      departmentId: currentUser?.departmentId ?? user.departmentId,
+    });
+
     return {
       success: true,
-      message: `Đã lưu hồ sơ sinh trắc học cho ${user.title} ${user.fullName}`,
+      message: `Đã lưu hồ sơ sinh trắc học thành công cho ${user.title ? `${user.title} ` : ''}${user.fullName}`,
       avatarPath: `/uploads/faces/${filename}`,
     };
   }
 
-  async getBiometricStatus(userId: number) {
+  async getBiometricStatus(userId: number, requestingUser?: AccessContext) {
     const list = await this.db.db
       .select({
         id: userBiometrics.id,
@@ -776,9 +938,23 @@ export class KioskService {
       .where(eq(userBiometrics.userId, userId))
       .limit(1);
 
+    const allowSelfEnroll = await this.getAllowSelfEnroll();
+    const allowSelfUpdate = await this.getAllowSelfUpdate();
+
+    const isAdmin =
+      requestingUser?.isSuperAdmin ||
+      requestingUser?.roles?.includes('SUPER_ADMIN') ||
+      requestingUser?.roles?.includes('ADMIN') ||
+      requestingUser?.permissions?.includes('user.manage');
+
     const bio = list[0];
     if (!bio) {
-      return { enrolled: false, avatarUrl: null };
+      return {
+        enrolled: false,
+        avatarUrl: null,
+        canSelfEnroll: isAdmin ? true : allowSelfEnroll,
+        canSelfUpdate: false,
+      };
     }
 
     return {
@@ -786,6 +962,8 @@ export class KioskService {
       avatarUrl: `/api/kiosk/doctors/${userId}/avatar?t=${new Date(bio.updatedAt).getTime()}`,
       enrolledAt: bio.enrolledAt,
       updatedAt: bio.updatedAt,
+      canSelfEnroll: false,
+      canSelfUpdate: isAdmin ? true : allowSelfUpdate,
     };
   }
 

@@ -10,6 +10,7 @@ import {
   Clock,
   KeyRound,
   Laptop,
+  Lock,
   LogOut,
   Mail,
   Monitor,
@@ -210,8 +211,17 @@ export default function ProfilePage() {
   const { data: bioStatus, refetch: refetchBioStatus } = useQuery({
     queryKey: ['my-biometric-status', profile?.id],
     enabled: !!profile?.id,
-    queryFn: () => apiFetch<{ enrolled: boolean; avatarUrl: string | null }>(`/kiosk/biometrics/status/${profile?.id}`),
+    queryFn: () =>
+      apiFetch<{
+        enrolled: boolean;
+        avatarUrl: string | null;
+        canSelfEnroll?: boolean;
+        canSelfUpdate?: boolean;
+      }>(`/kiosk/biometrics/status/${profile?.id}`),
   });
+
+  const canUpdateFace = !!(user?.isSuperAdmin || bioStatus?.canSelfUpdate);
+  const canEnrollFace = !!(user?.isSuperAdmin || bioStatus?.canSelfEnroll);
 
   const { data: sessions } = useQuery({
     queryKey: ['sessions'],
@@ -294,14 +304,34 @@ export default function ProfilePage() {
                     <span>{getInitials(profile.fullName)}</span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEnrollOpen(true)}
-                  className="absolute bottom-0 right-0 rounded-full bg-teal-600 hover:bg-teal-500 text-white p-2 shadow-lg border-2 border-white dark:border-slate-900 transition-transform active:scale-90"
-                  title="Chụp ảnh khuôn mặt"
-                >
-                  <Camera className="size-3.5" />
-                </button>
+                {bioStatus?.enrolled ? (
+                  canUpdateFace ? (
+                    <button
+                      type="button"
+                      onClick={() => setEnrollOpen(true)}
+                      className="absolute bottom-0 right-0 rounded-full bg-teal-600 hover:bg-teal-500 text-white p-2 shadow-lg border-2 border-white dark:border-slate-900 transition-transform active:scale-90"
+                      title="Chụp đổi lại khuôn mặt"
+                    >
+                      <Camera className="size-3.5" />
+                    </button>
+                  ) : (
+                    <div
+                      className="absolute bottom-0 right-0 rounded-full bg-emerald-600 text-white p-1.5 shadow-md border-2 border-white dark:border-slate-900"
+                      title="Khuôn mặt đã khoá an ninh điểm danh"
+                    >
+                      <Lock className="size-3" />
+                    </div>
+                  )
+                ) : canEnrollFace ? (
+                  <button
+                    type="button"
+                    onClick={() => setEnrollOpen(true)}
+                    className="absolute bottom-0 right-0 rounded-full bg-amber-600 hover:bg-amber-500 text-white p-2 shadow-lg border-2 border-white dark:border-slate-900 transition-transform active:scale-90 animate-bounce"
+                    title="Chụp đăng ký khuôn mặt"
+                  >
+                    <Camera className="size-3.5" />
+                  </button>
+                ) : null}
               </div>
 
               {/* Tên, chức danh, khoa công tác và vai trò */}
@@ -319,18 +349,37 @@ export default function ProfilePage() {
 
                   {/* Nút hành động chụp khuôn mặt trên máy tính / di động */}
                   <div className="flex sm:justify-end">
-                    <Button
-                      size="sm"
-                      onClick={() => setEnrollOpen(true)}
-                      className={`w-full sm:w-auto font-medium text-xs shadow-sm ${
-                        bioStatus?.enrolled
-                          ? 'bg-teal-600 hover:bg-teal-500 text-white'
-                          : 'bg-amber-600 hover:bg-amber-500 text-white animate-pulse'
-                      }`}
-                    >
-                      <Camera className="size-3.5 mr-1.5" />
-                      {bioStatus?.enrolled ? 'Cập nhật khuôn mặt' : 'Đăng ký khuôn mặt Kiosk ngay'}
-                    </Button>
+                    {bioStatus?.enrolled ? (
+                      canUpdateFace ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setEnrollOpen(true)}
+                          className="w-full sm:w-auto font-medium text-xs shadow-sm bg-teal-600 hover:bg-teal-500 text-white"
+                        >
+                          <Camera className="size-3.5 mr-1.5" />
+                          Cập nhật khuôn mặt
+                        </Button>
+                      ) : (
+                        <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100/90 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-semibold shadow-xs">
+                          <Lock className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <span>Đã khoá an ninh điểm danh</span>
+                        </div>
+                      )
+                    ) : canEnrollFace ? (
+                      <Button
+                        size="sm"
+                        onClick={() => setEnrollOpen(true)}
+                        className="w-full sm:w-auto font-medium text-xs shadow-sm bg-amber-600 hover:bg-amber-500 text-white animate-pulse"
+                      >
+                        <Camera className="size-3.5 mr-1.5" />
+                        Đăng ký khuôn mặt ngay
+                      </Button>
+                    ) : (
+                      <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-xs font-medium">
+                        <Building className="size-3.5 text-amber-600 dark:text-amber-400" />
+                        <span>Đăng ký tại Phòng TCCB / IT</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -360,14 +409,18 @@ export default function ProfilePage() {
                     <div className="flex items-center justify-center sm:justify-start gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl px-3 py-2">
                       <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <span>
-                        Đã đăng ký nhận diện khuôn mặt sinh trắc học (sẵn sàng điểm danh ca trực & tự động mở khoá máy tính phòng khám).
+                        {canUpdateFace
+                          ? 'Đã đăng ký nhận diện khuôn mặt sinh trắc học (sẵn sàng điểm danh ca trực & tự động mở khoá máy tính phòng khám).'
+                          : 'Hồ sơ khuôn mặt đã xác thực và khoá an ninh ca trực. Để chống gian lận điểm danh, cấp đổi khuôn mặt chỉ được thực hiện tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT.'}
                       </span>
                     </div>
                   ) : (
                     <div className="flex items-center justify-center sm:justify-start gap-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl px-3 py-2">
                       <AlertCircle className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
                       <span>
-                        Chưa có dữ liệu khuôn mặt. Hãy bấm <strong>Đăng ký khuôn mặt Kiosk</strong> ở trên để AI nhận diện bạn khi nhận ca trực.
+                        {canEnrollFace
+                          ? 'Chưa có dữ liệu khuôn mặt. Hãy bấm Đăng ký khuôn mặt ngay ở trên để AI nhận diện bạn khi nhận ca trực.'
+                          : 'Chưa có dữ liệu khuôn mặt. Vui lòng liên hệ Phòng Tổ chức Cán bộ hoặc Phòng CNTT tại tầng quản trị để chụp ảnh đối chiếu ban đầu.'}
                       </span>
                     </div>
                   )}
@@ -562,14 +615,37 @@ export default function ProfilePage() {
                     </div>
                   </div>
 
-                  <Button
-                    size="sm"
-                    onClick={() => setEnrollOpen(true)}
-                    className="w-full text-xs font-medium bg-teal-600 hover:bg-teal-500 text-white shadow-sm h-9"
-                  >
-                    <Camera className="size-3.5 mr-1.5" />
-                    {bioStatus?.enrolled ? 'Chụp cập nhật lại khuôn mặt' : 'Đăng ký khuôn mặt ngay'}
-                  </Button>
+                  {bioStatus?.enrolled ? (
+                    canUpdateFace ? (
+                      <Button
+                        size="sm"
+                        onClick={() => setEnrollOpen(true)}
+                        className="w-full text-xs font-medium bg-teal-600 hover:bg-teal-500 text-white shadow-sm h-9"
+                      >
+                        <Camera className="size-3.5 mr-1.5" />
+                        Chụp cập nhật lại khuôn mặt
+                      </Button>
+                    ) : (
+                      <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-xs text-[var(--muted-foreground)]">
+                        <Lock className="size-4 shrink-0 text-emerald-600 mt-0.5" />
+                        <span>Hồ sơ đã khoá an ninh ca trực. Chỉ Quản trị viên hoặc Phòng TCCB mới có quyền cấp đổi lại khuôn mặt cho nhân sự.</span>
+                      </div>
+                    )
+                  ) : canEnrollFace ? (
+                    <Button
+                      size="sm"
+                      onClick={() => setEnrollOpen(true)}
+                      className="w-full text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white shadow-sm h-9 animate-pulse"
+                    >
+                      <Camera className="size-3.5 mr-1.5" />
+                      Đăng ký khuôn mặt ngay
+                    </Button>
+                  ) : (
+                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-900 dark:text-amber-200">
+                      <AlertCircle className="size-4 shrink-0 text-amber-600 mt-0.5" />
+                      <span>Chưa có dữ liệu sinh trắc học. Vui lòng liên hệ Phòng Tổ chức cán bộ hoặc Phòng CNTT để chụp ảnh đăng ký.</span>
+                    </div>
+                  )}
                 </div>
               </Card>
 

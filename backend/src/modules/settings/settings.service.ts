@@ -255,6 +255,33 @@ export function defaultSettings(): SettingItem[] {
       valueType: 'number',
       isPublic: true,
     },
+    {
+      key: 'kiosk.allowSelfEnroll',
+      value: false,
+      group: 'kiosk',
+      label: 'Cho phép nhân viên tự chụp đăng ký khuôn mặt lần đầu',
+      description: 'Nếu bật, nhân viên chưa có dữ liệu có thể tự chụp ảnh trên trang Cá nhân. Nếu tắt, chỉ Quản trị viên/Phòng TCCB mới có quyền chụp tại Quản trị người dùng.',
+      valueType: 'boolean',
+      isPublic: true,
+    },
+    {
+      key: 'kiosk.allowSelfUpdate',
+      value: false,
+      group: 'kiosk',
+      label: 'Cho phép nhân viên tự chụp đổi lại khuôn mặt đã đăng ký',
+      description: 'Nếu bật, nhân viên đã có khuôn mặt có thể tự chụp đè lại. KHUYẾN NGHỊ TẮT để triệt tiêu gian lận ca trực nhờ người khác chụp hộ.',
+      valueType: 'boolean',
+      isPublic: true,
+    },
+    {
+      key: 'kiosk.faceDuplicateThreshold',
+      value: 0.65,
+      group: 'kiosk',
+      label: 'Ngưỡng phát hiện trùng lặp khuôn mặt toàn viện (1:N)',
+      description: 'Độ tương đồng tối thiểu để hệ thống cảnh báo và từ chối nếu khuôn mặt đăng ký trùng với nhân sự khác trong bệnh viện (chống mượn mặt đồng nghiệp).',
+      valueType: 'number',
+      isPublic: false,
+    },
 
     // Hệ thống
     { key: 'system.sessionHours', value: 12, group: 'system', label: 'Thời gian phiên đăng nhập (giờ)', valueType: 'number' },

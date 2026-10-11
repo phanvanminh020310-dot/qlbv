@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/card';
+import { apiFetch } from '@/lib/api';
 
 interface BiometricEnrollDialogProps {
   user: {
@@ -28,7 +29,12 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
 
   // Trạng thái đã đăng ký
   const [statusLoading, setStatusLoading] = useState(false);
-  const [bioStatus, setBioStatus] = useState<{ enrolled: boolean; avatarUrl: string | null } | null>(null);
+  const [bioStatus, setBioStatus] = useState<{
+    enrolled: boolean;
+    avatarUrl: string | null;
+    canSelfEnroll?: boolean;
+    canSelfUpdate?: boolean;
+  } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -43,12 +49,13 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
     const fetchStatus = async () => {
       setStatusLoading(true);
       try {
-        const resp = await fetch(`/api/kiosk/biometrics/status/${user.id}`);
-        if (resp.ok) {
-          const raw = await resp.json();
-          const data = raw?.data ?? raw;
-          setBioStatus(data);
-        }
+        const data = await apiFetch<{
+          enrolled: boolean;
+          avatarUrl: string | null;
+          canSelfEnroll?: boolean;
+          canSelfUpdate?: boolean;
+        }>(`/kiosk/biometrics/status/${user.id}`);
+        setBioStatus(data);
       } catch (err) {
         console.warn('Lỗi nạp trạng thái sinh trắc học:', err);
       } finally {
@@ -140,26 +147,20 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
 
     setIsSubmitting(true);
     try {
-      const resp = await fetch('/api/kiosk/enroll', {
+      const data = await apiFetch<{ success: boolean; message: string; avatarPath: string }>('/kiosk/enroll', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           userId: user.id,
           imageBase64: capturedImage,
-        }),
+        },
       });
 
-      const raw = await resp.json();
-      const data = raw?.data ?? raw;
-
-      if (!resp.ok) {
-        throw new Error(data.message || 'Lỗi lưu sinh trắc học.');
-      }
-
-      toast.success(`Đã lưu hồ sơ sinh trắc học thành công cho ${user.title || ''} ${user.fullName}`);
+      toast.success(data.message || `Đã lưu hồ sơ sinh trắc học thành công cho ${user.title || ''} ${user.fullName}`);
       setBioStatus({
         enrolled: true,
         avatarUrl: `/api/kiosk/doctors/${user.id}/avatar?t=${Date.now()}`,
+        canSelfEnroll: false,
+        canSelfUpdate: bioStatus?.canSelfUpdate ?? false,
       });
       onSuccess?.();
       onClose();
