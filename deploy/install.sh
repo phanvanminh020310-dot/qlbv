@@ -231,9 +231,14 @@ else
   if [[ ! -f "$INSTALL_DIR/docker-compose.yml" ]]; then
     command -v git >/dev/null 2>&1 || install_pkgs git
     log "  Đang clone $REPO_URL → $INSTALL_DIR ..."
+    if [[ -d "$INSTALL_DIR" && ! -d "$INSTALL_DIR/.git" ]]; then
+      rm -rf "$INSTALL_DIR"
+    fi
     mkdir -p "$INSTALL_DIR"
     branch_args=(); [[ -n "$BRANCH" ]] && branch_args=(--branch "$BRANCH")
-    git clone "${branch_args[@]}" "$REPO_URL" "$INSTALL_DIR"
+    if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+      git clone "${branch_args[@]}" "$REPO_URL" "$INSTALL_DIR"
+    fi
   else
     warn "Đã có mã nguồn tại $INSTALL_DIR — dùng lại (không clone mới)"
   fi
