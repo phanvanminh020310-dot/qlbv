@@ -4,25 +4,24 @@
 # RUN --mount=type=cache.
 # ---------- Bước 1: cài phụ thuộc ----------
 FROM node:22-alpine AS deps
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 COPY package*.json ./
-# Cache npm giữa các lần dựng (BuildKit) — chỉ cài lại khi package*.json đổi
-RUN --mount=type=cache,id=qlbs-npm-web,target=/root/.npm,sharing=locked \
-    npm ci --no-audit --no-fund --maxsockets=5 --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+# Cài đặt phụ thuộc: dùng npm ci chuẩn, tự động dọn cache và cài lại nếu gặp lỗi cache/mạng
+RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=60000 \
+    || (npm cache clean --force && npm install --no-audit --no-fund)
 
 # ---------- Bước 2: biên dịch Next.js ----------
 FROM node:22-alpine AS build
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# Next.js ghi đích chuyển tiếp /api (rewrites) vào .next/routes-manifest.json NGAY LÚC
-# BUILD — đặt biến ở runtime là không đủ. Mặc định trỏ tới service "api" trong compose.
 ARG API_PROXY_TARGET=http://api:4000
 ENV API_PROXY_TARGET=$API_PROXY_TARGET
-# Giữ cache biên dịch của Next.js giữa các lần dựng → lần sau nhanh hơn nhiều
-RUN --mount=type=cache,id=qlbs-next-cache,target=/app/.next/cache,sharing=locked npm run build
+RUN npm run build
 
 # ---------- Bước 3: ảnh chạy thật ----------
 FROM node:22-alpine AS runtime

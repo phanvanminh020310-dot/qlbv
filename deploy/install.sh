@@ -407,11 +407,20 @@ chown -R 1000:1000 data/uploads data/backups
 # Font Times New Roman gốc cho bản in PDF (lỗi không làm dừng cài đặt)
 bash deploy/install-times-font.sh --quiet || true
 
+# Dọn sạch các cache mount bị lỗi/hỏng từ lần chạy trước nếu có
+docker builder prune -f --filter type=exec.cachemount >/dev/null 2>&1 || true
+
+# Compose mới coi --progress là cờ toàn cục; bản cũ nhận ở lệnh build
+BUILD_FLAGS=()
+if "${COMPOSE[@]}" --progress plain version >/dev/null 2>&1; then
+  BUILD_FLAGS=(--progress plain)
+fi
+
 # Dựng lần lượt từng container (không build song song cùng lúc để tránh nghẽn RAM trên VPS nhỏ)
 log "  → Đang dựng API Backend (NestJS)..."
-"${COMPOSE[@]}" build api
+"${COMPOSE[@]}" "${BUILD_FLAGS[@]}" build api || "${COMPOSE[@]}" build api
 log "  → Đang dựng Giao diện Web Kiosk (Next.js)..."
-"${COMPOSE[@]}" build web
+"${COMPOSE[@]}" "${BUILD_FLAGS[@]}" build web || "${COMPOSE[@]}" build web
 
 "${COMPOSE[@]}" up -d
 ok "Đã khởi động: PostgreSQL · Redis · API · Web"
