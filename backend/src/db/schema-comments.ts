@@ -70,6 +70,8 @@ export const TABLE_COMMENTS: Record<string, string> = {
   duty_absences: 'Ghi nhận nghỉ phép/bận của nhân viên; khoảng ngày này không được xếp trực',
   duty_requests: 'Yêu cầu nhường ca, đổi ca và ngoại lệ đổi trực (gửi KHTH sau khi chốt); theo dõi từ tạo đến duyệt',
   duty_logs: 'Nhật ký nghiệp vụ lịch trực: mọi thay đổi phân công, công bố, chốt, ngoại lệ — kèm lý do và người thực hiện',
+  user_biometrics: 'Hồ sơ sinh trắc học khuôn mặt: vector ArcFace mã hoá AES-256 và ảnh chân dung Base64 để sao lưu',
+  duty_attendance: 'Nhật ký điểm danh ca trực & mở khoá phòng khám bằng nhận diện khuôn mặt AI',
 };
 
 /** Ghi chú theo TỪNG CỘT của bảng (ưu tiên cao hơn COLUMN_COMMENTS_COMMON) */

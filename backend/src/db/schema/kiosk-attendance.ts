@@ -17,6 +17,8 @@ export const userBiometrics = pgTable(
     faceDescriptor: text('face_descriptor').notNull(),
     /** Đường dẫn ảnh chân dung thực tế trong uploads */
     avatarPath: text('avatar_path'),
+    /** Dữ liệu ảnh khuôn mặt gốc (Base64 JPEG) — lưu trực tiếp trong CSDL để tự động sao lưu & phục hồi toàn vẹn */
+    avatarData: text('avatar_data'),
     /** Số mẫu khuôn mặt đã thu thập */
     sampleCount: integer('sample_count').default(3).notNull(),
     enrolledAt: timestamp('enrolled_at', { withTimezone: true }).defaultNow().notNull(),

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { and, eq, inArray, sql, desc, gte, lte, or, ilike, asc } from 'drizzle-orm';
 import { Response } from 'express';
 import * as crypto from 'crypto';
@@ -51,7 +51,8 @@ export interface ActiveRoomUnlock {
 }
 
 @Injectable()
-export class KioskService {
+export class KioskService implements OnModuleInit {
+  private readonly logger = new Logger(KioskService.name);
   private readonly sessions = new Map<string, KioskSession>();
   // Lưu kết nối SSE theo từng terminalId (Unicast)
   private readonly terminalClients = new Map<string, Response>();
@@ -114,6 +115,66 @@ export class KioskService {
         }
       }
     }, 10 * 1000);
+  }
+
+  async onModuleInit() {
+    // Tự động đồng bộ hai chiều giữa đĩa và CSDL:
+    // 1. Nếu đĩa có tệp ảnh cũ mà CSDL chưa lưu Base64 -> nạp vào CSDL để tự động sao lưu.
+    // 2. Nếu CSDL có ảnh Base64 (sau khi phục hồi từ sao lưu) mà đĩa chưa có tệp -> tự tạo lại tệp trên đĩa.
+    try {
+      if (!fs.existsSync(this.uploadDir)) {
+        fs.mkdirSync(this.uploadDir, { recursive: true });
+      }
+
+      const records = await this.db.db
+        .select({
+          id: userBiometrics.id,
+          userId: userBiometrics.userId,
+          avatarData: userBiometrics.avatarData,
+        })
+        .from(userBiometrics);
+
+      let syncedCount = 0;
+      let restoredCount = 0;
+
+      for (const rec of records) {
+        const filePath = path.join(this.uploadDir, `user_${rec.userId}_avatar.jpg`);
+        const fileExists = fs.existsSync(filePath);
+
+        if (!rec.avatarData && fileExists) {
+          try {
+            const buf = fs.readFileSync(filePath);
+            const dataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+            await this.db.db
+              .update(userBiometrics)
+              .set({ avatarData: dataUrl })
+              .where(eq(userBiometrics.id, rec.id));
+            syncedCount++;
+          } catch (e) {
+            this.logger.warn(`Không thể nạp ảnh đĩa vào CSDL cho user ${rec.userId}: ${e}`);
+          }
+        } else if (rec.avatarData && !fileExists) {
+          try {
+            let b64 = rec.avatarData;
+            if (b64.includes(',')) b64 = b64.split(',')[1];
+            if (b64) {
+              fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+              restoredCount++;
+            }
+          } catch (e) {
+            this.logger.warn(`Không thể khôi phục ảnh từ CSDL ra đĩa cho user ${rec.userId}: ${e}`);
+          }
+        }
+      }
+
+      if (syncedCount > 0 || restoredCount > 0) {
+        this.logger.log(
+          `Đồng bộ ảnh sinh trắc học hoàn tất: ${syncedCount} ảnh nạp vào CSDL sao lưu, ${restoredCount} ảnh khôi phục ra đĩa.`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Đồng bộ ảnh sinh trắc học lúc khởi động: ${err}`);
+    }
   }
 
   /**
@@ -993,19 +1054,27 @@ export class KioskService {
     let b64 = imageBase64;
     if (b64.includes(',')) b64 = b64.split(',')[1];
     const filename = `user_${userId}_avatar.jpg`;
+    if (!fs.existsSync(this.uploadDir)) {
+      fs.mkdirSync(this.uploadDir, { recursive: true });
+    }
     const filePath = path.join(this.uploadDir, filename);
     fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+
+    const avatarDataUrl = imageBase64.startsWith('data:image')
+      ? imageBase64
+      : `data:image/jpeg;base64,${b64}`;
 
     // 3. Mã hoá AES-256 trước khi lưu CSDL
     const encryptedDescriptor = this.encryptDescriptor(descriptor);
 
-    // 4. Upsert vào bảng user_biometrics
+    // 4. Upsert vào bảng user_biometrics (lưu cả avatarData trực tiếp để tự động sao lưu & phục hồi)
     await this.db.db
       .insert(userBiometrics)
       .values({
         userId,
         faceDescriptor: encryptedDescriptor,
         avatarPath: `/uploads/faces/${filename}`,
+        avatarData: avatarDataUrl,
         sampleCount: 3,
       })
       .onConflictDoUpdate({
@@ -1013,6 +1082,7 @@ export class KioskService {
         set: {
           faceDescriptor: encryptedDescriptor,
           avatarPath: `/uploads/faces/${filename}`,
+          avatarData: avatarDataUrl,
           updatedAt: new Date(),
         },
       });
@@ -1082,6 +1152,38 @@ export class KioskService {
       canSelfEnroll: false,
       canSelfUpdate: isAdmin ? true : allowSelfUpdate,
     };
+  }
+
+  /**
+   * Tự phục hồi tệp ảnh đại diện ra đĩa từ dữ liệu Base64 lưu trong CSDL
+   * (áp dụng khi tệp ảnh trên đĩa bị mất sau khi restore CSDL hoặc triển khai máy chủ mới)
+   */
+  async restoreAvatarFromDb(userId: number): Promise<boolean> {
+    try {
+      const [bio] = await this.db.db
+        .select({ avatarData: userBiometrics.avatarData })
+        .from(userBiometrics)
+        .where(eq(userBiometrics.userId, userId))
+        .limit(1);
+
+      if (!bio?.avatarData) return false;
+
+      let b64 = bio.avatarData;
+      if (b64.includes(',')) b64 = b64.split(',')[1];
+      if (!b64) return false;
+
+      if (!fs.existsSync(this.uploadDir)) {
+        fs.mkdirSync(this.uploadDir, { recursive: true });
+      }
+
+      const filePath = path.join(this.uploadDir, `user_${userId}_avatar.jpg`);
+      fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+      this.logger.log(`Đã tự động khôi phục ảnh chân dung ra đĩa cho bác sĩ userId=${userId}`);
+      return true;
+    } catch (err) {
+      this.logger.warn(`Lỗi phục hồi ảnh sinh trắc học từ CSDL cho userId=${userId}: ${err}`);
+      return false;
+    }
   }
 
   // --- TIỆN ÍCH MÃ HOÁ VÀ TÍNH ĐỘ TƯƠNG ĐỒNG VECTOR ---

@@ -210,12 +210,28 @@ export class KioskController {
   @Public()
   @Get('doctors/:userId/avatar')
   @ApiOperation({ summary: 'Xem ảnh đại diện sinh trắc học đã lưu của Bác sĩ' })
-  getDoctorAvatar(@Param('userId') userId: string, @Res() res: Response) {
-    const filePath = path.resolve(process.cwd(), 'uploads', 'faces', `user_${userId}_avatar.jpg`);
+  async getDoctorAvatar(@Param('userId') userIdParam: string, @Res() res: Response) {
+    const userId = parseInt(userIdParam, 10);
+    const filePath = path.resolve(process.cwd(), 'uploads', 'faces', `user_${userIdParam}_avatar.jpg`);
+
+    // 1. Nếu tệp ảnh đã có sẵn trên đĩa -> trả về ngay
     if (fs.existsSync(filePath)) {
       res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.sendFile(filePath);
     }
+
+    // 2. Tự phục hồi từ CSDL nếu tệp trên đĩa bị mất (sau khi phục hồi từ sao lưu hoặc chuyển VPS)
+    if (!Number.isNaN(userId)) {
+      const restored = await this.service.restoreAvatarFromDb(userId);
+      if (restored && fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.sendFile(filePath);
+      }
+    }
+
+    // 3. Fallback hình đại diện SVG generic
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 24 24" fill="none" stroke="#0f766e" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/></svg>`;
     res.setHeader('Content-Type', 'image/svg+xml');
     return res.send(svg);

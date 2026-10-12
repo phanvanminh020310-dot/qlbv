@@ -24,7 +24,7 @@ import type { Readable } from 'stream';
 import * as zlib from 'zlib';
 import { config } from '../../config/env';
 import { DbService } from '../../db/db.service';
-import { scheduledJobs } from '../../db/schema';
+import { scheduledJobs, userBiometrics } from '../../db/schema';
 import { CacheService } from '../../infra/cache/cache.service';
 import { MaintenanceService } from '../../infra/maintenance/maintenance.service';
 import { QueueService } from '../../infra/queue/queue.service';
@@ -343,6 +343,31 @@ export class BackupsService {
 
       // 4) Xoá cache nghiệp vụ (giữ phiên đăng nhập và hàng đợi)
       for (const p of CACHE_PREFIXES) await this.cache.delByPrefix(p).catch(() => 0);
+
+      // Tự động khôi phục toàn bộ tệp ảnh chân dung sinh trắc học ra thư mục uploads/faces từ CSDL vừa phục hồi
+      try {
+        const bios = await this.db.db
+          .select({ userId: userBiometrics.userId, avatarData: userBiometrics.avatarData })
+          .from(userBiometrics);
+        const facesDir = path.resolve(process.cwd(), 'uploads', 'faces');
+        fs.mkdirSync(facesDir, { recursive: true });
+        let restoredAvatars = 0;
+        for (const b of bios) {
+          if (b.avatarData) {
+            let raw = b.avatarData;
+            if (raw.includes(',')) raw = raw.split(',')[1];
+            if (raw) {
+              fs.writeFileSync(path.join(facesDir, `user_${b.userId}_avatar.jpg`), Buffer.from(raw, 'base64'));
+              restoredAvatars++;
+            }
+          }
+        }
+        if (restoredAvatars > 0) {
+          this.logger.log(`Đã tự động khôi phục ${restoredAvatars} tệp ảnh chân dung sinh trắc học ra đĩa.`);
+        }
+      } catch (err) {
+        this.logger.warn(`Lỗi khôi phục tệp ảnh sinh trắc học ra đĩa sau khi phục hồi: ${err}`);
+      }
 
       // Lịch chạy định kỳ có thể khác trong bản sao lưu → đăng ký lại
       await this.scheduler.syncSchedules().catch((err: Error) => this.logger.warn(`Đồng bộ lịch tác vụ: ${err.message}`));
