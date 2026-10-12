@@ -12,6 +12,7 @@ import {
   Sparkles,
   SwitchCamera,
   ScanFace,
+  Upload,
 } from 'lucide-react';
 
 export default function MobileScanPage() {
@@ -41,6 +42,7 @@ export default function MobileScanPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
 
   // 1. Tải thông tin phiên quét từ sessionId
@@ -441,8 +443,15 @@ export default function MobileScanPage() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*;capture=camera"
         capture="user"
+        onChange={handleFileCapture}
+        className="hidden"
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
         onChange={handleFileCapture}
         className="hidden"
       />
@@ -570,15 +579,31 @@ export default function MobileScanPage() {
               </div>
 
               {isHttpCaptureMode && (
-                <button
-                  type="button"
-                  onClick={triggerNativeCamera}
-                  disabled={currentStep === 'verifying'}
-                  className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <Camera className="h-5 w-5" />
-                  <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp khuôn mặt (Camera trước)'}</span>
-                </button>
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={triggerNativeCamera}
+                    disabled={currentStep === 'verifying'}
+                    className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <Camera className="h-5 w-5" />
+                    <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp (Camera trước)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    disabled={currentStep === 'verifying'}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-700"
+                  >
+                    <Upload className="h-4 w-4" />
+                    <span>Hoặc chọn ảnh selfie từ Thư viện</span>
+                  </button>
+
+                  <p className="text-[10px] text-slate-400 text-center px-2 leading-relaxed">
+                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút lật camera trên màn hình máy ảnh sang camera trước để chụp ảnh chân dung.
+                  </p>
+                </div>
               )}
             </div>
           </div>

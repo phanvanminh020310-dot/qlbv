@@ -82,8 +82,14 @@ Khi cần chuyển máy tính sang mục đích sử dụng văn phòng thông t
   * **Bác sĩ không cần chạm bất kỳ nút nào trên màn hình điện thoại**.
 
 ### Khi chạy mạng nội bộ LAN qua HTTP:
-- Trình duyệt di động sẽ chặn WebRTC và kích hoạt chế độ **Native Camera Capture**:
-  * Trang quét hiển thị nút lớn **"Mở Camera chụp khuôn mặt"**.
-  * Bác sĩ chỉ cần chạm 1 lần vào màn hình để chụp khuôn mặt (chọn camera trước).
+- Trình duyệt di động chặn WebRTC và bắt buộc chuyển sang chế độ **Native Camera Capture**:
+  * Trang quét hiển thị 2 lựa chọn: **"Mở Camera chụp (Camera trước)"** và **"Hoặc chọn ảnh selfie từ Thư viện"**.
+  * **Lý do camera sau bị mở**: Khi chạy HTTP, trang web phải gọi ứng dụng chụp ảnh hệ điều hành (Android Camera App). Một số nhà sản xuất điện thoại (Samsung, Xiaomi...) mặc định luôn mở camera sau khi nhận lệnh từ bên ngoài. Do trang web không thể can thiệp sâu vào ứng dụng máy ảnh của hệ điều hành, bác sĩ chỉ cần bấm nút lật camera trên màn hình máy ảnh sang camera trước.
   * Ảnh chụp được tự động nén siêu tốc và gửi thẳng sang máy chủ AI để mở khóa máy trạm phòng khám.
-  * Trên giao diện có nút chuyển nhanh sang HTTPS nếu máy chủ đã bật cổng SSL.
+
+### Cách thiết lập HTTPS trên mạng LAN (Không cần mua tên miền) để kích hoạt Auto Face ID:
+- Để bác sĩ quét QR là **camera trước tự động mở ngay trong trang web và tự quét không cần chạm nút nào**:
+  1. Sử dụng Nginx kèm chứng chỉ SSL tự ký (Self-signed Certificate) hoặc tên miền miễn phí (DuckDNS/nip.io).
+  2. Mở cổng HTTPS (ví dụ `3443` hoặc `443`) trỏ vào Web Next.js.
+  3. Bác sĩ mở link `https://` lần đầu ➔ Bấm **Nâng cao ➔ Tiếp tục truy cập** (chỉ làm 1 lần duy nhất).
+  4. Từ lần quét tiếp theo: 100% quét tự động như iPhone Face ID!

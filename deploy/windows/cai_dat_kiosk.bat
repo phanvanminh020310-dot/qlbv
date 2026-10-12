@@ -111,18 +111,31 @@ if %errorlevel% neq 0 (
 echo [OK] Da tao thanh cong: %INSTALL_DIR%\QLBS_Kiosk_Agent.exe
 echo.
 
-:: 6. Thiet lap khoa bao ve he thong & Tu khoi dong cung Windows
+:: 6. Thiet lap khoa bao ve he thong & Tu khoi dong cung Windows (4 lop bao ve khoi dong)
 echo [BUOC 5/5] KHOA AN NINH HE THONG VA TU DONG KHOI DONG
 echo ----------------------------------------------------------------------------
 
 :: Vo hieu hoa Task Manager (Chong nguoi dung tat Kiosk bang Taskmgr)
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f >nul 2>&1
 
-:: Dang ky tu khoi dong cung Windows
+:: Lop 1: Dang ky Windows Task Scheduler chay dac quyen cao nhat khi bat ky ai dang nhap
+schtasks /create /tn "QLBS_Kiosk_Agent" /tr "\"%INSTALL_DIR%\QLBS_Kiosk_Agent.exe\"" /sc onlogon /rl highest /f >nul 2>&1
+
+:: Lop 2: Dang ky Registry HKLM (cho toan bo tai khoan may tinh)
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Agent" /t REG_SZ /d "\"%INSTALL_DIR%\QLBS_Kiosk_Agent.exe\"" /f >nul 2>&1
+
+:: Lop 3: Dang ky Registry HKCU (cho tai khoan hien tai)
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Agent" /t REG_SZ /d "\"%INSTALL_DIR%\QLBS_Kiosk_Agent.exe\"" /f >nul 2>&1
 
+:: Lop 4: Thu muc Startup khoi dong chung cua Windows (Common Startup)
+set "STARTUP_DIR=%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup"
+if exist "%STARTUP_DIR%" (
+    (echo start "" "%INSTALL_DIR%\QLBS_Kiosk_Agent.exe") > "%STARTUP_DIR%\QLBS_Kiosk_Agent.bat"
+)
+
 echo [OK] Da khoa Task Manager chong tat tien trinh.
-echo [OK] Da dang ky Agent tu khoi dong khi bat may tinh phong kham.
+echo [OK] Da dang ky 4 lop khoi dong tu dong cung Windows (Task Scheduler + Registry + Startup).
 echo.
 
 echo ============================================================================

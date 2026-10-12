@@ -176,7 +176,41 @@ namespace QLBS.Kiosk
         {
             try
             {
-                // Tắt các tiến trình msedge Kiosk để giải phóng màn hình Desktop ngay lập tức (< 50ms)
+                // Cưỡng chế tắt toàn bộ cây tiến trình msedge Kiosk bằng taskkill để giải phóng Desktop ngay
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "taskkill.exe",
+                    Arguments = "/F /T /IM msedge.exe",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using (Process p = Process.Start(psi))
+                {
+                    p.WaitForExit(1000);
+                }
+            }
+            catch {}
+
+            try
+            {
+                ProcessStartInfo psiChrome = new ProcessStartInfo
+                {
+                    FileName = "taskkill.exe",
+                    Arguments = "/F /T /IM chrome.exe",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using (Process p = Process.Start(psiChrome))
+                {
+                    p.WaitForExit(1000);
+                }
+            }
+            catch {}
+
+            try
+            {
                 Process[] procs = Process.GetProcessesByName("msedge");
                 foreach (Process p in procs)
                 {
@@ -216,7 +250,10 @@ namespace QLBS.Kiosk
                     using (StreamReader reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
                         string json = reader.ReadToEnd();
-                        bool isServerUnlocked = json.Contains("\"unlocked\":true");
+                        bool isServerUnlocked = (json.IndexOf("\"isUnlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                             || (json.IndexOf("\"isUnlocked\": true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                             || (json.IndexOf("\"unlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                             || (json.IndexOf("\"unlocked\": true", StringComparison.OrdinalIgnoreCase) >= 0);
 
                         if (isServerUnlocked && isLocked)
                         {

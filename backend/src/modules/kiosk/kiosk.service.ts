@@ -554,6 +554,7 @@ export class KioskService implements OnModuleInit {
     return {
       room: { code: room.code, name: room.name },
       isUnlocked,
+      unlocked: isUnlocked,
       activeDoctor: unlockedDoctor,
       shiftEndMs,
       currentScheduled,

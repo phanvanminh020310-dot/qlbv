@@ -26,9 +26,13 @@ echo [OK] Da dung toan bo tien trinh Kiosk.
 
 :: 3. Xoa tu dong khoi dong cung Windows
 echo [2/4] Xoa dang ky khoi dong cung Windows...
+schtasks /delete /tn "QLBS_Kiosk_Agent" /f >nul 2>&1
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Agent" /f >nul 2>&1
 reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "QLBS_Kiosk_Agent" /f >nul 2>&1
-echo [OK] Da xoa khoi muc tu khoi dong.
+if exist "%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\QLBS_Kiosk_Agent.bat" (
+    del /f /q "%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\QLBS_Kiosk_Agent.bat" >nul 2>&1
+)
+echo [OK] Da xoa sach toan bo cac muc khoi dong tu dong.
 
 :: 4. Khoi phuc Task Manager va phim he thong
 echo [3/4] Khoi phuc Task Manager va quyen he thong...
