@@ -97,11 +97,35 @@ export default function MobileScanPage() {
     });
   };
 
+  const handleSwitchToHttps = () => {
+    if (typeof window === 'undefined') return;
+    const curPort = window.location.port;
+    let targetPort = '';
+    if (curPort === '3000') {
+      targetPort = ':3443';
+    } else if (curPort && curPort !== '80' && curPort !== '443') {
+      targetPort = `:${curPort}`;
+    }
+    const httpsUrl = `https://${window.location.hostname}${targetPort}${window.location.pathname}${window.location.search}`;
+    window.location.href = httpsUrl;
+  };
+
   // 2. Khởi tạo Camera (Ưu tiên 100% camera trước và tự động sửa nếu điện thoại chọn nhầm camera sau)
   const startCamera = async (forceMode?: 'user' | 'environment') => {
     if (isStartingRef.current) return;
     isStartingRef.current = true;
     setCameraError(null);
+
+    // Kiểm tra Secure Context (HTTPS / localhost)
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      console.warn('Đang truy cập qua HTTP không bảo mật: Trình duyệt di động chặn WebRTC Live Stream.');
+      setIsHttpCaptureMode(true);
+      setCameraActive(true);
+      setCurrentStep('scanning');
+      setStatusText('Chạm vào màn hình để mở Camera chụp ảnh');
+      isStartingRef.current = false;
+      return;
+    }
 
     const targetMode = forceMode || facingMode;
 
@@ -447,6 +471,28 @@ export default function MobileScanPage() {
 
       {/* Main Body */}
       <main className="my-auto py-4">
+        {/* CẢNH BÁO / HƯỚNG DẪN KHI CHẠY TRÊN HTTP */}
+        {isHttpCaptureMode && currentStep === 'scanning' && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4 text-xs text-amber-200">
+            <div className="flex items-start gap-2.5">
+              <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-bold text-amber-300">Quét khuôn mặt tự động (Face ID)</p>
+                <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                  Để điện thoại tự động mở camera trước nhận diện không cần bấm chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSwitchToHttps}
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+                >
+                  ⚡ Thử chuyển sang HTTPS ngay
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* KHUNG QUÉT CAMERA */}
         {(currentStep === 'scanning' || currentStep === 'verifying') && (
           <div className="space-y-4">
@@ -466,10 +512,12 @@ export default function MobileScanPage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20">
+                    <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20 px-4">
                       <Camera className="h-12 w-12 text-teal-400 mb-2 animate-bounce" />
-                      <span className="text-xs font-bold text-teal-200">Chạm để mở Camera</span>
-                      <span className="text-[10px] text-slate-400 mt-1">Chụp thẳng khuôn mặt</span>
+                      <span className="text-sm font-bold text-teal-200">Chạm để mở Camera</span>
+                      <span className="text-[11px] text-teal-300/80 mt-1.5 text-center font-medium">
+                        Vui lòng chụp camera trước thẳng khuôn mặt
+                      </span>
                     </div>
                   )}
                 </div>
@@ -529,7 +577,7 @@ export default function MobileScanPage() {
                   className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <Camera className="h-5 w-5" />
-                  <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp khuôn mặt'}</span>
+                  <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp khuôn mặt (Camera trước)'}</span>
                 </button>
               )}
             </div>

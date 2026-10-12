@@ -18,20 +18,14 @@ echo.
 :: 2. Nhap thong tin cau hinh phong kham
 echo [BUOC 1/5] THIET LAP THONG SO PHONG KHAM
 echo ----------------------------------------------------------------------------
-set "DEFAULT_IP=192.168.1.50"
-set "DEFAULT_PORT=3000"
+set "DEFAULT_SERVER_URL=http://192.168.1.50:3000"
+set "SERVER_URL=%DEFAULT_SERVER_URL%"
+set /p "SERVER_URL=Nhap dia chi Server QLBV (HTTP hoac HTTPS) [Mac dinh: %DEFAULT_SERVER_URL%]: "
+
 set "DEFAULT_ROOM=PK01"
-
-set "SERVER_IP=%DEFAULT_IP%"
-set /p "SERVER_IP=Nhap IP May chu QLBV [Mac dinh: %DEFAULT_IP%]: "
-
-set "PORT=%DEFAULT_PORT%"
-set /p "PORT=Nhap Cong dich vu web [Mac dinh: %DEFAULT_PORT%]: "
-
 set "ROOM_CODE=%DEFAULT_ROOM%"
 set /p "ROOM_CODE=Nhap Ma phong kham (vd: PK01, PK02...) [Mac dinh: %DEFAULT_ROOM%]: "
 
-set "SERVER_URL=http://%SERVER_IP%:%PORT%"
 set "TERMINAL_ID=term_%ROOM_CODE%_%RANDOM%"
 
 echo.

@@ -581,9 +581,12 @@ export class KioskService implements OnModuleInit {
     const tid = terminalId?.trim() || '';
     const sessionId = crypto.randomUUID();
 
-    // Xác định URL cơ sở công khai (Tránh địa chỉ nội bộ container Docker như api:4000)
+    // Xác định URL cơ sở công khai (Ưu tiên SCAN_BASE_URL cấu hình HTTPS nếu có)
     let baseUrl = '';
-    if (clientOrigin && clientOrigin.startsWith('http')) {
+    const configuredScanBase = process.env.SCAN_BASE_URL || process.env.NEXT_PUBLIC_SCAN_BASE_URL;
+    if (configuredScanBase && configuredScanBase.startsWith('http')) {
+      baseUrl = configuredScanBase.replace(/\/+$/, '');
+    } else if (clientOrigin && clientOrigin.startsWith('http')) {
       baseUrl = clientOrigin.replace(/\/+$/, '');
     } else {
       let host = hostHeader || process.env.PUBLIC_URL || 'localhost:3000';

@@ -158,15 +158,15 @@ export default function KioskPage() {
         totalExpiresRef.current = data.qrSession.totalExpiresSeconds;
       }
 
-      if (data?.qrSession?.sessionId) {
-        // Bắt buộc dùng window.location.origin của trình duyệt đang mở Kiosk
-        // Đảm bảo điện thoại quét QR luôn mở đúng địa chỉ IP/domain của web (vd: http://172.16.13.75:3000/scan/...)
-        const scanUrl = `${origin}/scan/${data.qrSession.sessionId}`;
+      const backendQrUrl = data?.qrSession?.qrUrl;
+      const scanUrl =
+        backendQrUrl && !backendQrUrl.includes('localhost') && !backendQrUrl.includes('api:4000')
+          ? backendQrUrl
+          : `${origin}/scan/${data?.qrSession?.sessionId || ''}`;
+
+      if (data?.qrSession?.sessionId || backendQrUrl) {
         setQrUrl(scanUrl);
-        setExpiresInSeconds(data.qrSession.expiresInSeconds ?? totalExpiresRef.current);
-      } else if (data?.qrSession?.qrUrl) {
-        setQrUrl(data.qrSession.qrUrl);
-        setExpiresInSeconds(data.qrSession.expiresInSeconds ?? totalExpiresRef.current);
+        setExpiresInSeconds(data?.qrSession?.expiresInSeconds ?? totalExpiresRef.current);
       }
     } catch (err: any) {
       console.warn('Lỗi nạp trạng thái Kiosk:', err?.message || err);
@@ -196,13 +196,15 @@ export default function KioskPage() {
         if (data?.totalExpiresSeconds) {
           totalExpiresRef.current = data.totalExpiresSeconds;
         }
-        if (data?.sessionId) {
-          const scanUrl = `${origin}/scan/${data.sessionId}`;
+        const backendQr = data?.qrUrl;
+        const scanUrl =
+          backendQr && !backendQr.includes('localhost') && !backendQr.includes('api:4000')
+            ? backendQr
+            : `${origin}/scan/${data?.sessionId || ''}`;
+
+        if (data?.sessionId || backendQr) {
           setQrUrl(scanUrl);
-          setExpiresInSeconds(data.expiresInSeconds ?? totalExpiresRef.current);
-        } else if (data?.qrUrl) {
-          setQrUrl(data.qrUrl);
-          setExpiresInSeconds(data.expiresInSeconds ?? totalExpiresRef.current);
+          setExpiresInSeconds(data?.expiresInSeconds ?? totalExpiresRef.current);
         }
       }
     } catch (err) {
@@ -388,40 +390,42 @@ export default function KioskPage() {
     }
   };
 
-  // Tự động đóng cửa sổ trình duyệt khi mở khoá thành công để lộ Desktop
+  // Tự động đóng cửa sổ trình duyệt và thoát fullscreen khi mở khoá thành công để lộ Desktop
   useEffect(() => {
     if (isUnlocked) {
       try {
+        if (typeof document !== 'undefined' && document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        window.blur();
         window.close();
       } catch {}
     }
   }, [isUnlocked]);
 
   // --- TRẠNG THÁI 1: ĐÃ MỞ KHOÁ (GIẢI PHÓNG MÀN HÌNH DESKTOP) ---
+  // Tuyệt đối không phủ toàn màn hình (fixed inset-0). Chỉ hiển thị widget nổi nhỏ góc dưới bên phải
+  // để Bác sĩ nhìn thấy và thao tác 100% Desktop, HIS, PACS bình thường.
   if (isUnlocked) {
     return (
-      <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none text-white z-50">
-        <div className="h-16 w-16 rounded-3xl bg-emerald-500/20 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center mb-4 shadow-2xl animate-pulse">
-          <CheckCircle2 className="h-8 w-8" />
+      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-slate-900/95 backdrop-blur-md border border-emerald-500/50 rounded-2xl px-4 py-2.5 shadow-2xl text-white select-none animate-in fade-in slide-in-from-bottom-4">
+        <div className="flex items-center gap-2">
+          <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
+          <span className="text-xs font-bold text-emerald-400">
+            {activeSession?.title ? `${activeSession.title} ` : 'BS '}
+            {activeSession?.fullName || 'Bác sĩ trực'}
+          </span>
+          <span className="text-[10px] text-slate-400">({roomInfo.code})</span>
         </div>
-        <h2 className="text-xl font-bold text-white mb-2">ĐÃ MỞ KHOÁ MÁY TÍNH THÀNH CÔNG</h2>
-        <p className="text-sm text-emerald-400 font-semibold mb-1">
-          {activeSession?.title ? `${activeSession.title} ` : 'BS '}
-          {activeSession?.fullName || 'Bác sĩ khám'} — {activeSession?.shiftName || 'Ca làm việc'}
-        </p>
-        <p className="text-xs text-slate-400 max-w-sm mt-2">
-          Đang giải phóng màn hình Desktop. Bác sĩ có thể thao tác các phần mềm khám bệnh Windows.
-        </p>
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleLockRoom}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
-          >
-            <Lock className="h-4 w-4" />
-            <span>Khoá lại phòng khám</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleLockRoom}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-600/30 transition-all cursor-pointer"
+          title="Khoá lại máy trạm phòng khám"
+        >
+          <Lock className="h-3.5 w-3.5" />
+          <span>Khoá máy</span>
+        </button>
       </div>
     );
   }

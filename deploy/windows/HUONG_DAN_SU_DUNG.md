@@ -69,3 +69,21 @@ Khi cần chuyển máy tính sang mục đích sử dụng văn phòng thông t
    - Xóa đăng ký khởi động cùng Windows.
    - Xóa sạch thư mục `C:\QLBS_Kiosk`.
    - Máy tính trở lại trạng thái Windows ban đầu 100%.
+
+---
+
+## 6. Lưu Ý Quan Trọng Về Camera Điện Thoại & Giao Thức HTTPS
+
+### Trải nghiệm Face ID tự động 100% (Khuyến nghị HTTPS):
+- Theo quy định an ninh bảo mật của W3C toàn cầu (Google Chrome, Apple Safari), tính năng **WebRTC Live Stream** (mở trực tiếp camera trong trang web, tự bắt mặt và mở khóa không cần bấm chụp) **bắt buộc phải chạy qua giao thức bảo mật HTTPS** (hoặc localhost).
+- Khi máy chủ bệnh viện có tên miền hoặc cấu hình HTTPS (qua Nginx / Caddy mẫu tại `deploy/nginx/qlbs.conf.example`):
+  * Bác sĩ quét mã QR ➔ Camera trước **tự động mở ngay tức khắc** trong trang web.
+  * AI quét khuôn mặt liên tục và mở khóa máy tính trong 0.5s.
+  * **Bác sĩ không cần chạm bất kỳ nút nào trên màn hình điện thoại**.
+
+### Khi chạy mạng nội bộ LAN qua HTTP:
+- Trình duyệt di động sẽ chặn WebRTC và kích hoạt chế độ **Native Camera Capture**:
+  * Trang quét hiển thị nút lớn **"Mở Camera chụp khuôn mặt"**.
+  * Bác sĩ chỉ cần chạm 1 lần vào màn hình để chụp khuôn mặt (chọn camera trước).
+  * Ảnh chụp được tự động nén siêu tốc và gửi thẳng sang máy chủ AI để mở khóa máy trạm phòng khám.
+  * Trên giao diện có nút chuyển nhanh sang HTTPS nếu máy chủ đã bật cổng SSL.
