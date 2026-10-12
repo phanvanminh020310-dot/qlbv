@@ -33,8 +33,8 @@ export default function KioskPage() {
   const [qrUrl, setQrUrl] = useState<string>('');
   const [handshakePin, setHandshakePin] = useState<string>('');
   const [terminalId, setTerminalId] = useState<string>('');
-  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(90);
-  const totalExpiresRef = useRef<number>(90);
+  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(15);
+  const totalExpiresRef = useRef<number>(15);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);

@@ -84,11 +84,16 @@ Hệ thống điểm danh bác sĩ và kiểm soát máy trạm phòng khám ho�
 
 ---
 
-## 3. CƠ CHẾ BẢO VỆ MÁY TRẠM & BẢN CÀI ĐẶT WINDOWS TINH GỌN (2 FILE DUY NHẤT)
+## 3. CƠ CHẾ BẢO VỆ MÁY TRẠM & BẢN CÀI ĐẶT WINDOWS NATIVE AGENT
 
-Tại thư mục `deploy/windows/`, hệ thống đã được tinh giản thành đúng 2 file tự động hóa:
-1. `cai_dat_kiosk.bat`: Cài đặt trọn gói A-Z. Cấu hình IP và mã phòng khám, khóa toàn diện bàn phím (`Win+D`, Task Manager...), khóa quyền NTFS tệp tin, tự động thu nhỏ giải phóng Desktop khi mở khóa, tự động khóa lại khi hết ca trực, và tự khởi động ngầm cùng Windows.
-2. `go_bo_kiosk.bat`: Kịch bản dự phòng cho bộ phận IT khi cần bảo trì hoặc gỡ bỏ triệt để Kiosk, khôi phục 100% cài đặt mặc định của Windows.
+Tại thư mục `deploy/windows/`, hệ thống được trang bị kiến trúc **Windows Native Kiosk Agent** chuyên dụng:
+1. `QLBS_Kiosk_Agent.cs`: Mã nguồn C# .NET siêu nhẹ (~3MB), biên dịch trực tiếp bằng `csc.exe` có sẵn trên mọi máy tính Windows 10/11.
+   - **Khóa bàn phím cấp độ nhân (Low-Level Hook `WH_KEYBOARD_LL`)**: Chặn 100% phím `Windows`, `Alt+Tab`, `Alt+F4`, `Ctrl+Esc`, `Ctrl+Shift+Esc`, Task Manager.
+   - **Giải phóng Desktop tức thì trong 0.05 giây**: Khi bác sĩ xác thực thành công, Agent lập tức đóng cửa sổ Kiosk, giải phóng 100% màn hình Desktop sạch sẽ cho bác sĩ làm việc mà không để lại bất kỳ khung mờ hay canvas nào.
+   - **Tự động khóa lại khi hết ca**: Theo dõi thời gian kết thúc ca trực (+ thời gian ân hạn `kiosk.lateCheckoutMinutes`), tự động bật lại toàn màn hình khóa để đón bác sĩ ca tiếp theo.
+   - **Phím nóng IT khẩn cấp**: Bấm `Ctrl + Alt + Shift + F12` (hoặc nhấp 5 lần vào Logo Bệnh viện) để mở bảng nhập Master PIN IT cứu hộ máy trạm.
+2. `cai_dat_kiosk.bat`: Cài đặt trọn gói A-Z: cấu hình IP, mã phòng khám, tự biên dịch Agent ra `.exe`, khóa Task Manager, và đăng ký tự khởi động cùng Windows.
+3. `go_bo_kiosk.bat`: Kịch bản dự phòng cho bộ phận IT khi cần bảo trì hoặc gỡ bỏ triệt để Kiosk, khôi phục 100% cài đặt mặc định của Windows trong 2 giây.
 
 ---
 

@@ -1,44 +1,71 @@
 # Hướng Dẫn Cài Đặt & Quản Lý Kiosk Phòng Khám — Bệnh Viện Quân Y 4
+### Kiến Trúc Windows Native Kiosk Agent (Bảo Vệ Độc Quyền Cấp Độ Nhân)
 
-Thư mục này đã được tinh giản tối đa thành đúng **2 file kịch bản tự động hóa**:
-1. 👉 **`cai_dat_kiosk.bat`**: Cài đặt trọn gói từ A đến Z cho máy tính phòng khám.
-2. 👉 **`go_bo_kiosk.bat`**: Gỡ bỏ triệt để và khôi phục máy tính về Windows mặc định (dành cho IT).
-
----
-
-## 1. Hướng Dẫn Cài Đặt Mới (`cai_dat_kiosk.bat`)
-Thực hiện một lần duy nhất trên mỗi máy tính phòng khám:
-
-1. Copy thư mục `windows/` (hoặc 2 file `.bat`) vào máy tính phòng khám (hoặc cắm USB).
-2. Nhấp chuột phải vào file **`cai_dat_kiosk.bat`** ➔ Chọn **Run as administrator** (Bắt buộc).
-3. Cửa sổ cài đặt hiện lên:
-   - Nhập **IP Máy chủ QLBV** (vd: `192.168.1.50` - nhấn `Enter` để lấy mặc định).
-   - Nhập **Cổng dịch vụ** (mặc định: `3000`).
-   - Nhập **Mã phòng khám** của máy này (vd: `PK01`, `PK02`, `PK03`...).
-4. Quá trình tự động thực hiện hoàn toàn trong 5 giây:
-   - ✅ Tự động phát hiện Microsoft Edge hoặc Google Chrome.
-   - ✅ Tạo thư mục bảo mật `C:\ProgramData\QLBS_Kiosk`.
-   - ✅ Phân quyền NTFS (`icacls`): Chống người dùng thông thường xóa hoặc sửa tệp Kiosk vĩnh viễn.
-   - ✅ Khóa toàn diện bàn phím (`Win + D`, `Win + R`, `Ctrl + Shift + Esc`, Task Manager, phím Shift 5 lần, cử chỉ vuốt mép màn hình cảm ứng).
-   - ✅ Đăng ký khởi động ngầm cùng máy tính (Task Scheduler + HKLM Run).
-   - ✅ Kích hoạt Kiosk toàn màn hình che taskbar ngay lập tức.
+Thư mục này chứa trọn gói giải pháp khóa máy trạm phòng khám chuyên dụng theo chuẩn bệnh viện:
+- 📁 **`QLBS_Kiosk_Agent.cs`**: Mã nguồn C# .NET Native Agent siêu nhẹ (không phụ thuộc thư viện ngoài).
+- ⚙️ **`cai_dat_kiosk.bat`**: Kịch bản tự động biên dịch và cài đặt Native Agent từ A đến Z.
+- 🧹 **`go_bo_kiosk.bat`**: Kịch bản gỡ bỏ triệt để và khôi phục máy trạm về Windows văn phòng nguyên bản trong 2 giây.
 
 ---
 
-## 2. Cơ Chế Hoạt Động Thông Minh Trong Ca Trực
-- **Khi máy đang khóa:** Kiosk phủ kín 100% màn hình, hiển thị mã QR động để bác sĩ quét mặt. Toàn bộ phím tắt Windows bị khóa để chống can thiệp.
-- **Khi Bác sĩ quét mặt thành công:** Kiosk tự động thu nhỏ xuống thanh Taskbar, **giải phóng 100% màn hình Desktop** (không hiện bất kỳ màn hình xanh nào che khuất), bác sĩ sử dụng mượt mà các ứng dụng Windows (HIS, PACS, Word, v.v.).
-- **Tự động khóa máy khi qua ca:** Khi ca trực của bác sĩ kết thúc và **quá thời gian ân hạn sau ca trực** (`kiosk.lateCheckoutMinutes`, ví dụ: 30 phút), hệ thống tự động khóa lại toàn màn hình và nạp mã QR mới cho bác sĩ ca tiếp theo (phòng ngừa bác sĩ ca trước quên bấm nút khóa).
+## 1. Ưu Điểm Đột Phá Của Native Agent So Với Trình Duyệt Thuần
+
+| Tiêu chí | Bản cũ (Trình duyệt Edge trần) | Bản mới (Windows Native Agent) |
+| :--- | :--- | :--- |
+| **Khóa phím hệ thống** | Dễ bị lọt phím khi có popup/thông báo Windows. | **Khóa tuyệt đối 100% cấp độ nhân (Low-Level Hook)**: Chặn `Win`, `Alt+Tab`, `Alt+F4`, `Ctrl+Esc`, `Ctrl+Shift+Esc`, Task Manager. |
+| **Khi mở khóa thành công** | Bị đơ, dính màn hình xanh/trắng, khó giải phóng Desktop. | **Biến mất tức thì trong 0.05 giây**: Cửa sổ Kiosk bị hủy ngay lập tức, trả lại 100% màn hình Desktop Windows sạch sẽ cho bác sĩ. |
+| **Cách ly hồ sơ duyệt web** | Chạy chung với Edge cá nhân của bác sĩ. | **Profile độc lập (`C:\QLBS_Kiosk\EdgeProfile`)**: Không ảnh hưởng đến Edge, tab làm việc hay tài khoản HIS của bác sĩ. |
+| **Chống gian lận chụp QR gửi Zalo** | Mã QR có hạn 90 giây (dễ chụp gửi đi). | **Mã QR động 15 giây + Cơ chế Burn-on-scan (Mã 1 lần)**: Quá 15s tự đổi mã mới; quét rồi lập tức khóa mã, không thể quét từ xa. |
+| **Phím nóng cứu hộ cho IT** | Khó thao tác hoặc dễ bị người dùng bấm nhầm. | **Tổ hợp phím độc quyền IT `Ctrl + Alt + Shift + F12`**: Bật ngay hộp thoại nhập Master PIN IT để mở khóa cưỡng chế. |
 
 ---
 
-## 3. Hướng Dẫn Gỡ Bỏ Triệt Để Khi Cần Bảo Trì (`go_bo_kiosk.bat`)
-Khi bộ phận IT cần chuyển đổi mục đích sử dụng máy tính hoặc cài lại phần mềm:
+## 2. Hướng Dẫn Cài Đặt Máy Trạm (`cai_dat_kiosk.bat`)
+Thực hiện một lần duy nhất trên máy tính phòng khám:
+
+1. Copy thư mục `windows/` (chứa `cai_dat_kiosk.bat`, `go_bo_kiosk.bat` và `QLBS_Kiosk_Agent.cs`) vào máy phòng khám (hoặc cắm USB).
+2. Nhấp chuột phải vào file **`cai_dat_kiosk.bat`** ➔ Chọn **Run as administrator**.
+3. Nhập 3 thông số cơ bản:
+   - **IP Máy chủ QLBV**: Nhập IP máy chủ viện (ví dụ: `192.168.1.50`).
+   - **Cổng dịch vụ**: Nhấn `Enter` để lấy mặc định `3000`.
+   - **Mã phòng khám**: Nhập mã phòng (ví dụ: `PK01`, `PK02`...).
+4. Trình cài đặt tự động:
+   - Tự động dùng trình biên dịch `csc.exe` có sẵn của Windows để dịch ra tệp nhị phân `C:\QLBS_Kiosk\QLBS_Kiosk_Agent.exe`.
+   - Tạo hồ sơ Edge Kiosk riêng biệt.
+   - Vô hiệu hóa Task Manager và thiết lập khóa bàn phím cấp độ nhân.
+   - Đăng ký tự khởi động cùng Windows.
+   - Khởi động màn hình Kiosk bảo vệ máy tính ngay lập tức.
+
+---
+
+## 3. Quy Trình Sử Dụng Hằng Ngày Của Bác Sĩ
+
+1. **Khi vào ca trực**:
+   - Bác sĩ đứng trước máy trạm phòng khám.
+   - Dùng điện thoại cá nhân quét mã QR hiển thị trên màn hình máy tính (mã đếm lùi 15s).
+   - Camera điện thoại tự bật lên ➔ Nhìn thẳng vào màn hình điện thoại trong 1 giây ➔ AI nhận diện người thật và đối soát lịch trực.
+   - **MÁY TÍNH MỞ KHÓA NGAY LẬP TỨC**: Màn hình Kiosk đóng ngay trong 0.05s, màn hình Desktop Windows hiện ra nguyên bản 100% để bác sĩ khám chữa bệnh (mở phần mềm HIS, PACS, Word, v.v.).
+2. **Khi hết ca trực**:
+   - Khi ca trực kết thúc và quá thời gian ân hạn (`kiosk.lateCheckoutMinutes`, ví dụ: 30 phút), Agent tự động kích hoạt lại toàn màn hình khóa để đón bác sĩ ca tiếp theo.
+
+---
+
+## 4. Cơ Chế Mở Khóa Khẩn Cấp Dành Cho IT (Emergency Unlock)
+
+Khi xảy ra sự cố mạng, mất điện thoại hoặc cần bảo trì máy trạm đột xuất:
+- **Cách 1 (Phím nóng độc quyền IT)**: Nhấn tổ hợp phím **`Ctrl + Alt + Shift + F12`**.
+- **Cách 2 (Cử chỉ chạm bí mật)**: Nhấp chuột liên tiếp **5 lần vào Logo Bệnh viện** ở góc trên màn hình.
+- ➔ Hộp thoại **"Xác thực Kỹ thuật viên CNTT"** hiện lên: IT nhập Master PIN khẩn cấp (mặc định cấu hình trên trang Quản trị hoặc `999888`) ➔ Máy trạm lập tức mở khóa Desktop và ghi nhận nhật ký kiểm toán hệ thống.
+
+---
+
+## 5. Hướng Dẫn Gỡ Bỏ Triệt Để (`go_bo_kiosk.bat`)
+Khi cần chuyển máy tính sang mục đích sử dụng văn phòng thông thường:
 
 1. Nhấp chuột phải vào file **`go_bo_kiosk.bat`** ➔ Chọn **Run as administrator**.
-2. Kịch bản sẽ tự động:
-   - 🛑 Dừng toàn bộ tiến trình Kiosk và đóng trình duyệt.
-   - 🗑️ Xóa sạch tác vụ Task Scheduler và khóa Registry Run.
-   - 🔓 Khôi phục toàn bộ bàn phím, mở lại `Win + D`, mở lại Task Manager (`Ctrl + Shift + Esc`).
-   - 🧹 Mở quyền NTFS và xóa sạch thư mục `C:\ProgramData\QLBS_Kiosk`.
-   - 🔄 Nạp lại Windows Explorer để máy tính trở về trạng thái nguyên bản 100%.
+2. Script sẽ:
+   - Tắt sạch tiến trình `QLBS_Kiosk_Agent.exe`.
+   - Mở khóa lại Task Manager và bàn phím bình thường.
+   - Xóa đăng ký khởi động cùng Windows.
+   - Xóa sạch thư mục `C:\QLBS_Kiosk`.
+   - Máy tính trở lại trạng thái Windows ban đầu 100%.

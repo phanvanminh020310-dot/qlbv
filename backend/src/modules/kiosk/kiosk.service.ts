@@ -37,6 +37,7 @@ export interface KioskSession {
   challengeSequence: string[];
   flashColorSequence: string[];
   status: 'WAITING' | 'VERIFIED' | 'EXPIRED';
+  consumed?: boolean;
   verifiedDoctor?: any;
 }
 
@@ -210,7 +211,7 @@ export class KioskService implements OnModuleInit {
     } catch (e: any) {
       console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
     }
-    return 90;
+    return 15;
   }
 
   /**
@@ -603,7 +604,7 @@ export class KioskService implements OnModuleInit {
 
     const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
-    const ttlSeconds = Math.max(10, Math.min(600, expiresInSeconds || 90));
+    const ttlSeconds = Math.max(10, Math.min(600, expiresInSeconds || 15));
 
     const session: KioskSession = {
       sessionId,
@@ -616,6 +617,7 @@ export class KioskService implements OnModuleInit {
       challengeSequence,
       flashColorSequence,
       status: 'WAITING',
+      consumed: false,
     };
 
     // Dọn các phiên WAITING cũ của đúng terminal này
@@ -755,6 +757,11 @@ export class KioskService implements OnModuleInit {
     if (!session || session.status !== 'WAITING') {
       throw new BadRequestException('Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.');
     }
+
+    if (session.consumed) {
+      throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
+    }
+    session.consumed = true;
 
     // 1. Gọi AI Engine kiểm tra người thật ISO 30107 PAD (Passive Liveness)
     const challenges = completedChallenges || ['PASSIVE_LIVENESS'];
