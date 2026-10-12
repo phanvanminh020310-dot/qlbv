@@ -12,7 +12,6 @@ import {
   Sparkles,
   SwitchCamera,
   ScanFace,
-  Upload,
 } from 'lucide-react';
 
 export default function MobileScanPage() {
@@ -28,13 +27,13 @@ export default function MobileScanPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
 
-  // Chế độ chụp qua HTTP (Native Camera Capture) khi WebRTC getUserMedia bị trình duyệt chặn trên HTTP
+  // Fallback chụp ảnh trực tiếp nếu trình duyệt chặn hoàn toàn WebRTC
   const [isHttpCaptureMode, setIsHttpCaptureMode] = useState(false);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
 
   // Trạng thái quét khuôn mặt
   const [currentStep, setCurrentStep] = useState<'scanning' | 'verifying' | 'success' | 'failed'>('scanning');
-  const [statusText, setStatusText] = useState<string>('Đang căn chỉnh khuôn mặt...');
+  const [statusText, setStatusText] = useState<string>('Đang mở camera trước...');
   const [resultData, setResultData] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -42,7 +41,7 @@ export default function MobileScanPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const autoCaptureTimerRef = useRef<any>(null);
+  const isStartingRef = useRef(false);
 
   // 1. Tải thông tin phiên quét từ sessionId
   useEffect(() => {
@@ -65,7 +64,7 @@ export default function MobileScanPage() {
     fetchSession();
   }, [sessionId]);
 
-  // Nén ảnh chụp để gửi AI nhanh tức thì (< 100ms)
+  // Nén ảnh để tải lên nhanh (< 80KB)
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -98,84 +97,148 @@ export default function MobileScanPage() {
     });
   };
 
-  // 2. Khởi tạo Camera (hỗ trợ cả WebRTC stream và fallback HTTP Native Camera)
-  const startCamera = async (mode: 'user' | 'environment' = facingMode) => {
+  // 2. Khởi tạo Camera (Ưu tiên 100% camera trước và tự động sửa nếu điện thoại chọn nhầm camera sau)
+  const startCamera = async (forceMode?: 'user' | 'environment') => {
+    if (isStartingRef.current) return;
+    isStartingRef.current = true;
     setCameraError(null);
-    clearTimeout(autoCaptureTimerRef.current);
 
-    // Kiểm tra nếu đang truy cập qua HTTP (không phải localhost và không phải HTTPS):
-    // Trình duyệt di động (Chrome, Safari) sẽ khóa navigator.mediaDevices.getUserMedia trên HTTP.
-    const isSecure = typeof window !== 'undefined' && (
-      window.isSecureContext ||
-      window.location.protocol === 'https:' ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1'
-    );
-
-    if (!isSecure || !navigator?.mediaDevices?.getUserMedia) {
-      console.log('[Camera] Phát hiện môi trường HTTP nội bộ. Kích hoạt chế độ Native Camera Capture cho điện thoại.');
-      setIsHttpCaptureMode(true);
-      setCameraActive(true);
-      setCurrentStep('scanning');
-      setStatusText('Nhấp nút bên dưới để mở Camera chụp ảnh');
-      return;
-    }
+    const targetMode = forceMode || facingMode;
 
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: mode,
-          width: { ideal: 640 },
-          height: { ideal: 640 },
-        },
+      // Tìm kiếm device ID của camera trước một cách rõ ràng
+      let selectedDeviceId: string | undefined = undefined;
+      if (navigator?.mediaDevices?.enumerateDevices) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+
+          if (targetMode === 'user') {
+            const front = videoInputs.find((d) =>
+              /front|user|facetime|trước|selfie/i.test(d.label)
+            );
+            if (front) {
+              selectedDeviceId = front.deviceId;
+            }
+          } else {
+            const back = videoInputs.find((d) =>
+              /back|rear|environment|sau/i.test(d.label)
+            );
+            if (back) {
+              selectedDeviceId = back.deviceId;
+            }
+          }
+        } catch {}
+      }
+
+      const constraints: MediaStreamConstraints = {
         audio: false,
-      });
+        video: selectedDeviceId
+          ? {
+              deviceId: { exact: selectedDeviceId },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+            }
+          : {
+              facingMode: targetMode === 'user' ? { ideal: 'user' } : { ideal: 'environment' },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+            },
+      };
+
+      let stream: MediaStream | null = null;
+      if (navigator?.mediaDevices?.getUserMedia) {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } else {
+        const legacyGUM =
+          (navigator as any).getUserMedia ||
+          (navigator as any).webkitGetUserMedia ||
+          (navigator as any).mozGetUserMedia ||
+          (navigator as any).msGetUserMedia;
+
+        if (legacyGUM) {
+          stream = await new Promise((resolve, reject) => {
+            legacyGUM.call(navigator, constraints, resolve, reject);
+          });
+        }
+      }
+
+      if (!stream) {
+        throw new Error('NO_STREAM');
+      }
+
+      // Kiểm tra nếu thiết bị tự mở nhầm camera sau khi đang cần camera trước:
+      // Tự động phát hiện và tráo đổi ngay lập tức sang camera trước
+      if (targetMode === 'user') {
+        const tracks = stream.getVideoTracks();
+        if (tracks.length > 0) {
+          const trackLabel = tracks[0].label.toLowerCase();
+          if (/back|rear|sau|environment/.test(trackLabel)) {
+            console.log('[Camera] Thiết bị tự chọn camera sau, đang tự động chuyển về camera trước...');
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const other = devices.find(
+                (d) => d.kind === 'videoinput' && d.deviceId !== tracks[0].getSettings()?.deviceId
+              );
+              if (other) {
+                tracks[0].stop();
+                stream = await navigator.mediaDevices.getUserMedia({
+                  audio: false,
+                  video: {
+                    deviceId: { exact: other.deviceId },
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                  },
+                });
+              }
+            } catch {}
+          }
+        }
+      }
 
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.setAttribute('autoplay', 'true');
+        videoRef.current.muted = true;
+        await videoRef.current.play().catch(() => {});
       }
+
       setCameraActive(true);
       setIsHttpCaptureMode(false);
       setCurrentStep('scanning');
-      setStatusText('Đang nhận diện sinh học khuôn mặt...');
-
-      // Sau 1 giây camera ổn định ánh sáng, tự động chụp và đối chiếu tức thì
-      autoCaptureTimerRef.current = setTimeout(() => {
-        captureAndVerify();
-      }, 1100);
+      setStatusText('Nhìn thẳng camera để tự động điểm danh...');
     } catch (err: any) {
-      console.warn('Lỗi mở WebRTC Camera, chuyển sang chế độ chụp trực tiếp Native Camera:', err);
+      console.warn('Không thể mở Live Video Stream, kích hoạt chế độ chụp trực tiếp:', err);
       setIsHttpCaptureMode(true);
       setCameraActive(true);
       setCurrentStep('scanning');
-      setStatusText('Nhấp nút bên dưới để mở Camera chụp ảnh');
+      setStatusText('Chạm vào màn hình để mở Camera chụp ảnh');
+    } finally {
+      isStartingRef.current = false;
     }
   };
 
-  // Tự động mở camera ngay khi phiên nạp thành công
+  // Tự động mở camera khi phiên nạp thành công
   useEffect(() => {
     if (!loadingSession && !sessionError && sessionData) {
       startCamera();
     }
     return () => {
-      clearTimeout(autoCaptureTimerRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
   }, [loadingSession, sessionError, sessionData]);
 
-  // Xử lý gửi ảnh sang AI xác thực
-  const submitVerification = async (imageBase64: string) => {
-    setCurrentStep('verifying');
-    setStatusText('Đang đối chiếu ArcFace & Lịch trực...');
-
+  // Gửi ảnh sang AI xác thực
+  const submitVerification = async (imageBase64: string): Promise<boolean> => {
     try {
       const resp = await fetch('/api/kiosk/verify-face', {
         method: 'POST',
@@ -190,41 +253,107 @@ export default function MobileScanPage() {
       const raw = await resp.json();
       const data = raw?.data ?? raw;
 
-      if (!resp.ok) {
-        throw new Error(data.message || 'Xác thực sinh trắc học không thành công.');
+      if (resp.ok && data?.success !== false) {
+        setResultData(data);
+        setCurrentStep('success');
+
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+        }
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          navigator.vibrate([100, 50, 100]);
+        }
+        return true;
       }
 
-      setResultData(data);
-      setCurrentStep('success');
-
-      // Tắt stream camera nếu có
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+      const msg = String(data?.message || '');
+      // Nếu chưa phát hiện rõ mặt, báo nhẹ và tiếp tục quét
+      if (
+        msg.includes('Không phát hiện') ||
+        msg.includes('khuôn mặt') ||
+        msg.includes('mờ') ||
+        msg.includes('chưa rõ')
+      ) {
+        setStatusText('Đang quét... Vui lòng nhìn thẳng vào camera');
+        return false;
       }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Xác thực khuôn mặt không thành công.');
+
+      // Nếu lỗi ca trực hoặc lỗi nghiêm trọng
+      setErrorMessage(msg || 'Xác thực khuôn mặt không thành công.');
       setCurrentStep('failed');
+      return false;
+    } catch {
+      return false;
     }
   };
 
-  // 3a. Chụp từ Live Stream (khi có WebRTC / HTTPS)
-  const captureAndVerify = async () => {
-    if (!videoRef.current || currentStep === 'verifying' || currentStep === 'success') return;
+  // 3. VÒNG LẶP TỰ ĐỘNG CHỤP & NHẬN DIỆN LIÊN TỤC (TỰ ĐỘNG 100% NHƯ FACE ID)
+  useEffect(() => {
+    if (!cameraActive || isHttpCaptureMode || currentStep !== 'scanning') return;
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current || document.createElement('canvas');
-    canvas.width = video.videoWidth || 480;
-    canvas.height = video.videoHeight || 480;
+    let isScanning = true;
+    let analyzing = false;
+    let failCount = 0;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const interval = setInterval(async () => {
+      if (!isScanning || analyzing) return;
+      if (!videoRef.current) return;
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageBase64 = canvas.toDataURL('image/jpeg', 0.88);
-    await submitVerification(imageBase64);
-  };
+      const video = videoRef.current;
+      // Chờ video sẵn sàng và có dữ liệu hình ảnh
+      if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+        return;
+      }
 
-  // 3b. Chụp từ Native Camera input (khi chạy HTTP nội bộ)
+      const canvas = canvasRef.current || document.createElement('canvas');
+      canvas.width = 480;
+      canvas.height = Math.round((480 * video.videoHeight) / video.videoWidth);
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Kiểm tra độ sáng khung hình (tránh chụp khi camera chưa kịp lấy sáng lúc mới bật)
+      const sample = ctx.getImageData(0, 0, Math.min(canvas.width, 80), Math.min(canvas.height, 80));
+      let sum = 0;
+      for (let i = 0; i < sample.data.length; i += 4) {
+        sum += (sample.data[i] + sample.data[i + 1] + sample.data[i + 2]) / 3;
+      }
+      const brightness = sum / (sample.data.length / 4);
+      if (brightness < 30) {
+        return;
+      }
+
+      analyzing = true;
+      setStatusText('Đang nhận diện sinh học khuôn mặt...');
+
+      const imageBase64 = canvas.toDataURL('image/jpeg', 0.85);
+      const ok = await submitVerification(imageBase64);
+
+      if (ok) {
+        isScanning = false;
+        clearInterval(interval);
+      } else {
+        failCount++;
+        // Sau 25 lần quét liên tục (~12 giây) mà không khớp, mới chuyển sang thông báo lỗi
+        if (failCount >= 25 && currentStep === 'scanning') {
+          isScanning = false;
+          setErrorMessage('Không nhận diện được Bác sĩ hoặc ca trực chưa tới.');
+          setCurrentStep('failed');
+        } else {
+          analyzing = false;
+        }
+      }
+    }, 450);
+
+    return () => {
+      isScanning = false;
+      clearInterval(interval);
+    };
+  }, [cameraActive, isHttpCaptureMode, currentStep, sessionId]);
+
+  // Chụp từ input file khi chạy chế độ Native Camera
   const handleFileCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -235,13 +364,12 @@ export default function MobileScanPage() {
       const imageBase64 = await compressImage(file);
       setCapturedPreview(imageBase64);
       await submitVerification(imageBase64);
-    } catch (err: any) {
+    } catch {
       setErrorMessage('Không thể đọc ảnh từ Camera điện thoại.');
       setCurrentStep('failed');
     }
   };
 
-  // Mở Native Camera khi người dùng bấm nút
   const triggerNativeCamera = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -285,7 +413,7 @@ export default function MobileScanPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-md mx-auto">
-      {/* Input ẩn chụp ảnh Native Camera hoạt động trên 100% HTTP và HTTPS */}
+      {/* Input ẩn hỗ trợ chụp ảnh trực tiếp nếu WebRTC bị chặn */}
       <input
         ref={fileInputRef}
         type="file"
@@ -329,7 +457,7 @@ export default function MobileScanPage() {
               }`}
             >
               {isHttpCaptureMode ? (
-                // Giao diện chụp ảnh Native Camera khi chạy trên HTTP
+                // Chế độ Native Camera Capture (khi không mở được stream)
                 <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center relative bg-gradient-to-b from-slate-900 to-black">
                   {capturedPreview ? (
                     <img
@@ -338,18 +466,15 @@ export default function MobileScanPage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <>
-                      {/* Vòng oval định vị khuôn mặt */}
-                      <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20">
-                        <Camera className="h-12 w-12 text-teal-400 mb-2 animate-bounce" />
-                        <span className="text-xs font-bold text-teal-200">Chạm để mở Camera</span>
-                        <span className="text-[10px] text-slate-400 mt-1">Chụp thẳng khuôn mặt</span>
-                      </div>
-                    </>
+                    <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20">
+                      <Camera className="h-12 w-12 text-teal-400 mb-2 animate-bounce" />
+                      <span className="text-xs font-bold text-teal-200">Chạm để mở Camera</span>
+                      <span className="text-[10px] text-slate-400 mt-1">Chụp thẳng khuôn mặt</span>
+                    </div>
                   )}
                 </div>
               ) : (
-                // Giao diện WebRTC Live Video Stream khi chạy trên HTTPS
+                // Chế độ Live Video Stream (Tự động nhận diện & chụp như Face ID)
                 <>
                   <video
                     ref={videoRef}
@@ -389,14 +514,14 @@ export default function MobileScanPage() {
               )}
             </div>
 
-            {/* Thông báo trạng thái và Nút kích hoạt Camera */}
+            {/* Thông báo trạng thái */}
             <div className="space-y-3 text-center">
               <div className="flex items-center justify-center gap-2 text-xs font-bold text-teal-400 animate-pulse">
                 <Sparkles className="h-4 w-4" />
                 <span>{statusText}</span>
               </div>
 
-              {isHttpCaptureMode ? (
+              {isHttpCaptureMode && (
                 <button
                   type="button"
                   onClick={triggerNativeCamera}
@@ -405,16 +530,6 @@ export default function MobileScanPage() {
                 >
                   <Camera className="h-5 w-5" />
                   <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp khuôn mặt'}</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={captureAndVerify}
-                  disabled={currentStep === 'verifying'}
-                  className="w-full py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-teal-300 font-bold text-xs border border-teal-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <ScanFace className="h-4 w-4" />
-                  <span>Chụp & Nhận diện ngay</span>
                 </button>
               )}
             </div>
@@ -480,16 +595,12 @@ export default function MobileScanPage() {
                 setErrorMessage(null);
                 setCapturedPreview(null);
                 setCurrentStep('scanning');
-                if (isHttpCaptureMode) {
-                  triggerNativeCamera();
-                } else {
-                  startCamera();
-                }
+                startCamera();
               }}
               className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
             >
               <RefreshCw className="h-4 w-4" />
-              <span>Chụp lại lần nữa</span>
+              <span>Quét lại lần nữa</span>
             </button>
           </div>
         )}
