@@ -5,10 +5,11 @@
 # ---------- Bước 1: cài phụ thuộc ----------
 FROM node:22-alpine AS deps
 WORKDIR /app
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 COPY package*.json ./
 # Cache npm giữa các lần dựng (BuildKit) — chỉ cài lại khi package*.json đổi
 RUN --mount=type=cache,id=qlbs-npm-api,target=/root/.npm,sharing=locked \
-    npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+    npm ci --no-audit --no-fund --maxsockets=5 --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 # ---------- Bước 2: biên dịch TypeScript ----------
 FROM node:22-alpine AS build

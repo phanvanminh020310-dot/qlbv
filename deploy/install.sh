@@ -384,13 +384,36 @@ if [[ ${#fail_ports[@]} -gt 0 ]]; then
   } >&2
   die 'cổng bị chiếm — dừng TRƯỚC khi dựng ảnh để không mất thời gian build.'
 fi
+# Tự động tạo 2GB Swap nếu máy chủ RAM thấp (< 3GB) và chưa có Swap
+TOTAL_RAM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo 0)
+SWAP_MB=$(free -m 2>/dev/null | awk '/^Swap:/{print $2}' || echo 0)
+if [[ ${TOTAL_RAM_MB:-0} -gt 0 && ${TOTAL_RAM_MB:-0} -lt 3000 && ${SWAP_MB:-0} -lt 1024 ]]; then
+  log "  RAM khả dụng (${TOTAL_RAM_MB}MB < 3000MB) và Swap (${SWAP_MB}MB < 1024MB) — tự tạo 2GB Swapfile để chống lỗi tràn RAM (OOM Killer)..."
+  if fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none; then
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null 2>&1
+    swapon /swapfile >/dev/null 2>&1
+    if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    ok "Đã kích hoạt 2GB Swap bảo vệ quá trình build"
+  fi
+fi
+
 mkdir -p data/postgres data/redis data/uploads data/backups
 # uploads/backups được bind-mount vào container api chạy bằng user `node` (UID 1000);
 # thư mục vừa tạo ở trên thuộc root → container không ghi được (EACCES mkdir /app/backups/exports)
 chown -R 1000:1000 data/uploads data/backups
 # Font Times New Roman gốc cho bản in PDF (lỗi không làm dừng cài đặt)
 bash deploy/install-times-font.sh --quiet || true
-"${COMPOSE[@]}" up -d --build
+
+# Dựng lần lượt từng container (không build song song cùng lúc để tránh nghẽn RAM trên VPS nhỏ)
+log "  → Đang dựng API Backend (NestJS)..."
+"${COMPOSE[@]}" build api
+log "  → Đang dựng Giao diện Web Kiosk (Next.js)..."
+"${COMPOSE[@]}" build web
+
+"${COMPOSE[@]}" up -d
 ok "Đã khởi động: PostgreSQL · Redis · API · Web"
 
 # ------------------------------------------------------------- 5) Chờ khỏe
