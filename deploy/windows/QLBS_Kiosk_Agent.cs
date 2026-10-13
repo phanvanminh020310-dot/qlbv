@@ -42,6 +42,14 @@ namespace QLBS.Kiosk
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // Bỏ qua kiểm tra chứng chỉ SSL tự ký khi kết nối HTTPS nội bộ
+            ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
+            try
+            {
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | SecurityProtocolType.Tls;
+            }
+            catch {}
+
             // 2. Nạp cấu hình từ tệp config.ini
             LoadConfig();
 
@@ -137,7 +145,7 @@ namespace QLBS.Kiosk
 
                 string targetUrl = string.Format("{0}/kiosk/{1}?terminalId={2}", serverUrl, roomCode, terminalId);
                 string arguments = string.Format(
-                    "--kiosk \"{0}\" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --disable-translate --disable-features=Translate,OptimizationHints --user-data-dir=\"{1}\"",
+                    "--kiosk \"{0}\" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --disable-translate --disable-features=Translate,OptimizationHints --ignore-certificate-errors --user-data-dir=\"{1}\"",
                     targetUrl,
                     edgeProfileDir
                 );
