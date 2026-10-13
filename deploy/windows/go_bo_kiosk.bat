@@ -34,11 +34,20 @@ if exist "%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\QLBS_Kiosk
 )
 echo [OK] Da xoa sach toan bo cac muc khoi dong tu dong.
 
-:: 4. Khoi phuc Task Manager va phim he thong
+:: 4. Khoi phuc Task Manager, phim he thong va Developer Tools
 echo [3/4] Khoi phuc Task Manager va quyen he thong...
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /f >nul 2>&1
 reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /f >nul 2>&1
-echo [OK] Da mo khoa lai Task Manager binh thuong.
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /f >nul 2>&1
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /f >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoWinKeys /f >nul 2>&1
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoWinKeys /f >nul 2>&1
+reg delete "HKLM\Software\Policies\Microsoft\Windows\Explorer" /v NoWinKeys /f >nul 2>&1
+reg delete "HKLM\Software\Policies\Microsoft\Edge" /v DeveloperToolsAvailability /f >nul 2>&1
+reg delete "HKCU\Software\Policies\Microsoft\Edge" /v DeveloperToolsAvailability /f >nul 2>&1
+reg delete "HKLM\Software\Policies\Google\Chrome" /v DeveloperToolsAvailability /f >nul 2>&1
+reg delete "HKCU\Software\Policies\Google\Chrome" /v DeveloperToolsAvailability /f >nul 2>&1
+echo [OK] Da mo khoa lai Task Manager, phim Windows va F12 binh thuong.
 
 :: 5. Xoa thu muc cai dat C:\QLBS_Kiosk
 echo [4/4] Don dep thu muc cai dat C:\QLBS_Kiosk...

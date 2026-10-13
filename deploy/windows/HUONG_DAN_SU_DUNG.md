@@ -12,7 +12,7 @@ Thư mục này chứa trọn gói giải pháp khóa máy trạm phòng khám c
 
 | Tiêu chí | Bản cũ (Trình duyệt Edge trần) | Bản mới (Windows Native Agent) |
 | :--- | :--- | :--- |
-| **Khóa phím hệ thống** | Dễ bị lọt phím khi có popup/thông báo Windows. | **Khóa tuyệt đối 100% cấp độ nhân (Low-Level Hook)**: Chặn `Win`, `Alt+Tab`, `Alt+F4`, `Ctrl+Esc`, `Ctrl+Shift+Esc`, Task Manager. |
+| **Khóa phím hệ thống** | Dễ bị lọt phím khi có popup/thông báo Windows hoặc bấm Win+D, F12. | **Khóa tuyệt đối 100% cấp độ nhân & Registry**: Chặn toàn bộ phím bàn phím (`Win`, `Win+D`, `F12`, `Alt+Tab`, `Alt+F4`, `Ctrl+Shift+Esc`, `Ctrl+Esc`, Task Manager). Duy nhất tổ hợp IT `Ctrl+Alt+Shift+F12` được phép. |
 | **Khi mở khóa thành công** | Bị đơ, dính màn hình xanh/trắng, khó giải phóng Desktop. | **Biến mất tức thì trong 0.05 giây**: Cửa sổ Kiosk bị hủy ngay lập tức, trả lại 100% màn hình Desktop Windows sạch sẽ cho bác sĩ. |
 | **Cách ly hồ sơ duyệt web** | Chạy chung với Edge cá nhân của bác sĩ. | **Profile độc lập (`C:\QLBS_Kiosk\EdgeProfile`)**: Không ảnh hưởng đến Edge, tab làm việc hay tài khoản HIS của bác sĩ. |
 | **Chống gian lận chụp QR gửi Zalo** | Mã QR có hạn 90 giây (dễ chụp gửi đi). | **Mã QR động 15 giây + Cơ chế Burn-on-scan (Mã 1 lần)**: Quá 15s tự đổi mã mới; quét rồi lập tức khóa mã, không thể quét từ xa. |

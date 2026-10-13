@@ -382,6 +382,9 @@ export default function KioskPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomCode }),
       });
+      // Gửi tín hiệu khoá lại đến Agent C# cục bộ
+      fetch('http://127.0.0.1:28199/api/lock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
+      fetch('http://localhost:28199/api/lock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
       setLockConfirmOpen(false);
       setIsUnlocked(false);
       setActiveSession(null);

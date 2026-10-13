@@ -115,9 +115,24 @@ echo.
 echo [BUOC 5/5] KHOA AN NINH HE THONG VA TU DONG KHOI DONG
 echo ----------------------------------------------------------------------------
 
-:: Vo hieu hoa Task Manager (Chong nguoi dung tat Kiosk bang Taskmgr)
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f >nul 2>&1
-reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f >nul 2>&1
+:: 1. Vo hieu hoa toan bo phim tat Windows (Win+D, Win+R, Win+E, Win+X, Win+S...) tai cap do Explorer Shell
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKLM\Software\Policies\Microsoft\Windows\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f >nul 2>&1
+
+:: 2. Vo hieu hoa Task Manager (Chong tat Kiosk bang Taskmgr)
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f >nul 2>&1
+
+:: 3. Vo hieu hoa khoa man hinh ngoai y muon (Win+L va Lock Workstation)
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableLockWorkstation" /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "DisableLockWorkstation" /t REG_DWORD /d 1 /f >nul 2>&1
+
+:: 4. Vo hieu hoa F12 va Developer Tools tren Microsoft Edge va Google Chrome triet de cap Engine
+reg add "HKLM\Software\Policies\Microsoft\Edge" /v "DeveloperToolsAvailability" /t REG_DWORD /d 2 /f >nul 2>&1
+reg add "HKCU\Software\Policies\Microsoft\Edge" /v "DeveloperToolsAvailability" /t REG_DWORD /d 2 /f >nul 2>&1
+reg add "HKLM\Software\Policies\Google\Chrome" /v "DeveloperToolsAvailability" /t REG_DWORD /d 2 /f >nul 2>&1
+reg add "HKCU\Software\Policies\Google\Chrome" /v "DeveloperToolsAvailability" /t REG_DWORD /d 2 /f >nul 2>&1
 
 :: Lop 1: Dang ky Windows Task Scheduler chay dac quyen cao nhat khi bat ky ai dang nhap
 schtasks /create /tn "QLBS_Kiosk_Agent" /tr "\"%INSTALL_DIR%\QLBS_Kiosk_Agent.exe\"" /sc onlogon /rl highest /f >nul 2>&1
@@ -134,7 +149,8 @@ if exist "%STARTUP_DIR%" (
     (echo start "" "%INSTALL_DIR%\QLBS_Kiosk_Agent.exe") > "%STARTUP_DIR%\QLBS_Kiosk_Agent.bat"
 )
 
-echo [OK] Da khoa Task Manager chong tat tien trinh.
+echo [OK] Da khoa toan bo phim Windows (Win+D, Win+R...) va Task Manager.
+echo [OK] Da khoa F12 va Developer Tools tren trinh duyet.
 echo [OK] Da dang ky 4 lop khoi dong tu dong cung Windows (Task Scheduler + Registry + Startup).
 echo.
 

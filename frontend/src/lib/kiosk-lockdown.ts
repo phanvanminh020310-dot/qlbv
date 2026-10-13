@@ -30,7 +30,7 @@ export class KioskLockdown {
   constructor(config: LockdownConfig) {
     this.config = config;
 
-    // 1. CHẶN BÀN PHÍM TOÀN DIỆN
+    // 1. CHẶN BÀN PHÍM TOÀN DIỆN (CHẶN 100% MỌI PHÍM KHI ĐANG KHOÁ KIOSK)
     this.keydownHandler = (e: KeyboardEvent) => {
       // Phím nóng thoát hiểm DUY NHẤT dành cho Kỹ thuật viên IT: Ctrl + Shift + Alt + F12 (hoặc Ctrl + Shift + Alt + M)
       if (
@@ -45,58 +45,18 @@ export class KioskLockdown {
 
       if (!this.config.enabled) return;
 
-      // Cho phép F12 nếu mở console kiểm tra lỗi khi phát triển
-      if (e.key === 'F12' || e.code === 'F12') {
+      // Nếu đang gõ trong hộp thoại nhập PIN của IT (modal/dialog) thì cho phép
+      const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement) : null;
+      const isInsideModal = activeEl && activeEl.closest('[role="dialog"], form, .fixed');
+      if (isInsideModal && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        // Cho phép gõ số/chữ/backspace/enter trong hộp thoại PIN IT
         return;
       }
 
-      // A. CHẶN CÁC PHÍM CHỨC NĂNG HỆ THỐNG
-      if (/^F[1-9]$|^F1[0-1]$/.test(e.key) || /^F[1-9]$|^F1[0-1]$/.test(e.code)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-
-      // B. CHẶN PHÍM ALT VÀ CÁC TỔ HỢP HỆ THỐNG
-      if (e.altKey && !e.ctrlKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-
-      // C. CHẶN PHÍM WINDOWS (META / OS KEY)
-      if (e.metaKey || e.key === 'Meta' || e.key === 'OS' || e.code === 'MetaLeft' || e.code === 'MetaRight') {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-
-      // D. CHẶN PHÍM CTRL ĐIỀU HƯỚNG NGUY HIỂM (Ctrl+W, Ctrl+R, Ctrl+N, Ctrl+T...)
-      if (e.ctrlKey && !e.shiftKey) {
-        const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement) : null;
-        const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-
-        // Cho phép gõ Ctrl+A, Ctrl+C, Ctrl+V trong ô nhập
-        if (isInput && (e.key === 'a' || e.key === 'A' || e.key === 'v' || e.key === 'V' || e.key === 'c' || e.key === 'C')) {
-          return;
-        }
-
-        if (['w', 'W', 't', 'T', 'n', 'N', 'r', 'R', 'u', 'U', 'p', 'P', 's', 'S', 'o', 'O', 'h', 'H', 'j', 'J', 'l', 'L'].includes(e.key)) {
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-      }
-
-      // E. CHẶN PHÍM ESCAPE ĐỂ TRÁNH THOÁT TOÀN MÀN HÌNH NGOÀI Ý MUỐN
-      if (e.key === 'Escape' || e.code === 'Escape') {
-        const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement) : null;
-        const isInsideModal = activeEl && activeEl.closest('[role="dialog"], .fixed');
-        if (!isInsideModal) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }
+      // CHẶN 100% TẤT CẢ CÁC PHÍM KHÁC!
+      // Tuyệt đối không cho phép bất kỳ phím nào lọt qua (F12, Win, Alt, Ctrl, Tab, Esc, Space, D, R, E...)
+      e.preventDefault();
+      e.stopPropagation();
     };
 
     // 2. CHẶN CHUỘT PHẢI (Context Menu) TRÊN MÀN HÌNH CHÍNH (VẪN CHO PHÉP NẾU GIỮ PHÍM SHIFT CHO IT)
@@ -280,25 +240,8 @@ export class KioskLockdown {
   public static async lockSystemKeyboard(): Promise<void> {
     try {
       if (typeof navigator !== 'undefined' && 'keyboard' in navigator && (navigator as any).keyboard?.lock) {
-        await (navigator as any).keyboard.lock([
-          'Escape',
-          'Tab',
-          'AltLeft',
-          'AltRight',
-          'ControlLeft',
-          'ControlRight',
-          'MetaLeft',
-          'MetaRight',
-          'KeyD',
-          'KeyM',
-          'KeyE',
-          'KeyR',
-          'KeyL',
-          'KeyX',
-          'KeyS',
-          'KeyP',
-          'ContextMenu',
-        ]);
+        // Khoá 100% bàn phím ở cấp trình duyệt Chromium (không truyền danh sách để khoá ALL keys)
+        await (navigator as any).keyboard.lock();
       }
     } catch {}
   }

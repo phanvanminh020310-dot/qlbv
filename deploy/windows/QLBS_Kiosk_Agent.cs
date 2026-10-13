@@ -22,6 +22,7 @@ namespace QLBS.Kiosk
 
         private static volatile bool isLocked = true;
         private static volatile bool isAppRunning = true;
+        private static volatile bool isItPromptOpen = false;
         private static DateTime lastLaunchTime = DateTime.MinValue;
 
         // Windows API Hooks
@@ -54,16 +55,19 @@ namespace QLBS.Kiosk
             LoadConfig();
             Log(string.Format("Agent started. Server: {0}, Room: {1}, Terminal: {2}", serverUrl, roomCode, terminalId));
 
-            // 3. Khởi động Local HTTP Listener (cổng 28199) để nhận tín hiệu mở khoá trực tiếp từ trang web trong < 10ms
+            // 3. Kích hoạt chính sách an ninh hệ thống cấp OS (Chặn WinKeys, DevTools, TaskMgr)
+            ApplySystemSecurityPolicies();
+
+            // 4. Khởi động Local HTTP Listener (cổng 28199) để nhận tín hiệu mở khoá trực tiếp từ trang web trong < 10ms
             StartLocalHttpListener();
 
-            // 4. Cài đặt Hook bàn phím cấp độ nhân (Chặn Win, Alt+Tab, Taskmgr...)
+            // 5. Cài đặt Hook bàn phím cấp độ nhân (Chặn 100% mọi phím khi đang khoá)
             hookId = SetHook(hookProc);
 
-            // 5. Khởi động Edge Kiosk lần đầu tiên
+            // 6. Khởi động Edge Kiosk lần đầu tiên
             LaunchEdgeKiosk();
 
-            // 6. Khởi động luồng nền giám sát trạng thái từ máy chủ
+            // 7. Khởi động luồng nền giám sát trạng thái từ máy chủ và cưỡng chế tiêu điểm Kiosk
             Thread monitorThread = new Thread(BackgroundMonitorLoop)
             {
                 IsBackground = true,
@@ -71,7 +75,7 @@ namespace QLBS.Kiosk
             };
             monitorThread.Start();
 
-            // 7. Chạy vòng lặp thông điệp Windows để duy trì hook
+            // 8. Chạy vòng lặp thông điệp Windows để duy trì hook
             Application.Run();
 
             // Dọn dẹp khi tắt
@@ -111,6 +115,50 @@ namespace QLBS.Kiosk
                         else if (key == "terminalid") terminalId = val;
                         else if (key == "edgeprofiledir") edgeProfileDir = val;
                     }
+                }
+            }
+            catch {}
+        }
+
+        // ====================================================================
+        // ÁP DỤNG CHÍNH SÁCH BẢO VỆ CẤP HỆ ĐIỀU HÀNH (OS & REGISTRY LEVEL)
+        // ====================================================================
+        private static void ApplySystemSecurityPolicies()
+        {
+            try
+            {
+                // 1. Chặn toàn bộ phím tắt Windows (Win+D, Win+R, Win+E, Win+X, Win+S...) cấp OS Shell
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"))
+                {
+                    if (key != null) key.SetValue("NoWinKeys", 1, RegistryValueKind.DWord);
+                }
+            }
+            catch {}
+
+            try
+            {
+                // 2. Chặn Task Manager và khoá Win+L
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\System"))
+                {
+                    if (key != null)
+                    {
+                        key.SetValue("DisableTaskMgr", 1, RegistryValueKind.DWord);
+                        key.SetValue("DisableLockWorkstation", 1, RegistryValueKind.DWord);
+                    }
+                }
+            }
+            catch {}
+
+            try
+            {
+                // 3. Chặn F12 và Developer Tools trên Microsoft Edge & Google Chrome triệt để cấp Engine
+                using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Edge"))
+                {
+                    if (key != null) key.SetValue("DeveloperToolsAvailability", 2, RegistryValueKind.DWord);
+                }
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Edge"))
+                {
+                    if (key != null) key.SetValue("DeveloperToolsAvailability", 2, RegistryValueKind.DWord);
                 }
             }
             catch {}
@@ -298,7 +346,10 @@ namespace QLBS.Kiosk
 
                 string targetUrl = string.Format("{0}/kiosk/{1}?terminalId={2}", serverUrl, roomCode, terminalId);
                 string arguments = string.Format(
-                    "--kiosk \"{0}\" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --disable-translate --disable-features=Translate,OptimizationHints --ignore-certificate-errors --user-data-dir=\"{1}\"",
+                    "--kiosk \"{0}\" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check " +
+                    "--disable-translate --disable-features=Translate,OptimizationHints,DevTools " +
+                    "--disable-devtools --no-context-menu --disable-pinch --overscroll-history-navigation=0 " +
+                    "--ignore-certificate-errors --user-data-dir=\"{1}\"",
                     targetUrl,
                     edgeProfileDir
                 );
@@ -397,7 +448,7 @@ namespace QLBS.Kiosk
         }
 
         // ====================================================================
-        // VÒNG LẶP THEO DÕI TRẠNG THÁI MỞ KHOÁ TỪ MÁY CHỦ (POLLING FALLBACK)
+        // VÒNG LẶP THEO DÕI TRẠNG THÁI MỞ KHOÁ TỪ MÁY CHỦ & CƯỠNG CHẾ TIÊU ĐIỂM
         // ====================================================================
 
         private static void BackgroundMonitorLoop()
@@ -406,6 +457,9 @@ namespace QLBS.Kiosk
             {
                 try
                 {
+                    // Khi đang khoá: Cưỡng chế cửa sổ Kiosk luôn toàn màn hình ở lớp trên cùng
+                    EnforceKioskFocus();
+
                     string statusUrl = string.Format("{0}/api/kiosk/status?room={1}&terminalId={2}", serverUrl, roomCode, terminalId);
 
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(statusUrl);
@@ -454,6 +508,44 @@ namespace QLBS.Kiosk
             }
         }
 
+        private static void EnforceKioskFocus()
+        {
+            if (!isLocked || isItPromptOpen) return;
+            try
+            {
+                IntPtr fgHwnd = GetForegroundWindow();
+                if (fgHwnd == IntPtr.Zero) return;
+
+                uint fgPid = 0;
+                GetWindowThreadProcessId(fgHwnd, out fgPid);
+
+                Process[] msedge = Process.GetProcessesByName("msedge");
+                bool isEdgeForeground = false;
+                IntPtr kioskHwnd = IntPtr.Zero;
+
+                foreach (Process p in msedge)
+                {
+                    if (p.Id == fgPid)
+                    {
+                        isEdgeForeground = true;
+                        break;
+                    }
+                    if (p.MainWindowHandle != IntPtr.Zero)
+                    {
+                        kioskHwnd = p.MainWindowHandle;
+                    }
+                }
+
+                // Nếu cửa sổ phía trước không phải Edge Kiosk mà Kiosk đang chạy -> Đưa Edge Kiosk về lại lớp trên cùng
+                if (!isEdgeForeground && kioskHwnd != IntPtr.Zero)
+                {
+                    ShowWindow(kioskHwnd, 3); // SW_MAXIMIZE = 3
+                    SetForegroundWindow(kioskHwnd);
+                }
+            }
+            catch {}
+        }
+
         private static void CleanupAndExit()
         {
             isAppRunning = false;
@@ -474,6 +566,38 @@ namespace QLBS.Kiosk
                     if (key != null)
                     {
                         key.DeleteValue("DisableTaskMgr", false);
+                        key.DeleteValue("DisableLockWorkstation", false);
+                    }
+                }
+            }
+            catch {}
+
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", true))
+                {
+                    if (key != null)
+                    {
+                        key.DeleteValue("NoWinKeys", false);
+                    }
+                }
+            }
+            catch {}
+
+            try
+            {
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge", true))
+                {
+                    if (key != null)
+                    {
+                        key.DeleteValue("DeveloperToolsAvailability", false);
+                    }
+                }
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge", true))
+                {
+                    if (key != null)
+                    {
+                        key.DeleteValue("DeveloperToolsAvailability", false);
                     }
                 }
             }
@@ -481,17 +605,43 @@ namespace QLBS.Kiosk
         }
 
         // ====================================================================
-        // HOOK BÀN PHÍM CẤP ĐỘ NHÂN (LOW-LEVEL KEYBOARD HOOK)
+        // HOOK BÀN PHÍM CẤP ĐỘ NHÂN (LOW-LEVEL KEYBOARD HOOK — CHẶN 100% PHÍM)
         // ====================================================================
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         private static IntPtr SetHook(LowLevelKeyboardProc proc)
         {
-            using (Process curProcess = Process.GetCurrentProcess())
-            using (ProcessModule curModule = curProcess.MainModule)
+            try
             {
-                return SetWindowsHookEx(13, proc, GetModuleHandle(curModule.ModuleName), 0);
+                using (Process curProcess = Process.GetCurrentProcess())
+                using (ProcessModule curModule = curProcess.MainModule)
+                {
+                    IntPtr hMod = GetModuleHandle(curModule.ModuleName);
+                    if (hMod == IntPtr.Zero) hMod = GetModuleHandle(null);
+                    IntPtr h = SetWindowsHookEx(13, proc, hMod, 0);
+                    if (h == IntPtr.Zero)
+                    {
+                        int err = Marshal.GetLastWin32Error();
+                        Log(string.Format("SetWindowsHookEx failed with error code: {0}. Retrying with null hMod...", err));
+                        h = SetWindowsHookEx(13, proc, IntPtr.Zero, 0);
+                    }
+                    Log(string.Format("Keyboard Hook installed: {0}", h));
+                    return h;
+                }
             }
+            catch (Exception ex)
+            {
+                Log("SetHook exception: " + ex.Message);
+                return IntPtr.Zero;
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private static bool IsKeyDown(int vKey)
+        {
+            return (GetAsyncKeyState(vKey) & 0x8000) != 0;
         }
 
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -500,43 +650,38 @@ namespace QLBS.Kiosk
             {
                 int vkCode = Marshal.ReadInt32(lParam);
                 int flags = Marshal.ReadInt32(lParam + 8);
-                bool alt = (flags & 0x20) != 0;
-                bool ctrl = (Control.ModifierKeys & Keys.Control) != 0;
-                bool shift = (Control.ModifierKeys & Keys.Shift) != 0;
 
-                // 1. PHÍM NÓNG IT KHẨN CẤP: Ctrl + Alt + Shift + F12
-                if (ctrl && alt && shift && vkCode == (int)Keys.F12)
+                // 1. Kiểm tra tổ hợp phím nóng IT: Ctrl + Alt + Shift + F12
+                // Lấy trạng thái vật lý thực tế của từng phím modifier trực tiếp từ nhân Windows
+                bool isCtrl = IsKeyDown(0x11) || IsKeyDown(0xA2) || IsKeyDown(0xA3); // VK_CONTROL, VK_LCONTROL, VK_RCONTROL
+                bool isAlt = ((flags & 0x20) != 0) || IsKeyDown(0x12) || IsKeyDown(0xA4) || IsKeyDown(0xA5); // VK_MENU, VK_LMENU, VK_RMENU
+                bool isShift = IsKeyDown(0x10) || IsKeyDown(0xA0) || IsKeyDown(0xA1); // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+
+                if (isCtrl && isAlt && isShift && vkCode == (int)Keys.F12)
                 {
-                    ShowEmergencyItPrompt();
+                    if (!isItPromptOpen)
+                    {
+                        ShowEmergencyItPrompt();
+                    }
                     return (IntPtr)1; // Chặn phím không cho lọt xuống hệ thống
                 }
 
-                // 2. CHẶN PHÍM WINDOWS (Trái & Phải)
-                if (vkCode == 91 || vkCode == 92) return (IntPtr)1;
-
-                // 3. CHẶN PHÍM APPLICATION / CONTEXT MENU
-                if (vkCode == 93) return (IntPtr)1;
-
-                // 4. CHẶN CÁC TỔ HỢP ALT: Alt+Tab, Alt+Esc, Alt+F4, Alt+Space...
-                if (alt)
+                // 2. Nếu hộp thoại IT Master PIN đang hiển thị, cho phép IT gõ phím để nhập PIN
+                if (isItPromptOpen)
                 {
-                    if (vkCode == (int)Keys.Tab || vkCode == (int)Keys.Escape || vkCode == (int)Keys.F4 || vkCode == (int)Keys.Space)
-                    {
-                        return (IntPtr)1;
-                    }
+                    return CallNextHookEx(hookId, nCode, wParam, lParam);
                 }
 
-                // 5. CHẶN CÁC TỔ HỢP CTRL: Ctrl+Esc (Mở Start Menu), Ctrl+Shift+Esc (Task Manager)
-                if (ctrl && (vkCode == (int)Keys.Escape))
-                {
-                    return (IntPtr)1;
-                }
-
-                // 6. CHẶN PHÍM CHỨC NĂNG F1 - F12 (Trừ F5 để tải lại trang)
-                if (vkCode >= (int)Keys.F1 && vkCode <= (int)Keys.F12 && vkCode != (int)Keys.F5)
-                {
-                    return (IntPtr)1;
-                }
+                // 3. KHI ĐANG KHOÁ KIOSK: CHẶN 100% TẤT CẢ CÁC PHÍM BÀN PHÍM!
+                // Tuyệt đối không để lọt bất kỳ phím nào xuống Windows hoặc trình duyệt Edge!
+                // Chặn toàn bộ:
+                // - Phím Win (91, 92), D, Win+D, Win+R, Win+E, Win+X, Win+L, Win+S, Win+A, Win+Tab, Win+M
+                // - F12, F1-F11
+                // - Alt+Tab, Alt+Esc, Alt+F4, Alt+Space
+                // - Ctrl+Shift+Esc, Ctrl+Esc, Ctrl+W, Ctrl+N, Ctrl+T, Ctrl+H, Ctrl+J, Ctrl+P, Ctrl+S, Ctrl+U
+                // - Toàn bộ ký tự, số, phím chức năng, phím điều hướng, Space, Enter, Escape...
+                // Triệt tiêu vĩnh viễn mọi hành vi can thiệp hoặc thoát ra Desktop khi chưa điểm danh thành công.
+                return (IntPtr)1;
             }
 
             return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -547,176 +692,186 @@ namespace QLBS.Kiosk
         // ====================================================================
         private static void ShowEmergencyItPrompt()
         {
+            isItPromptOpen = true;
             Thread t = new Thread(() =>
             {
-                using (Form f = new Form())
+                try
                 {
-                    f.Text = "BỆNH VIỆN QUÂN Y 4 — BẢNG ĐIỀU KHIỂN IT";
-                    f.FormBorderStyle = FormBorderStyle.FixedDialog;
-                    f.StartPosition = FormStartPosition.CenterScreen;
-                    f.Width = 460;
-                    f.Height = 250;
-                    f.TopMost = true;
-                    f.MaximizeBox = false;
-                    f.MinimizeBox = false;
-                    f.BackColor = Color.FromArgb(15, 23, 42);
-                    f.ForeColor = Color.White;
-
-                    Label lblTitle = new Label
+                    using (Form f = new Form())
                     {
-                        Text = "XÁC THỰC KỸ THUẬT VIÊN CNTT",
-                        Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                        ForeColor = Color.FromArgb(45, 212, 191),
-                        Location = new Point(20, 16),
-                        AutoSize = true
-                    };
-                    f.Controls.Add(lblTitle);
+                        f.Text = "BỆNH VIỆN QUÂN Y 4 — BẢNG ĐIỀU KHIỂN IT";
+                        f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                        f.StartPosition = FormStartPosition.CenterScreen;
+                        f.Width = 460;
+                        f.Height = 250;
+                        f.TopMost = true;
+                        f.MaximizeBox = false;
+                        f.MinimizeBox = false;
+                        f.BackColor = Color.FromArgb(15, 23, 42);
+                        f.ForeColor = Color.White;
 
-                    Label lblSub = new Label
-                    {
-                        Text = string.Format("Máy trạm: {0} ({1}). Nhập Master PIN để thao tác:", roomCode, terminalId),
-                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
-                        ForeColor = Color.FromArgb(148, 163, 184),
-                        Location = new Point(20, 44),
-                        Width = 400,
-                        Height = 24
-                    };
-                    f.Controls.Add(lblSub);
-
-                    TextBox txtPin = new TextBox
-                    {
-                        PasswordChar = '●',
-                        Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                        Location = new Point(20, 72),
-                        Width = 400,
-                        TextAlign = HorizontalAlignment.Center,
-                        BackColor = Color.FromArgb(30, 41, 59),
-                        ForeColor = Color.White,
-                        BorderStyle = BorderStyle.FixedSingle
-                    };
-                    f.Controls.Add(txtPin);
-
-                    // Nút Mở khoá ca trực
-                    Button btnUnlock = new Button
-                    {
-                        Text = "Mở khoá máy",
-                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                        Location = new Point(20, 120),
-                        Width = 125,
-                        Height = 36,
-                        BackColor = Color.FromArgb(13, 148, 136),
-                        ForeColor = Color.White,
-                        FlatStyle = FlatStyle.Flat,
-                        Cursor = Cursors.Hand
-                    };
-                    btnUnlock.FlatAppearance.BorderSize = 0;
-
-                    // Nút Thoát hoàn toàn Agent
-                    Button btnExitAgent = new Button
-                    {
-                        Text = "Thoát Kiosk Agent",
-                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                        Location = new Point(155, 120),
-                        Width = 140,
-                        Height = 36,
-                        BackColor = Color.FromArgb(190, 24, 93),
-                        ForeColor = Color.White,
-                        FlatStyle = FlatStyle.Flat,
-                        Cursor = Cursors.Hand
-                    };
-                    btnExitAgent.FlatAppearance.BorderSize = 0;
-
-                    // Nút Đóng lại
-                    Button btnCancel = new Button
-                    {
-                        Text = "Đóng",
-                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
-                        Location = new Point(305, 120),
-                        Width = 115,
-                        Height = 36,
-                        BackColor = Color.FromArgb(51, 65, 85),
-                        ForeColor = Color.White,
-                        FlatStyle = FlatStyle.Flat,
-                        Cursor = Cursors.Hand
-                    };
-                    btnCancel.FlatAppearance.BorderSize = 0;
-
-                    Func<bool> verifyPin = () =>
-                    {
-                        string pin = txtPin.Text.Trim();
-                        if (string.IsNullOrEmpty(pin)) return false;
-
-                        // Mã PIN offline khẩn cấp phòng khi mất mạng
-                        if (pin == "888888" || pin == "bvqy4@it") return true;
-
-                        try
+                        Label lblTitle = new Label
                         {
-                            string overrideUrl = string.Format("{0}/api/kiosk/override-pin", serverUrl);
-                            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(overrideUrl);
-                            req.Method = "POST";
-                            req.ContentType = "application/json";
-                            req.Timeout = 4000;
+                            Text = "XÁC THỰC KỸ THUẬT VIÊN CNTT",
+                            Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                            ForeColor = Color.FromArgb(45, 212, 191),
+                            Location = new Point(20, 16),
+                            AutoSize = true
+                        };
+                        f.Controls.Add(lblTitle);
 
-                            string body = string.Format("{{\"roomCode\":\"{0}\",\"pin\":\"{1}\",\"terminalId\":\"{2}\"}}", roomCode, pin, terminalId);
-                            byte[] bytes = Encoding.UTF8.GetBytes(body);
-                            req.ContentLength = bytes.Length;
+                        Label lblSub = new Label
+                        {
+                            Text = string.Format("Máy trạm: {0} ({1}). Nhập Master PIN để thao tác:", roomCode, terminalId),
+                            Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                            ForeColor = Color.FromArgb(148, 163, 184),
+                            Location = new Point(20, 44),
+                            Width = 400,
+                            Height = 24
+                        };
+                        f.Controls.Add(lblSub);
 
-                            using (Stream s = req.GetRequestStream()) { s.Write(bytes, 0, bytes.Length); }
-                            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                        TextBox txtPin = new TextBox
+                        {
+                            PasswordChar = '●',
+                            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                            Location = new Point(20, 72),
+                            Width = 400,
+                            TextAlign = HorizontalAlignment.Center,
+                            BackColor = Color.FromArgb(30, 41, 59),
+                            ForeColor = Color.White,
+                            BorderStyle = BorderStyle.FixedSingle
+                        };
+                        f.Controls.Add(txtPin);
+
+                        // Nút Mở khoá ca trực
+                        Button btnUnlock = new Button
+                        {
+                            Text = "Mở khoá máy",
+                            Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                            Location = new Point(20, 120),
+                            Width = 125,
+                            Height = 36,
+                            BackColor = Color.FromArgb(13, 148, 136),
+                            ForeColor = Color.White,
+                            FlatStyle = FlatStyle.Flat,
+                            Cursor = Cursors.Hand
+                        };
+                        btnUnlock.FlatAppearance.BorderSize = 0;
+
+                        // Nút Thoát hoàn toàn Agent
+                        Button btnExitAgent = new Button
+                        {
+                            Text = "Thoát Kiosk Agent",
+                            Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                            Location = new Point(155, 120),
+                            Width = 140,
+                            Height = 36,
+                            BackColor = Color.FromArgb(190, 24, 93),
+                            ForeColor = Color.White,
+                            FlatStyle = FlatStyle.Flat,
+                            Cursor = Cursors.Hand
+                        };
+                        btnExitAgent.FlatAppearance.BorderSize = 0;
+
+                        // Nút Đóng lại
+                        Button btnCancel = new Button
+                        {
+                            Text = "Đóng",
+                            Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                            Location = new Point(305, 120),
+                            Width = 115,
+                            Height = 36,
+                            BackColor = Color.FromArgb(51, 65, 85),
+                            ForeColor = Color.White,
+                            FlatStyle = FlatStyle.Flat,
+                            Cursor = Cursors.Hand
+                        };
+                        btnCancel.FlatAppearance.BorderSize = 0;
+
+                        Func<bool> verifyPin = () =>
+                        {
+                            string pin = txtPin.Text.Trim();
+                            if (string.IsNullOrEmpty(pin)) return false;
+
+                            // Mã PIN offline khẩn cấp phòng khi mất mạng
+                            if (pin == "888888" || pin == "bvqy4@it") return true;
+
+                            try
                             {
-                                return (int)resp.StatusCode >= 200 && (int)resp.StatusCode < 300;
+                                string overrideUrl = string.Format("{0}/api/kiosk/override-pin", serverUrl);
+                                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(overrideUrl);
+                                req.Method = "POST";
+                                req.ContentType = "application/json";
+                                req.Timeout = 4000;
+
+                                string body = string.Format("{{\"roomCode\":\"{0}\",\"pin\":\"{1}\",\"terminalId\":\"{2}\"}}", roomCode, pin, terminalId);
+                                byte[] bytes = Encoding.UTF8.GetBytes(body);
+                                req.ContentLength = bytes.Length;
+
+                                using (Stream s = req.GetRequestStream()) { s.Write(bytes, 0, bytes.Length); }
+                                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                                {
+                                    return (int)resp.StatusCode >= 200 && (int)resp.StatusCode < 300;
+                                }
                             }
-                        }
-                        catch
+                            catch
+                            {
+                                return false;
+                            }
+                        };
+
+                        btnUnlock.Click += (s, e) =>
                         {
-                            return false;
-                        }
-                    };
+                            btnUnlock.Enabled = false;
+                            btnUnlock.Text = "Kiểm tra...";
+                            if (verifyPin())
+                            {
+                                UnlockKioskAndReleaseDesktop("IT Emergency Master PIN verification");
+                                MessageBox.Show(f, "Đã mở khoá thành công! Màn hình Desktop đã được giải phóng hoàn toàn.", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                f.Close();
+                                return;
+                            }
+                            MessageBox.Show(f, "Mã PIN không đúng hoặc máy chủ không phản hồi!", "Từ chối", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            btnUnlock.Enabled = true;
+                            btnUnlock.Text = "Mở khoá máy";
+                            txtPin.SelectAll();
+                            txtPin.Focus();
+                        };
 
-                    btnUnlock.Click += (s, e) =>
-                    {
-                        btnUnlock.Enabled = false;
-                        btnUnlock.Text = "Kiểm tra...";
-                        if (verifyPin())
+                        btnExitAgent.Click += (s, e) =>
                         {
-                            UnlockKioskAndReleaseDesktop("IT Emergency Master PIN verification");
-                            MessageBox.Show(f, "Đã mở khoá thành công! Màn hình Desktop đã được giải phóng hoàn toàn.", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            f.Close();
-                            return;
-                        }
-                        MessageBox.Show(f, "Mã PIN không đúng hoặc máy chủ không phản hồi!", "Từ chối", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        btnUnlock.Enabled = true;
-                        btnUnlock.Text = "Mở khoá máy";
-                        txtPin.SelectAll();
-                        txtPin.Focus();
-                    };
+                            btnExitAgent.Enabled = false;
+                            if (verifyPin())
+                            {
+                                MessageBox.Show(f, "Đang tắt hoàn toàn Kiosk Agent và khôi phục hệ thống...", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                f.Close();
+                                CleanupAndExit();
+                                KillKioskProcesses();
+                                Environment.Exit(0);
+                                return;
+                            }
+                            MessageBox.Show(f, "Mã PIN không đúng!", "Từ chối", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            btnExitAgent.Enabled = true;
+                            txtPin.SelectAll();
+                            txtPin.Focus();
+                        };
 
-                    btnExitAgent.Click += (s, e) =>
-                    {
-                        btnExitAgent.Enabled = false;
-                        if (verifyPin())
-                        {
-                            MessageBox.Show(f, "Đang tắt hoàn toàn Kiosk Agent và khôi phục hệ thống...", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            f.Close();
-                            CleanupAndExit();
-                            KillKioskProcesses();
-                            Environment.Exit(0);
-                            return;
-                        }
-                        MessageBox.Show(f, "Mã PIN không đúng!", "Từ chối", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        btnExitAgent.Enabled = true;
-                        txtPin.SelectAll();
-                        txtPin.Focus();
-                    };
+                        btnCancel.Click += (s, e) => f.Close();
 
-                    btnCancel.Click += (s, e) => f.Close();
+                        f.FormClosed += (s, e) => { isItPromptOpen = false; };
 
-                    f.Controls.Add(btnUnlock);
-                    f.Controls.Add(btnExitAgent);
-                    f.Controls.Add(btnCancel);
-                    f.AcceptButton = btnUnlock;
-                    f.CancelButton = btnCancel;
-                    f.ShowDialog();
+                        f.Controls.Add(btnUnlock);
+                        f.Controls.Add(btnExitAgent);
+                        f.Controls.Add(btnCancel);
+                        f.AcceptButton = btnUnlock;
+                        f.CancelButton = btnCancel;
+                        f.ShowDialog();
+                    }
+                }
+                finally
+                {
+                    isItPromptOpen = false;
                 }
             });
             t.SetApartmentState(ApartmentState.STA);
@@ -738,5 +893,17 @@ namespace QLBS.Kiosk
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     }
 }
