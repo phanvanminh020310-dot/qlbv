@@ -156,6 +156,9 @@ export async function apiFetch<T = unknown>(path: string, options: Options = {})
     return response as unknown as T;
   }
   const payload = await response.json();
+  if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+    return payload.data as T;
+  }
   return (payload?.data ?? payload) as T;
 }
 

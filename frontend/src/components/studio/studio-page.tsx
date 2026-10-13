@@ -147,7 +147,7 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
   const queryClient = useQueryClient();
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<StudioWidget[]>(page.layout.widgets);
+  const [draft, setDraft] = useState<StudioWidget[]>(page?.layout?.widgets ?? []);
   const [configWidget, setConfigWidget] = useState<StudioWidget | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [subsOpen, setSubsOpen] = useState(autoOpenSubscriptions);
@@ -155,29 +155,29 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
   const [error, setError] = useState('');
 
   // Nếu đổi trang → nạp lại draft
-  const pageId = page.id;
+  const pageId = page?.id;
   useEffect(() => {
     setEditing(false);
-    setDraft(page.layout.widgets);
+    setDraft(page?.layout?.widgets ?? []);
     setError('');
-  }, [pageId, page.layout.widgets]);
+  }, [pageId, page?.layout?.widgets]);
 
   const isAdmin = !!user?.isSuperAdmin || (user?.roles ?? []).includes('ADMIN');
-  const canEditPage = isAdmin || (page.scope === 'PERSONAL' && page.ownerId === user?.id);
+  const canEditPage = isAdmin || (page?.scope === 'PERSONAL' && page?.ownerId === user?.id);
   const canManage = useAuth((s) => s.can)(
-    page.kind === 'REPORT' ? 'studio.report.manage' : 'studio.dashboard.manage',
+    page?.kind === 'REPORT' ? 'studio.report.manage' : 'studio.dashboard.manage',
   );
 
   /* Realtime: có sự kiện thuộc các nguồn đang hiển thị → invalidate ô (có gom nhịp) */
   const topics = useMemo(() => {
     const set = new Set<string>(['notification']);
-    for (const w of page.layout.widgets) {
+    for (const w of page?.layout?.widgets ?? []) {
       const topic = w.dataSpec?.source ? SOURCE_REALTIME_TOPIC[w.dataSpec.source] : undefined;
       if (topic) set.add(topic);
     }
-    if (page.layout.widgets.some((w) => w.type === 'builtin')) { set.add('hsba'); set.add('system'); }
+    if ((page?.layout?.widgets ?? []).some((w) => w.type === 'builtin')) { set.add('hsba'); set.add('system'); }
     return [...set].join(',');
-  }, [page.layout.widgets]);
+  }, [page?.layout?.widgets]);
 
   const invalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useRealtimeEvent((event) => {
@@ -247,7 +247,7 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
           editing ? (
             <>
               <AddWidgetMenu onAdd={(w) => setDraft((d) => [...d, w])} />
-              <Button variant="ghost" onClick={() => { setDraft(page.layout.widgets); setEditing(false); setError(''); }} disabled={saving}>
+              <Button variant="ghost" onClick={() => { setDraft(page?.layout?.widgets ?? []); setEditing(false); setError(''); }} disabled={saving}>
                 <X className="size-4" /> Huỷ
               </Button>
               <Button onClick={() => void save(draft)} disabled={saving}>
@@ -308,7 +308,7 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
 
       {/* Canvas */}
       <StudioCanvas
-        widgets={editing ? draft : page.layout.widgets}
+        widgets={editing ? draft : (page?.layout?.widgets ?? [])}
         editing={editing}
         onChange={setDraft}
         onConfig={(w) => setConfigWidget(w)}

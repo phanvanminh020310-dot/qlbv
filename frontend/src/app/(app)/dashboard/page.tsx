@@ -32,6 +32,14 @@ export default function DashboardPage() {
 
   const firstName = (user?.fullName ?? '').split(' ').slice(-1)[0] ?? '';
 
+  // Ưu tiên trang mặc định; nếu chưa có trang mặc định thì lấy trang đầu tiên được phép xem
+  const activePage =
+    def.data && typeof def.data === 'object' && 'id' in def.data && def.data.id
+      ? def.data
+      : pages.data && pages.data.length > 0
+        ? pages.data[0]
+        : null;
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -64,14 +72,14 @@ export default function DashboardPage() {
           </div>
           <Skeleton className="h-72" />
         </div>
-      ) : !def.data ? (
+      ) : !activePage ? (
         <div className="rounded-[var(--radius-card)] border bg-[var(--card)] p-8 text-center text-sm text-[var(--muted-foreground)]">
           Chưa có bảng điều khiển nào. Bấm &quot;Trang mới&quot; để tự thiết kế.
         </div>
       ) : (
         <StudioPageFrame
-          page={def.data}
-          pages={pages.data ?? [def.data]}
+          page={activePage}
+          pages={pages.data ?? [activePage]}
           autoOpenSubscriptions={openSubs}
           sources={meta.data?.sources ?? []}
           vocabulary={meta.data?.vocabulary ?? { aggs: {}, filterOps: {}, datePresets: {}, buckets: {} } as never}

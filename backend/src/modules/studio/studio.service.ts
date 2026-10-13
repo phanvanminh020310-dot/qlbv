@@ -107,7 +107,22 @@ export class StudioService {
       .select().from(studioDashboards)
       .where(and(base, eq(studioDashboards.scope, StudioScope.SYSTEM)))
       .orderBy(desc(studioDashboards.updatedAt)).limit(1);
-    return system ?? null;
+    if (system) return system;
+
+    // Tự động dự phòng: Nếu không có trang nào có isDefault = true (ví dụ người dùng vừa bấm "Bỏ mặc định"):
+    // 1. Tìm trang hệ thống đầu tiên còn hoạt động
+    const [fallbackSystem] = await this.db.db
+      .select().from(studioDashboards)
+      .where(and(eq(studioDashboards.kind, kind), eq(studioDashboards.scope, StudioScope.SYSTEM), isNull(studioDashboards.deletedAt)))
+      .orderBy(asc(studioDashboards.id)).limit(1);
+    if (fallbackSystem) return fallbackSystem;
+
+    // 2. Hoặc trang bất kỳ còn hoạt động của loại này
+    const [anyPage] = await this.db.db
+      .select().from(studioDashboards)
+      .where(and(eq(studioDashboards.kind, kind), isNull(studioDashboards.deletedAt)))
+      .orderBy(asc(studioDashboards.id)).limit(1);
+    return anyPage ?? null;
   }
 
   /* -------------------------------------------------------------- Ghi */
