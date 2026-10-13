@@ -71,6 +71,7 @@ if [[ $DO_PULL -eq 1 ]]; then
   fi
 fi
 NEW=$(git rev-parse HEAD)
+
 # Bản thân update.sh vừa được cập nhật → chạy lại bằng bản mới (bash đang đọc bản cũ)
 if [[ "$OLD" != "$NEW" && -z "${QLBS_UPDATE_REEXEC:-}" ]] && git diff --name-only "$OLD" "$NEW" | grep -qx 'deploy/update.sh'; then
   ok "update.sh có phiên bản mới — chạy lại bằng bản mới"
@@ -80,39 +81,25 @@ fi
 
 if [[ "$OLD" == "$NEW" ]]; then
   ok "Không có commit mới từ git pull ($(git log -1 --format='%h %s'))"
+  CHANGED=""
 else
   ok "$(git rev-list --count "$OLD..$NEW") commit mới: ${OLD:0:7} → ${NEW:0:7}"
   git --no-pager log --format='    %h %s' "$OLD..$NEW" | head -20
+  CHANGED=$(git diff --name-only "$OLD" "$NEW")
 fi
 
-# So với commit ĐANG CHẠY của từng service (lưu ở data/.deployed-<svc>), không phải
-# commit trước lần pull này — nếu đã tự `git pull` trước khi chạy script, hoặc lần
-# dựng trước thất bại, thì vẫn biết cần dựng lại.
-STATE_DIR="$ROOT/data"; mkdir -p "$STATE_DIR"
 # uploads/backups gắn bind-mount vào container api (user node = UID 1000) — phải đúng chủ
 mkdir -p data/uploads data/backups
-chown -R 1000:1000 data/uploads data/backups
-needs_build() { # needs_build <svc> <thư-mục>
-  local f="$STATE_DIR/.deployed-$1" dep
-  [[ -s "$f" ]] || { warn "$1: chưa rõ bản đang chạy → dựng lại"; return 0; }
-  dep=$(cat "$f")
-  git cat-file -e "$dep^{commit}" 2>/dev/null || { warn "$1: không tìm thấy commit $dep → dựng lại"; return 0; }
-  [[ "$dep" == "$NEW" ]] && return 1
-  git diff --quiet "$dep" "$NEW" -- "$2" "$3" 2>/dev/null && return 1
-  ok "$1: có thay đổi từ ${dep:0:7} → ${NEW:0:7}"
-  return 0
-}
+chown -R 1000:1000 data/uploads data/backups 2>/dev/null || true
 
-BUILD=()
-if [[ $FORCE_API -eq 1 ]] || needs_build api backend/ docker-compose.yml; then BUILD+=(api); fi
-if [[ $FORCE_WEB -eq 1 ]] || needs_build web frontend/ docker-compose.yml; then BUILD+=(web); fi
-DEPLOYED_BEFORE=$(cat "$STATE_DIR/.deployed-api" 2>/dev/null || echo "$OLD")
 # Font Times New Roman gốc cho bản in PDF (chỉ tải lần đầu; lỗi không làm dừng cập nhật)
 if [[ -f deploy/install-times-font.sh ]]; then
-  bash deploy/install-times-font.sh --quiet || warn "Chưa cài được Times New Roman gốc — bản in dùng Tinos (tương thích Times New Roman)"
+  bash deploy/install-times-font.sh --quiet 2>/dev/null || true
 fi
 
-CHANGED=$(git diff --name-only "$DEPLOYED_BEFORE" "$NEW" 2>/dev/null || true)
+BUILD=()
+if [[ $FORCE_API -eq 1 ]] || grep -q '^backend/' <<<"$CHANGED"; then BUILD+=(api); fi
+if [[ $FORCE_WEB -eq 1 ]] || grep -q '^frontend/' <<<"$CHANGED"; then BUILD+=(web); fi
 COMPOSE_CHANGED=0
 grep -qE '^(docker-compose\.yml|\.env\.example)$' <<<"$CHANGED" && COMPOSE_CHANGED=1
 
@@ -130,56 +117,12 @@ if [[ $DO_BACKUP -eq 1 ]]; then
   "${DC[@]}" exec -T postgres pg_dump -U qlbs -d qlbs -Fc > "$F" && ok "Đã lưu $F ($(du -h "$F" | cut -f1))"
 fi
 
-# ---------------------------------------------------------------- dựng ảnh
-# Compose mới coi --progress là cờ toàn cục; bản cũ chỉ nhận ở lệnh build
-if "${DC[@]}" --progress plain version >/dev/null 2>&1; then BUILD_CMD=("${DC[@]}" --progress plain build)
-else BUILD_CMD=("${DC[@]}" build --progress=plain); fi
-
-# Lỗi thoáng qua (mạng, BuildKit sập) → thử lại; lỗi code/thiếu RAM → dừng ngay
-TRANSIENT_RE='grpc server closed unexpectedly|frontend grpc|rpc error|connection reset|i/o timeout|TLS handshake timeout|failed to resolve|failed to fetch|temporary failure in name resolution|unexpected EOF|context deadline exceeded|ECONNRESET|ETIMEDOUT|EAI_AGAIN|503 Service Unavailable|toomanyrequests|failed to do request'
-build_service() { # build_service tên log
-  local svc=$1 log=$2 try
-  for try in 1 2 3; do
-    if [[ $try -eq 1 ]]; then printf '  → đang dựng %s (tiến trình trực tiếp) ...\n' "$svc"
-    else printf '  ↻ thử lại lần %s (lỗi tạm thời: mạng/BuildKit) ...\n' "$try"; fi
-    if "${BUILD_CMD[@]}" "$svc" 2>&1 | tee "$log"; then return 0; fi
-    grep -qiE "$TRANSIENT_RE" "$log" || return 1
-    cp "$log" "$log.lan$try" 2>/dev/null || true
-    sleep $((try * 5))
-  done
-  return 1
-}
-build_hint() { # gợi ý theo nội dung log lỗi
-  if grep -qiE 'exit code: 137|killed|out of memory|heap out of memory|cannot allocate memory' "$1"; then
-    warn "Có dấu hiệu thiếu RAM khi dựng. Tạo 2GB swap rồi chạy lại:"
-    echo "    sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile"
-    echo "    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab"
-  elif grep -qiE "$TRANSIENT_RE" "$1"; then
-    warn "Lỗi mạng/BuildKit lặp lại 3 lần. Thử: sudo systemctl restart docker && sudo bash deploy/update.sh --no-pull"
-  fi
-}
-MEM_FREE_MB=$(awk '/MemAvailable|SwapFree/{s+=$2} END{print int(s/1024)}' /proc/meminfo 2>/dev/null || echo 0)
-if [[ ${#BUILD[@]} -gt 0 && ${MEM_FREE_MB:-0} -gt 0 && ${MEM_FREE_MB:-0} -lt 1500 ]]; then
-  warn "RAM + swap còn trống ~${MEM_FREE_MB}MB — dựng giao diện cần ~1,5GB, nên thêm swap nếu dựng lỗi"
-fi
-
 START=$(date +%s)
 if [[ ${#BUILD[@]} -gt 0 ]]; then
-  step "Dựng lại: ${BUILD[*]} (có cache — lần sau nhanh hơn)"
-  # Dựng lần lượt (không song song): đỡ tốn RAM trên VPS nhỏ và log lỗi rõ ràng
-  for svc in "${BUILD[@]}"; do
-    LOG="/tmp/qlbs-build-$svc.log"
-    build_service "$svc" "$LOG" || {
-      printf '\n%s✗ Dựng %s thất bại — 40 dòng log cuối:%s\n' "$C_R" "$svc" "$C_0"
-      grep -vE 'npm warn deprecated' "$LOG" | tail -40
-      build_hint "$LOG"
-      die "Log đầy đủ: $LOG (gửi file này nếu cần hỗ trợ)"
-    }
-    ok "Đã dựng $svc ($(grep -cE '^#[0-9]+ CACHED' "$LOG" || true) bước dùng cache)"
-  done
+  step "Dựng lại: ${BUILD[*]} (có cache — siêu tốc)"
+  "${DC[@]}" build "${BUILD[@]}"
   step "Khởi động lại: ${BUILD[*]}"
   "${DC[@]}" up -d --no-deps "${BUILD[@]}"
-  for svc in "${BUILD[@]}"; do echo "$NEW" > "$STATE_DIR/.deployed-$svc"; done
 fi
 if [[ $COMPOSE_CHANGED -eq 1 ]]; then
   step "docker-compose.yml thay đổi — áp dụng cấu hình mới"
