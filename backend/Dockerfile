@@ -19,7 +19,7 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NODE_OPTIONS="--max-old-space-size=2048 --dns-result-order=ipv4first"
+ENV NODE_OPTIONS="--max-old-space-size=1536 --dns-result-order=ipv4first"
 RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 # ---------- Bước 3: ảnh chạy thật ----------

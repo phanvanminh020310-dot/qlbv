@@ -119,8 +119,11 @@ fi
 
 START=$(date +%s)
 if [[ ${#BUILD[@]} -gt 0 ]]; then
-  step "Dựng lại: ${BUILD[*]} (có cache — siêu tốc)"
-  "${DC[@]}" build "${BUILD[@]}"
+  step "Dựng lại: ${BUILD[*]} (có cache — tuần tự để tối ưu RAM VPS)"
+  for svc in "${BUILD[@]}"; do
+    printf '  → đang dựng %s ...\n' "$svc"
+    "${DC[@]}" build "$svc"
+  done
   step "Khởi động lại: ${BUILD[*]}"
   "${DC[@]}" up -d --no-deps "${BUILD[@]}"
 fi

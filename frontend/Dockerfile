@@ -20,7 +20,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1 \
-    NODE_OPTIONS="--max-old-space-size=2048 --dns-result-order=ipv4first"
+    NODE_OPTIONS="--max-old-space-size=1536 --dns-result-order=ipv4first"
 ARG API_PROXY_TARGET=http://api:4000
 ENV API_PROXY_TARGET=$API_PROXY_TARGET
 # Tận dụng cache Next.js (.next/cache) để biên dịch gia tăng (Incremental Compilation), giảm 80% thời gian build
