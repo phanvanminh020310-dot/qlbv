@@ -57,7 +57,7 @@ export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 # git có thể từ chối thư mục do root sở hữu khi chạy bằng sudo
 git config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
 
-OLD=$(git rev-parse HEAD)
+OLD="${QLBS_OLD_COMMIT:-$(git rev-parse HEAD)}"
 if [[ $DO_PULL -eq 1 ]]; then
   step "Lấy code mới (git pull)"
   if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -76,6 +76,7 @@ NEW=$(git rev-parse HEAD)
 if [[ "$OLD" != "$NEW" && -z "${QLBS_UPDATE_REEXEC:-}" ]] && git diff --name-only "$OLD" "$NEW" | grep -qx 'deploy/update.sh'; then
   ok "update.sh có phiên bản mới — chạy lại bằng bản mới"
   export QLBS_UPDATE_REEXEC=1
+  export QLBS_OLD_COMMIT="$OLD"
   exec bash "$ROOT/deploy/update.sh" "${ORIG_ARGS[@]}" --no-pull
 fi
 
