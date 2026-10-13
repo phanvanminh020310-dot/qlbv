@@ -58,73 +58,54 @@ export default function MobileScanPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
 
-  // 0. Phát hiện mở từ trình duyệt nhúng của app nhắn tin / app quét mã QR bên thứ 3 trên iOS & Android
+  // 1. Kiểm tra an ninh môi trường quét & Tải thông tin phiên quét từ sessionId
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const ua = navigator.userAgent || '';
-    const ref = document.referrer || '';
-
-    // A. Kiểm tra Referrer (Google Lens, app quét mã QR, các app chia sẻ link trên Android & iOS):
-    const isReferrerFromApp =
-      ref.startsWith('android-app://') ||
-      /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(ref);
-
-    // B. Kiểm tra Trình duyệt nhúng trên iOS (WKWebView / In-App Browser của app bên thứ 3):
-    // Trên iOS Safari gốc, window.webkit.messageHandlers không bao giờ tồn tại.
-    // Nếu có window.webkit?.messageHandlers -> 100% là app bên thứ 3 nhúng webview (App quét QR, mạng xã hội).
-    const isIos = /iPhone|iPad|iPod/i.test(ua);
-    const hasIosHandlers = typeof (window as any).webkit !== 'undefined' && Boolean((window as any).webkit?.messageHandlers);
-    const isIosWkWebView = isIos && (!/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua));
-
-    // C. Kiểm tra WebView trên Android:
-    const isAndroidWebView = /Android/i.test(ua) && ((/Version\/4\.0.*Chrome/i.test(ua)) || /\bwv\b/i.test(ua));
-
-    // D. Danh sách app tin nhắn / mạng xã hội / scanner app đã biết:
-    const isKnownApp =
-      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(ua);
-
-    const isBlocked = isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp;
-
-    if (isBlocked) {
-      const claimToken = getDeviceClaimToken();
-      fetch(`/api/kiosk/session/${sessionId}`, {
-        headers: {
-          'x-device-claim-token': claimToken,
-          'x-client-env': 'scanner-app',
-        },
-      }).catch(() => {});
-
-      let customMsg =
-        'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.';
-      if (isIos) {
-        customMsg =
-          'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.';
-      }
-
-      setSessionError(customMsg);
-      setLoadingSession(false);
-      return;
-    }
-  }, [sessionId]);
-
-  // 1. Tải thông tin phiên quét từ sessionId
-  useEffect(() => {
-    const fetchSession = async () => {
+    const runInit = async () => {
       try {
         const ua = navigator.userAgent || '';
         const ref = document.referrer || '';
+
+        // A. Kiểm tra Referrer (Google Lens, app quét mã QR, các app chia sẻ link trên Android & iOS):
         const isReferrerFromApp =
           ref.startsWith('android-app://') ||
           /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(ref);
+
+        // B. Kiểm tra Trình duyệt nhúng trên iOS (WKWebView / In-App Browser của app bên thứ 3):
+        // Trên iOS Safari gốc, window.webkit.messageHandlers không bao giờ tồn tại.
+        // Nếu có window.webkit?.messageHandlers -> 100% là app bên thứ 3 nhúng webview (App quét QR, mạng xã hội).
         const isIos = /iPhone|iPad|iPod/i.test(ua);
         const hasIosHandlers = typeof (window as any).webkit !== 'undefined' && Boolean((window as any).webkit?.messageHandlers);
         const isIosWkWebView = isIos && (!/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua));
+
+        // C. Kiểm tra WebView trên Android:
         const isAndroidWebView = /Android/i.test(ua) && ((/Version\/4\.0.*Chrome/i.test(ua)) || /\bwv\b/i.test(ua));
+
+        // D. Danh sách app tin nhắn / mạng xã hội / scanner app đã biết:
         const isKnownApp =
           /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(ua);
 
-        if (isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp) {
+        const isBlocked = isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp;
+
+        if (isBlocked) {
+          const claimToken = getDeviceClaimToken();
+          fetch(`/api/kiosk/session/${sessionId}`, {
+            headers: {
+              'x-device-claim-token': claimToken,
+              'x-client-env': 'scanner-app',
+            },
+          }).catch(() => {});
+
+          let customMsg =
+            'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.';
+          if (isIos) {
+            customMsg =
+              'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.';
+          }
+
+          setSessionError(customMsg);
+          setLoadingSession(false);
           return;
         }
 
@@ -155,7 +136,7 @@ export default function MobileScanPage() {
       }
     };
 
-    fetchSession();
+    runInit();
   }, [sessionId]);
 
   // Nén ảnh để tải lên nhanh (< 80KB)
@@ -528,15 +509,6 @@ export default function MobileScanPage() {
     startCamera(nextMode);
   };
 
-  if (loadingSession) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
-        <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-4" />
-        <p className="text-sm font-semibold">Đang nạp phiên điểm danh phòng khám...</p>
-      </div>
-    );
-  }
-
   if (sessionError) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
@@ -552,6 +524,15 @@ export default function MobileScanPage() {
         >
           Thử lại
         </button>
+      </div>
+    );
+  }
+
+  if (loadingSession) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
+        <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-4" />
+        <p className="text-sm font-semibold">Đang nạp phiên điểm danh phòng khám...</p>
       </div>
     );
   }
