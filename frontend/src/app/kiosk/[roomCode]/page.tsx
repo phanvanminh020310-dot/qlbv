@@ -47,6 +47,7 @@ export default function KioskPage() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
   const [shiftEndMs, setShiftEndMs] = useState<number | null>(null);
+  const [isDoctorScanning, setIsDoctorScanning] = useState(false);
 
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const secretClickCountRef = useRef(0);
@@ -237,6 +238,8 @@ export default function KioskPage() {
     if (isUnlocked) return;
     const timer = setInterval(() => {
       setExpiresInSeconds((prev) => {
+        // Nếu Bác sĩ đang quét/nhìn camera thì tạm dừng đếm lùi để không đổi mã QR
+        if (isDoctorScanning) return prev;
         if (prev <= 1) {
           refreshQrSession();
           return totalExpiresRef.current;
@@ -245,7 +248,7 @@ export default function KioskPage() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [roomInfo.name, isUnlocked, roomCode, terminalId]);
+  }, [roomInfo.name, isUnlocked, roomCode, terminalId, isDoctorScanning]);
 
   // 6. Lắng nghe sự kiện mở khoá Server-Sent Events (SSE) thời gian thực đích danh máy trạm
   useEffect(() => {
@@ -257,6 +260,10 @@ export default function KioskPage() {
       const sseUrl = `/api/kiosk/events/${encodeURIComponent(roomCode)}?terminalId=${encodeURIComponent(terminalId)}`;
       eventSource = new EventSource(sseUrl);
 
+      eventSource.addEventListener('SESSION_SCANNED', () => {
+        setIsDoctorScanning(true);
+      });
+
       eventSource.addEventListener('UNLOCK_EVENT', (e: any) => {
         try {
           const payload = JSON.parse(e.data);
@@ -265,6 +272,7 @@ export default function KioskPage() {
             return;
           }
           if (payload.type === 'UNLOCK_SUCCESS') {
+            setIsDoctorScanning(false);
             setIsUnlocked(true);
             setActiveSession(payload.doctor);
             if (payload.shiftEndMs) setShiftEndMs(payload.shiftEndMs);
@@ -276,6 +284,7 @@ export default function KioskPage() {
       });
 
       eventSource.addEventListener('LOCK_EVENT', () => {
+        setIsDoctorScanning(false);
         setIsUnlocked(false);
         setActiveSession(null);
         setShiftEndMs(null);
@@ -690,18 +699,25 @@ export default function KioskPage() {
               )}
             </div>
 
-            <div className="mt-4 flex items-center gap-3 text-xs opacity-75">
-              <span>Hết hạn sau: <strong className="font-mono text-teal-600 dark:text-teal-400">{expiresInSeconds}s</strong></span>
-              <button
-                type="button"
-                onClick={refreshQrSession}
-                disabled={isRefreshing}
-                className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
-              >
-                <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>Đổi mã mới</span>
-              </button>
-            </div>
+            {isDoctorScanning ? (
+              <div className="mt-4 flex items-center gap-2 px-4 py-2 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-xs font-bold animate-pulse">
+                <Loader2 className="h-4 w-4 animate-spin text-teal-400" />
+                <span>Bác sĩ đang nhìn camera xác thực...</span>
+              </div>
+            ) : (
+              <div className="mt-4 flex items-center gap-3 text-xs opacity-75">
+                <span>Hết hạn sau: <strong className="font-mono text-teal-600 dark:text-teal-400">{expiresInSeconds}s</strong></span>
+                <button
+                  type="button"
+                  onClick={refreshQrSession}
+                  disabled={isRefreshing}
+                  className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
+                >
+                  <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>Đổi mã mới</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </main>

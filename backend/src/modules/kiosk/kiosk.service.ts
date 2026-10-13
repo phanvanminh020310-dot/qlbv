@@ -38,6 +38,9 @@ export interface KioskSession {
   flashColorSequence: string[];
   status: 'WAITING' | 'VERIFIED' | 'EXPIRED';
   consumed?: boolean;
+  scannedAt?: number;       // Thời điểm điện thoại Bác sĩ quét và mở trang
+  isVerifying?: boolean;    // Đang có frame AI xử lý
+  failCount?: number;       // Số lần frame lỗi tạm thời
   verifiedDoctor?: any;
 }
 
@@ -637,10 +640,15 @@ export class KioskService implements OnModuleInit {
       consumed: false,
     };
 
-    // Dọn các phiên WAITING cũ của đúng terminal này
+    // Dọn các phiên WAITING cũ của đúng terminal này, NHƯNG BẢO LƯU phiên mà Bác sĩ đang quét dở
     if (tid) {
+      const now = Date.now();
       for (const [sId, s] of this.sessions.entries()) {
         if (s.terminalId === tid && s.status === 'WAITING') {
+          // Nếu phiên đã được điện thoại quét trong 45 giây gần đây thì bảo lưu để hoàn tất
+          if (s.scannedAt && (now - s.scannedAt < 45000)) {
+            continue;
+          }
           this.sessions.delete(sId);
         }
       }
@@ -650,9 +658,33 @@ export class KioskService implements OnModuleInit {
     return session;
   }
 
+  touchSessionScan(sessionId: string): KioskSession | null {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    if (s.status === 'VERIFIED') return s;
+
+    // Khi bác sĩ mở trang quét trên điện thoại:
+    if (!s.scannedAt) {
+      s.scannedAt = Date.now();
+    }
+    // Tự động gia hạn cửa sổ thời gian xác thực khuôn mặt (45 giây)
+    // để không bị huỷ giữa chừng nếu mã QR trên PC đổi sang chu kỳ 15s tiếp theo
+    s.expiresAt = Math.max(s.expiresAt, Date.now() + 45000);
+
+    // Bắn sự kiện báo máy trạm Kiosk PC biết rằng Bác sĩ đã quét mã QR
+    if (s.terminalId) {
+      this.sendToTerminal(s.terminalId, 'SESSION_SCANNED', {
+        sessionId: s.sessionId,
+        roomCode: s.roomCode,
+      });
+    }
+    return s;
+  }
+
   getSession(sessionId: string): KioskSession | null {
     const s = this.sessions.get(sessionId);
     if (!s) return null;
+    if (s.status === 'VERIFIED') return s;
     if (Date.now() > s.expiresAt) {
       s.status = 'EXPIRED';
     }
@@ -760,6 +792,58 @@ export class KioskService implements OnModuleInit {
     }
   }
 
+  async verifyAndExtractAi(
+    imageBase64: string,
+    challenges: string[],
+  ): Promise<{ isLive: boolean; reason?: string; embedding: number[] }> {
+    // 1. Thử gọi endpoint tối ưu gộp 1 lượt: /api/ai/verify-and-extract
+    try {
+      const resp = await fetch(`${this.aiServiceUrl}/api/ai/verify-and-extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_base64: imageBase64,
+          challenges_passed: challenges,
+        }),
+      });
+
+      if (resp.ok) {
+        const data: any = await resp.json();
+        if (data.success && Array.isArray(data.embedding)) {
+          return {
+            isLive: true,
+            embedding: data.embedding,
+          };
+        }
+        if (data.is_live === false) {
+          return {
+            isLive: false,
+            reason: data.reason || 'Không vượt qua bài kiểm tra người thật',
+            embedding: [],
+          };
+        }
+        if (data.reason) {
+          throw new BadRequestException(data.reason);
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
+      console.warn(`[KioskService] Endpoint verify-and-extract không khả dụng (${err?.message}), fallback về 2 luồng song song.`);
+    }
+
+    // 2. Fallback: chạy song song (Promise.all) thay vì tuần tự
+    const [liveness, probeVector] = await Promise.all([
+      this.verifyLivenessWithAi(imageBase64, challenges),
+      this.extractEmbeddingFromAi(imageBase64),
+    ]);
+
+    if (!liveness.isLive) {
+      return { isLive: false, reason: liveness.reason, embedding: [] };
+    }
+
+    return { isLive: true, embedding: probeVector };
+  }
+
   // --- 3. XÁC THỰC MỞ KHOÁ TOÀN DIỆN: AI + CSDL LỊCH TRỰC QLBV ---
 
   async verifyFaceAndUnlock(params: {
@@ -771,190 +855,227 @@ export class KioskService implements OnModuleInit {
     const { sessionId, snapshotBase64, completedChallenges, deviceInfo } = params;
 
     const session = this.getSession(sessionId);
-    if (!session || session.status !== 'WAITING') {
+    if (!session) {
+      throw new BadRequestException('Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.');
+    }
+
+    // NẾU PHIÊN NÀY ĐÃ ĐƯỢC XÁC THỰC THÀNH CÔNG RỒI:
+    // Trả về thành công ngay lập tức! (Tránh lỗi khi điện thoại gửi thêm frame hoặc người dùng nhấn quét lại/reconnect)
+    if (session.status === 'VERIFIED') {
+      return {
+        success: true,
+        message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
+        similarity: 1.0,
+        doctor: session.verifiedDoctor,
+      };
+    }
+
+    if (session.status !== 'WAITING') {
       throw new BadRequestException('Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.');
     }
 
     if (session.consumed) {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
     }
-    session.consumed = true;
 
-    // 1. Gọi AI Engine kiểm tra người thật ISO 30107 PAD (Passive Liveness)
-    const challenges = completedChallenges || ['PASSIVE_LIVENESS'];
-    const liveness = await this.verifyLivenessWithAi(snapshotBase64, challenges);
-    if (!liveness.isLive) {
-      throw new BadRequestException(`AI từ chối: Phát hiện hình ảnh giả mạo (${liveness.reason}).`);
+    // Mutex chống xử lý trùng lặp nhiều frame cùng lúc
+    if (session.isVerifying) {
+      return {
+        success: false,
+        isProcessing: true,
+        message: 'Đang xử lý nhận diện khuôn mặt, vui lòng giữ nguyên máy...',
+      };
     }
+    session.isVerifying = true;
 
-    // 2. Gọi AI Engine trích xuất vector embedding
-    const probeVector = await this.extractEmbeddingFromAi(snapshotBase64);
+    try {
+      // 1. Gọi AI Engine kiểm tra người thật ISO 30107 PAD & trích xuất vector embedding (Gộp 1 lượt siêu tốc)
+      const challenges = completedChallenges || ['PASSIVE_LIVENESS'];
+      const aiResult = await this.verifyAndExtractAi(snapshotBase64, challenges);
 
-    // 3. Tải toàn bộ vector bác sĩ trong CSDL Postgres (bảng user_biometrics)
-    const allBiometrics = await this.db.db
-      .select({
-        id: userBiometrics.id,
-        userId: userBiometrics.userId,
-        faceDescriptor: userBiometrics.faceDescriptor,
-        username: users.username,
-        fullName: users.fullName,
-        title: users.title,
-      })
-      .from(userBiometrics)
-      .innerJoin(users, eq(users.id, userBiometrics.userId))
-      .where(eq(users.active, true));
-
-    if (allBiometrics.length === 0) {
-      throw new BadRequestException('Hệ thống chưa có hồ sơ khuôn mặt nào được đăng ký. Vui lòng liên hệ KHTH/IT.');
-    }
-
-    // So khớp Cosine Similarity
-    let bestMatch: any = null;
-    let maxCosine = -1;
-
-    for (const bio of allBiometrics) {
-      const enrolledVector = this.decryptDescriptor(bio.faceDescriptor);
-      if (!enrolledVector) continue;
-
-      const cosine = this.calculateCosineSimilarity(probeVector, enrolledVector);
-      if (cosine > maxCosine) {
-        maxCosine = cosine;
-        bestMatch = bio;
-      }
-    }
-
-    if (!bestMatch || maxCosine < 0.50) {
-      throw new ForbiddenException(
-        `Khuôn mặt không khớp với hồ sơ Bác sĩ nào trong CSDL bệnh viện (Độ tương đồng: ${(Math.max(0, maxCosine) * 100).toFixed(1)}%).`,
-      );
-    }
-
-    // 4. KIỂM TRA LỊCH TRỰC CỦA BÁC SĨ TẠI PHÒNG KHÁM
-    const now = Date.now();
-    const candidateDates = candidateDutyDates(now);
-    const allRosterRows = await this.loadActiveRoster(session.roomCode, candidateDates);
-    const doctorSlots = allRosterRows.filter((s) => s.userId === bestMatch.userId);
-
-    if (doctorSlots.length === 0) {
-      throw new ForbiddenException(
-        `Bác sĩ ${bestMatch.title} ${bestMatch.fullName} nhận diện thành công (${(maxCosine * 100).toFixed(1)}%), nhưng KHÔNG CÓ LỊCH TRỰC hôm nay tại ${session.roomName}!`,
-      );
-    }
-
-    const earlyMinutes = await this.getEarlyCheckinMinutes();
-    const lateMinutes = await this.getLateCheckoutMinutes();
-    const EARLY_CHECKIN_MS = earlyMinutes * 60 * 1000;
-    const LATE_CHECKOUT_MS = lateMinutes * 60 * 1000;
-
-    let matchedSlot: any = null;
-    let closestSlot: any = null;
-    let minDiff = Infinity;
-
-    for (const slot of doctorSlots) {
-      const iv = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
-
-      // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - earlyMinutes) đến (giờ kết thúc + lateMinutes)
-      if (now >= iv.start - EARLY_CHECKIN_MS && now <= iv.end + LATE_CHECKOUT_MS) {
-        matchedSlot = { slot, iv };
-        break;
+      if (!aiResult.isLive) {
+        session.failCount = (session.failCount || 0) + 1;
+        if (session.failCount >= 5) {
+          session.consumed = true;
+        }
+        throw new BadRequestException(`AI từ chối: Phát hiện hình ảnh giả mạo (${aiResult.reason}).`);
       }
 
-      const diff = now < iv.start ? iv.start - now : now - iv.end;
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestSlot = { slot, iv };
-      }
-    }
+      const probeVector = aiResult.embedding;
 
-    if (!matchedSlot) {
-      const closest = closestSlot?.slot;
-      const iv = closestSlot?.iv;
-      if (closest && iv && now > iv.end + LATE_CHECKOUT_MS) {
+      // 2. Tải toàn bộ vector bác sĩ trong CSDL Postgres (bảng user_biometrics)
+      const allBiometrics = await this.db.db
+        .select({
+          id: userBiometrics.id,
+          userId: userBiometrics.userId,
+          faceDescriptor: userBiometrics.faceDescriptor,
+          username: users.username,
+          fullName: users.fullName,
+          title: users.title,
+        })
+        .from(userBiometrics)
+        .innerJoin(users, eq(users.id, userBiometrics.userId))
+        .where(eq(users.active, true));
+
+      if (allBiometrics.length === 0) {
+        throw new BadRequestException('Hệ thống chưa có hồ sơ khuôn mặt nào được đăng ký. Vui lòng liên hệ KHTH/IT.');
+      }
+
+      // So khớp Cosine Similarity
+      let bestMatch: any = null;
+      let maxCosine = -1;
+
+      for (const bio of allBiometrics) {
+        const enrolledVector = this.decryptDescriptor(bio.faceDescriptor);
+        if (!enrolledVector) continue;
+
+        const cosine = this.calculateCosineSimilarity(probeVector, enrolledVector);
+        if (cosine > maxCosine) {
+          maxCosine = cosine;
+          bestMatch = bio;
+        }
+      }
+
+      if (!bestMatch || maxCosine < 0.50) {
+        session.failCount = (session.failCount || 0) + 1;
+        if (session.failCount >= 8) {
+          session.consumed = true;
+        }
         throw new ForbiddenException(
-          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) đã kết thúc lúc ${closest.endTime}. Đã quá thời gian ân hạn (${lateMinutes} phút).`,
-        );
-      } else if (closest && iv) {
-        throw new ForbiddenException(
-          `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) chưa đến giờ bắt đầu. Vui lòng quay lại trước giờ ca trực tối đa ${earlyMinutes} phút.`,
-        );
-      } else {
-        throw new ForbiddenException(
-          `Hiện tại không trong giờ ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName}.`,
+          `Khuôn mặt không khớp với hồ sơ Bác sĩ nào trong CSDL bệnh viện (Độ tương đồng: ${(Math.max(0, maxCosine) * 100).toFixed(1)}%).`,
         );
       }
+
+      // 3. KIỂM TRA LỊCH TRỰC CỦA BÁC SĨ TẠI PHÒNG KHÁM
+      const now = Date.now();
+      const candidateDates = candidateDutyDates(now);
+      const allRosterRows = await this.loadActiveRoster(session.roomCode, candidateDates);
+      const doctorSlots = allRosterRows.filter((s) => s.userId === bestMatch.userId);
+
+      if (doctorSlots.length === 0) {
+        throw new ForbiddenException(
+          `Bác sĩ ${bestMatch.title} ${bestMatch.fullName} nhận diện thành công (${(maxCosine * 100).toFixed(1)}%), nhưng KHÔNG CÓ LỊCH TRỰC hôm nay tại ${session.roomName}!`,
+        );
+      }
+
+      const earlyMinutes = await this.getEarlyCheckinMinutes();
+      const lateMinutes = await this.getLateCheckoutMinutes();
+      const EARLY_CHECKIN_MS = earlyMinutes * 60 * 1000;
+      const LATE_CHECKOUT_MS = lateMinutes * 60 * 1000;
+
+      let matchedSlot: any = null;
+      let closestSlot: any = null;
+      let minDiff = Infinity;
+
+      for (const slot of doctorSlots) {
+        const iv = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
+
+        // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - earlyMinutes) đến (giờ kết thúc + lateMinutes)
+        if (now >= iv.start - EARLY_CHECKIN_MS && now <= iv.end + LATE_CHECKOUT_MS) {
+          matchedSlot = { slot, iv };
+          break;
+        }
+
+        const diff = now < iv.start ? iv.start - now : now - iv.end;
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestSlot = { slot, iv };
+        }
+      }
+
+      if (!matchedSlot) {
+        const closest = closestSlot?.slot;
+        const iv = closestSlot?.iv;
+        if (closest && iv && now > iv.end + LATE_CHECKOUT_MS) {
+          throw new ForbiddenException(
+            `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) đã kết thúc lúc ${closest.endTime}. Đã quá thời gian ân hạn (${lateMinutes} phút).`,
+          );
+        } else if (closest && iv) {
+          throw new ForbiddenException(
+            `Ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName} (${closest.shiftName}: ${closest.startTime} – ${closest.endTime}) chưa đến giờ bắt đầu. Vui lòng quay lại trước giờ ca trực tối đa ${earlyMinutes} phút.`,
+          );
+        } else {
+          throw new ForbiddenException(
+            `Hiện tại không trong giờ ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName}.`,
+          );
+        }
+      }
+
+      const currentShift = matchedSlot.slot;
+
+      // 4. Ghi nhận điểm danh vào bảng duty_attendance trong CSDL Postgres
+      const attendanceId = crypto.randomUUID();
+      await this.db.db.insert(dutyAttendance).values({
+        id: attendanceId,
+        roomCode: session.roomCode,
+        roomName: session.roomName,
+        userId: bestMatch.userId,
+        username: bestMatch.username,
+        fullName: bestMatch.fullName,
+        title: bestMatch.title,
+        shiftCode: currentShift.shiftCode || 'CA_TRUC',
+        shiftName: currentShift.shiftName || 'Ca làm việc',
+        status: 'ON_TIME',
+        confidenceScore: maxCosine,
+        method: 'AI_FACIAL_BIOMETRICS',
+        deviceInfo: deviceInfo || 'Mobile Web Camera',
+      });
+
+      // 5. Cập nhật phiên & BẮN SỰ KIỆN SSE MỞ KHOÁ ĐÍCH DANH DUY NHẤT MÁY TRẠM PHÒNG KHÁM (UNICAST)
+      session.status = 'VERIFIED';
+      session.consumed = true;
+      session.verifiedDoctor = {
+        userId: bestMatch.userId,
+        username: bestMatch.username,
+        fullName: bestMatch.fullName,
+        title: bestMatch.title,
+        shiftName: currentShift.shiftName || 'Ca làm việc',
+      };
+
+      // Tính toán mốc thời gian hết ca + thời gian ân hạn sau ca trực
+      const iv = matchedSlot.iv;
+      const shiftEndMs = iv.end + lateMinutes * 60 * 1000;
+
+      // Lưu vào danh sách phòng khám đang mở khoá để tự động khoá khi hết ca
+      this.activeRoomUnlocks.set(session.roomCode, {
+        roomCode: session.roomCode,
+        doctor: session.verifiedDoctor,
+        shift: currentShift,
+        unlockedAt: now,
+        shiftEndMs,
+        terminalId: session.terminalId,
+        attendanceId,
+      });
+
+      const unlockPayload = {
+        type: 'UNLOCK_SUCCESS',
+        doctor: session.verifiedDoctor,
+        roomCode: session.roomCode,
+        terminalId: session.terminalId,
+        attendanceId,
+        shiftEndMs,
+        lateCheckoutMinutes: lateMinutes,
+      };
+
+      // Bắn đích danh máy tính phòng khám đã sinh mã QR này (Unicast)
+      let unlocked = false;
+      if (session.terminalId) {
+        unlocked = this.sendToTerminal(session.terminalId, 'UNLOCK_EVENT', unlockPayload);
+      }
+      // Dự phòng broadcast nếu máy trạm chưa kịp gán terminalId
+      if (!unlocked) {
+        this.broadcastToRoom(session.roomCode, 'UNLOCK_EVENT', unlockPayload);
+      }
+
+      return {
+        success: true,
+        message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
+        similarity: maxCosine,
+        doctor: session.verifiedDoctor,
+      };
+    } finally {
+      session.isVerifying = false;
     }
-
-    const currentShift = matchedSlot.slot;
-
-    // 5. Ghi nhận điểm danh vào bảng duty_attendance trong CSDL Postgres
-    const attendanceId = crypto.randomUUID();
-    await this.db.db.insert(dutyAttendance).values({
-      id: attendanceId,
-      roomCode: session.roomCode,
-      roomName: session.roomName,
-      userId: bestMatch.userId,
-      username: bestMatch.username,
-      fullName: bestMatch.fullName,
-      title: bestMatch.title,
-      shiftCode: currentShift.shiftCode || 'CA_TRUC',
-      shiftName: currentShift.shiftName || 'Ca làm việc',
-      status: 'ON_TIME',
-      confidenceScore: maxCosine,
-      method: 'AI_FACIAL_BIOMETRICS',
-      deviceInfo: deviceInfo || 'Mobile Web Camera',
-    });
-
-    // 6. Cập nhật phiên & BẮN SỰ KIỆN SSE MỞ KHOÁ ĐÍCH DANH DUY NHẤT MÁY TRẠM PHÒNG KHÁM (UNICAST)
-    session.status = 'VERIFIED';
-    session.verifiedDoctor = {
-      userId: bestMatch.userId,
-      username: bestMatch.username,
-      fullName: bestMatch.fullName,
-      title: bestMatch.title,
-      shiftName: currentShift.shiftName || 'Ca làm việc',
-    };
-
-    // Tính toán mốc thời gian hết ca + thời gian ân hạn sau ca trực
-    const iv = matchedSlot.iv;
-    const shiftEndMs = iv.end + lateMinutes * 60 * 1000;
-
-    // Lưu vào danh sách phòng khám đang mở khoá để tự động khoá khi hết ca
-    this.activeRoomUnlocks.set(session.roomCode, {
-      roomCode: session.roomCode,
-      doctor: session.verifiedDoctor,
-      shift: currentShift,
-      unlockedAt: now,
-      shiftEndMs,
-      terminalId: session.terminalId,
-      attendanceId,
-    });
-
-    const unlockPayload = {
-      type: 'UNLOCK_SUCCESS',
-      doctor: session.verifiedDoctor,
-      roomCode: session.roomCode,
-      terminalId: session.terminalId,
-      attendanceId,
-      shiftEndMs,
-      lateCheckoutMinutes: lateMinutes,
-    };
-
-    // Bắn đích danh máy tính phòng khám đã sinh mã QR này (Unicast)
-    let unlocked = false;
-    if (session.terminalId) {
-      unlocked = this.sendToTerminal(session.terminalId, 'UNLOCK_EVENT', unlockPayload);
-    }
-    // Dự phòng broadcast nếu máy trạm chưa kịp gán terminalId
-    if (!unlocked) {
-      this.broadcastToRoom(session.roomCode, 'UNLOCK_EVENT', unlockPayload);
-    }
-
-    return {
-      success: true,
-      message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
-      similarity: maxCosine,
-      doctor: session.verifiedDoctor,
-    };
   }
 
   // --- 4. ĐĂNG KÝ KHUÔN MẶT BÁC SĨ TẬP TRUNG (LƯU VÀO CSDL QLBV) ---

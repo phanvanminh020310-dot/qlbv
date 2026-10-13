@@ -76,7 +76,7 @@ export class KioskController {
   @Get('session/:sessionId')
   @ApiOperation({ summary: 'Lấy thông tin phiên quét cho điện thoại Bác sĩ' })
   async getSessionInfo(@Param('sessionId') sessionId: string) {
-    const session = this.service.getSession(sessionId);
+    const session = this.service.touchSessionScan(sessionId) || this.service.getSession(sessionId);
     if (!session) {
       return {
         sessionId,
@@ -84,13 +84,12 @@ export class KioskController {
         status: 'WAITING',
       };
     }
-    // Chú ý: Tuyệt đối không trả về handshakePin tại endpoint này
-    // Bác sĩ bắt buộc phải nhìn lên màn hình máy tính phòng khám để nhập mã 4 số
     return {
       sessionId: session.sessionId,
       room: { code: session.roomCode, name: session.roomName },
       challengeSequence: session.challengeSequence,
       status: session.status,
+      verifiedDoctor: session.verifiedDoctor,
     };
   }
 

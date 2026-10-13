@@ -56,6 +56,13 @@ export default function MobileScanPage() {
         const raw = await resp.json();
         const data = raw?.data ?? raw;
         setSessionData(data);
+
+        // Nếu phiên đã mở khoá thành công trước đó (do request chạy ngầm xong hoặc quét lại)
+        if (data?.status === 'VERIFIED') {
+          setResultData({ success: true, doctor: data.verifiedDoctor });
+          setCurrentStep('success');
+          return;
+        }
       } catch (err: any) {
         setSessionError(err.message || 'Lỗi nạp phiên.');
       } finally {
@@ -279,7 +286,7 @@ export default function MobileScanPage() {
       const raw = await resp.json();
       const data = raw?.data ?? raw;
 
-      if (resp.ok && data?.success !== false) {
+      if (resp.ok && data?.success !== false && !data?.isProcessing) {
         setResultData(data);
         setCurrentStep('success');
 
@@ -292,13 +299,20 @@ export default function MobileScanPage() {
         return true;
       }
 
+      if (data?.isProcessing) {
+        setStatusText(data.message || 'Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy');
+        return false;
+      }
+
       const msg = String(data?.message || '');
-      // Nếu chưa phát hiện rõ mặt, báo nhẹ và tiếp tục quét
+      // Nếu chưa phát hiện rõ mặt hoặc server đang xử lý, báo nhẹ và tiếp tục quét frame tiếp theo
       if (
         msg.includes('Không phát hiện') ||
         msg.includes('khuôn mặt') ||
         msg.includes('mờ') ||
-        msg.includes('chưa rõ')
+        msg.includes('chưa rõ') ||
+        msg.includes('xử lý') ||
+        msg.includes('giữ nguyên máy')
       ) {
         setStatusText('Đang quét... Vui lòng nhìn thẳng vào camera');
         return false;
@@ -314,6 +328,14 @@ export default function MobileScanPage() {
   };
 
   // 3. VÒNG LẶP TỰ ĐỘNG CHỤP & NHẬN DIỆN LIÊN TỤC (TỰ ĐỘNG 100% NHƯ FACE ID)
+  const cameraReadyTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (cameraActive) {
+      cameraReadyTimeRef.current = Date.now();
+    }
+  }, [cameraActive]);
+
   useEffect(() => {
     if (!cameraActive || isHttpCaptureMode || currentStep !== 'scanning') return;
 
@@ -324,6 +346,11 @@ export default function MobileScanPage() {
     const interval = setInterval(async () => {
       if (!isScanning || analyzing) return;
       if (!videoRef.current) return;
+
+      // Chờ ít nhất 600ms sau khi camera kích hoạt để auto-exposure / white-balance ổn định
+      if (Date.now() - cameraReadyTimeRef.current < 600) {
+        return;
+      }
 
       const video = videoRef.current;
       // Chờ video sẵn sàng và có dữ liệu hình ảnh
@@ -352,7 +379,7 @@ export default function MobileScanPage() {
       }
 
       analyzing = true;
-      setStatusText('Đang nhận diện sinh học khuôn mặt...');
+      setStatusText('Đang nhận diện sinh học khuôn mặt... Giữ nguyên máy');
 
       const imageBase64 = canvas.toDataURL('image/jpeg', 0.85);
       const ok = await submitVerification(imageBase64);
@@ -664,9 +691,22 @@ export default function MobileScanPage() {
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 setErrorMessage(null);
                 setCapturedPreview(null);
+                // Kiểm tra xem phiên này thực tế đã được mở khoá thành công chưa trước khi quét lại
+                try {
+                  const check = await fetch(`/api/kiosk/session/${sessionId}`);
+                  if (check.ok) {
+                    const cRaw = await check.json();
+                    const cData = cRaw?.data ?? cRaw;
+                    if (cData?.status === 'VERIFIED') {
+                      setResultData({ success: true, doctor: cData.verifiedDoctor });
+                      setCurrentStep('success');
+                      return;
+                    }
+                  }
+                } catch {}
                 setCurrentStep('scanning');
                 startCamera();
               }}
