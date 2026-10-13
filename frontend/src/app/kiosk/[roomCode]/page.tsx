@@ -52,6 +52,7 @@ export default function KioskPage() {
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const secretClickCountRef = useRef(0);
   const secretClickTimeoutRef = useRef<any>(null);
+  const scanningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 0. Khởi tạo mã định danh duy nhất của máy trạm này (Terminal ID)
   useEffect(() => {
@@ -183,6 +184,11 @@ export default function KioskPage() {
   // 3. Làm mới mã QR gắn với đúng máy trạm này
   const refreshQrSession = async () => {
     setIsRefreshing(true);
+    if (scanningTimeoutRef.current) {
+      clearTimeout(scanningTimeoutRef.current);
+      scanningTimeoutRef.current = null;
+    }
+    setIsDoctorScanning(false);
     try {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const resp = await fetch('/api/kiosk/session/refresh', {
@@ -233,14 +239,17 @@ export default function KioskPage() {
     }
   }, [qrUrl]);
 
-  // 5. Đếm lùi thời gian sống mã QR
+  // 5. Đếm lùi thời gian sống mã QR (Đảm bảo không bao giờ bị treo cứng màn hình)
   useEffect(() => {
     if (isUnlocked) return;
     const timer = setInterval(() => {
       setExpiresInSeconds((prev) => {
-        // Nếu Bác sĩ đang quét/nhìn camera thì tạm dừng đếm lùi để không đổi mã QR
-        if (isDoctorScanning) return prev;
         if (prev <= 1) {
+          if (scanningTimeoutRef.current) {
+            clearTimeout(scanningTimeoutRef.current);
+            scanningTimeoutRef.current = null;
+          }
+          setIsDoctorScanning(false);
           refreshQrSession();
           return totalExpiresRef.current;
         }
@@ -248,7 +257,7 @@ export default function KioskPage() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [roomInfo.name, isUnlocked, roomCode, terminalId, isDoctorScanning]);
+  }, [roomInfo.name, isUnlocked, roomCode, terminalId]);
 
   // 6. Lắng nghe sự kiện mở khoá Server-Sent Events (SSE) thời gian thực đích danh máy trạm
   useEffect(() => {
@@ -262,6 +271,13 @@ export default function KioskPage() {
 
       eventSource.addEventListener('SESSION_SCANNED', () => {
         setIsDoctorScanning(true);
+        // Thiết lập thời gian xác thực khuôn mặt tối đa 15 giây
+        setExpiresInSeconds(15);
+        if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
+        scanningTimeoutRef.current = setTimeout(() => {
+          setIsDoctorScanning(false);
+          refreshQrSession();
+        }, 15000);
       });
 
       eventSource.addEventListener('UNLOCK_EVENT', (e: any) => {
@@ -272,6 +288,10 @@ export default function KioskPage() {
             return;
           }
           if (payload.type === 'UNLOCK_SUCCESS') {
+            if (scanningTimeoutRef.current) {
+              clearTimeout(scanningTimeoutRef.current);
+              scanningTimeoutRef.current = null;
+            }
             setIsDoctorScanning(false);
             setIsUnlocked(true);
             setActiveSession(payload.doctor);
@@ -284,6 +304,10 @@ export default function KioskPage() {
       });
 
       eventSource.addEventListener('LOCK_EVENT', () => {
+        if (scanningTimeoutRef.current) {
+          clearTimeout(scanningTimeoutRef.current);
+          scanningTimeoutRef.current = null;
+        }
         setIsDoctorScanning(false);
         setIsUnlocked(false);
         setActiveSession(null);
@@ -689,12 +713,24 @@ export default function KioskPage() {
 
           {/* Cột phải: Mã QR động */}
           <div className="flex flex-col items-center justify-center">
-            <div className="relative p-4 sm:p-5 rounded-3xl bg-white shadow-2xl border-4 border-teal-500/30 flex items-center justify-center min-w-[260px] min-h-[260px]">
-              <canvas ref={qrCanvasRef} className={!qrUrl ? 'hidden' : 'block'} />
+            <div className="relative p-4 sm:p-5 rounded-3xl bg-white shadow-2xl border-4 border-teal-500/30 flex items-center justify-center min-w-[260px] min-h-[260px] overflow-hidden">
+              <canvas ref={qrCanvasRef} className={!qrUrl ? 'hidden' : isDoctorScanning ? 'opacity-20 blur-sm transition-all' : 'block transition-all'} />
               {!qrUrl && (
                 <div className="flex flex-col items-center justify-center p-6 text-slate-400 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-teal-600 mb-2" />
                   <span className="text-xs font-medium">Đang tạo mã QR bảo mật...</span>
+                </div>
+              )}
+              {isDoctorScanning && (
+                <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-4 text-center z-10 transition-all">
+                  <div className="h-14 w-14 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center mb-2.5">
+                    <Loader2 className="h-7 w-7 text-teal-600 animate-spin" />
+                  </div>
+                  <span className="text-sm font-bold text-slate-800">Đang nhận diện khuôn mặt...</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5">Mã đã khóa với thiết bị quét</span>
+                  <div className="mt-3 px-3 py-1 rounded-full bg-teal-50 text-teal-700 font-mono text-xs font-bold border border-teal-200">
+                    Thời gian còn: {expiresInSeconds}s
+                  </div>
                 </div>
               )}
             </div>
@@ -702,7 +738,7 @@ export default function KioskPage() {
             {isDoctorScanning ? (
               <div className="mt-4 flex items-center gap-2 px-4 py-2 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-xs font-bold animate-pulse">
                 <Loader2 className="h-4 w-4 animate-spin text-teal-400" />
-                <span>Bác sĩ đang nhìn camera xác thực...</span>
+                <span>Bác sĩ đang nhìn camera điện thoại ({expiresInSeconds}s)...</span>
               </div>
             ) : (
               <div className="mt-4 flex items-center gap-3 text-xs opacity-75">

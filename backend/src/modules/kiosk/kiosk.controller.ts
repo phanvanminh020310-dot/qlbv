@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, Res, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import * as fs from 'fs';
@@ -75,14 +87,21 @@ export class KioskController {
   @Public()
   @Get('session/:sessionId')
   @ApiOperation({ summary: 'Lấy thông tin phiên quét cho điện thoại Bác sĩ' })
-  async getSessionInfo(@Param('sessionId') sessionId: string) {
-    const session = this.service.touchSessionScan(sessionId) || this.service.getSession(sessionId);
+  async getSessionInfo(
+    @Param('sessionId') sessionId: string,
+    @Headers('x-device-claim-token') claimToken?: string,
+    @Req() req?: any,
+  ) {
+    const clientIp = (req?.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req?.ip;
+    const userAgent = req?.headers?.['user-agent'] as string;
+
+    const result = this.service.touchSessionScan(sessionId, { claimToken, clientIp, userAgent });
+    if (result.error) {
+      throw new BadRequestException(result.error);
+    }
+    const session = result.session || this.service.getSession(sessionId);
     if (!session) {
-      return {
-        sessionId,
-        room: { code: 'PK', name: 'Phòng khám' },
-        status: 'WAITING',
-      };
+      throw new BadRequestException('Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.');
     }
     return {
       sessionId: session.sessionId,
@@ -137,16 +156,20 @@ export class KioskController {
       completedChallenges?: string[];
       livenessChallenges?: string[];
       deviceInfo?: string;
+      claimToken?: string;
     },
+    @Headers('x-device-claim-token') headerClaimToken?: string,
   ) {
     const image = body.snapshotBase64 || body.imageBase64 || '';
     const challenges = body.completedChallenges || body.livenessChallenges || ['PASSIVE_LIVENESS'];
+    const claimToken = body.claimToken || headerClaimToken;
 
     return this.service.verifyFaceAndUnlock({
       sessionId: body.sessionId,
       snapshotBase64: image,
       completedChallenges: challenges,
       deviceInfo: body.deviceInfo,
+      claimToken,
     });
   }
 

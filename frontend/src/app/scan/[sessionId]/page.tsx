@@ -12,8 +12,22 @@ import {
   Sparkles,
   SwitchCamera,
   ScanFace,
-  Upload,
 } from 'lucide-react';
+
+function getDeviceClaimToken(): string {
+  if (typeof window === 'undefined') return '';
+  const KEY = 'qlbv_kiosk_device_claim_token';
+  try {
+    let token = localStorage.getItem(KEY);
+    if (!token || token.length < 16) {
+      token = 'dev_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem(KEY, token);
+    }
+    return token;
+  } catch {
+    return 'dev_fallback_' + Date.now();
+  }
+}
 
 export default function MobileScanPage() {
   const routeParams = useParams();
@@ -42,16 +56,21 @@ export default function MobileScanPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
 
   // 1. Tải thông tin phiên quét từ sessionId
   useEffect(() => {
     const fetchSession = async () => {
       try {
-        const resp = await fetch(`/api/kiosk/session/${sessionId}`);
+        const claimToken = getDeviceClaimToken();
+        const resp = await fetch(`/api/kiosk/session/${sessionId}`, {
+          headers: {
+            'x-device-claim-token': claimToken,
+          },
+        });
         if (!resp.ok) {
-          throw new Error('Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.');
+          const errJson = await resp.json().catch(() => null);
+          throw new Error(errJson?.message || 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.');
         }
         const raw = await resp.json();
         const data = raw?.data ?? raw;
@@ -273,13 +292,18 @@ export default function MobileScanPage() {
   // Gửi ảnh sang AI xác thực
   const submitVerification = async (imageBase64: string): Promise<boolean> => {
     try {
+      const claimToken = getDeviceClaimToken();
       const resp = await fetch('/api/kiosk/verify-face', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-device-claim-token': claimToken,
+        },
         body: JSON.stringify({
           sessionId,
           imageBase64,
           completedChallenges: ['PASSIVE_LIVENESS'],
+          claimToken,
         }),
       });
 
@@ -475,13 +499,6 @@ export default function MobileScanPage() {
         onChange={handleFileCapture}
         className="hidden"
       />
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleFileCapture}
-        className="hidden"
-      />
 
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -617,18 +634,8 @@ export default function MobileScanPage() {
                     <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp (Camera trước)'}</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => galleryInputRef.current?.click()}
-                    disabled={currentStep === 'verifying'}
-                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-700"
-                  >
-                    <Upload className="h-4 w-4" />
-                    <span>Hoặc chọn ảnh selfie từ Thư viện</span>
-                  </button>
-
                   <p className="text-[10px] text-slate-400 text-center px-2 leading-relaxed">
-                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút lật camera trên màn hình máy ảnh sang camera trước để chụp ảnh chân dung.
+                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút lật camera trên màn hình máy ảnh sang camera trước để chụp ảnh chân dung trực tiếp.
                   </p>
                 </div>
               )}
@@ -696,7 +703,10 @@ export default function MobileScanPage() {
                 setCapturedPreview(null);
                 // Kiểm tra xem phiên này thực tế đã được mở khoá thành công chưa trước khi quét lại
                 try {
-                  const check = await fetch(`/api/kiosk/session/${sessionId}`);
+                  const claimToken = getDeviceClaimToken();
+                  const check = await fetch(`/api/kiosk/session/${sessionId}`, {
+                    headers: { 'x-device-claim-token': claimToken },
+                  });
                   if (check.ok) {
                     const cRaw = await check.json();
                     const cData = cRaw?.data ?? cRaw;

@@ -39,6 +39,9 @@ export interface KioskSession {
   status: 'WAITING' | 'VERIFIED' | 'EXPIRED';
   consumed?: boolean;
   scannedAt?: number;       // Thời điểm điện thoại Bác sĩ quét và mở trang
+  claimedBy?: string;       // Device Claim Token duy nhất của thiết bị đầu tiên mở mã
+  claimedIp?: string;       // IP thiết bị quét
+  claimedUserAgent?: string;// User-Agent thiết bị quét
   isVerifying?: boolean;    // Đang có frame AI xử lý
   failCount?: number;       // Số lần frame lỗi tạm thời
   verifiedDoctor?: any;
@@ -207,14 +210,14 @@ export class KioskService implements OnModuleInit {
       const dbSec = await this.settings.get<any>('kiosk.qrExpiresSeconds');
       if (dbSec !== null && dbSec !== undefined) {
         const num = Number(dbSec);
-        if (Number.isFinite(num) && num >= 10 && num <= 600) {
+        if (Number.isFinite(num) && num >= 8 && num <= 600) {
           return Math.floor(num);
         }
       }
     } catch (e: any) {
       console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
     }
-    return 15;
+    return 12;
   }
 
   /**
@@ -624,7 +627,7 @@ export class KioskService implements OnModuleInit {
 
     const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
-    const ttlSeconds = Math.max(10, Math.min(600, expiresInSeconds || 15));
+    const ttlSeconds = Math.max(8, Math.min(600, expiresInSeconds || 12));
 
     const session: KioskSession = {
       sessionId,
@@ -645,8 +648,8 @@ export class KioskService implements OnModuleInit {
       const now = Date.now();
       for (const [sId, s] of this.sessions.entries()) {
         if (s.terminalId === tid && s.status === 'WAITING') {
-          // Nếu phiên đã được điện thoại quét trong 45 giây gần đây thì bảo lưu để hoàn tất
-          if (s.scannedAt && (now - s.scannedAt < 45000)) {
+          // Nếu phiên đã được điện thoại quét trong 18 giây gần đây thì bảo lưu để hoàn tất
+          if (s.scannedAt && (now - s.scannedAt < 18000)) {
             continue;
           }
           this.sessions.delete(sId);
@@ -658,18 +661,55 @@ export class KioskService implements OnModuleInit {
     return session;
   }
 
-  touchSessionScan(sessionId: string): KioskSession | null {
+  touchSessionScan(
+    sessionId: string,
+    meta?: { claimToken?: string; clientIp?: string; userAgent?: string },
+  ): { session: KioskSession | null; error?: string } {
     const s = this.sessions.get(sessionId);
-    if (!s) return null;
-    if (s.status === 'VERIFIED') return s;
+    if (!s) {
+      return {
+        session: null,
+        error: 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.',
+      };
+    }
+    if (s.status === 'VERIFIED') return { session: s };
+    if (s.status === 'EXPIRED' || s.consumed) {
+      return {
+        session: null,
+        error: 'Mã QR này đã hết hạn hoặc đã được sử dụng. Vui lòng nhìn lên màn hình phòng khám để quét mã mới.',
+      };
+    }
 
-    // Khi bác sĩ mở trang quét trên điện thoại:
+    const token = meta?.claimToken?.trim();
+
+    // 1. CHỐNG CHỤP GỬI ZALO (ANTI-FORWARDING & MULTI-DEVICE DETECTOR):
+    // Nếu mã này đã được 1 thiết bị nhận (claimedBy), mà lại có thiết bị thứ hai mở lên:
+    if (s.claimedBy && token && s.claimedBy !== token) {
+      // HỦY DIỆT MÃ NGAY LẬP TỨC!
+      s.status = 'EXPIRED';
+      s.consumed = true;
+      this.logger.warn(
+        `[KioskSecurity] PHÁT HIỆN MÃ QR BỊ CHỤP/GỬI QUA ZALO: Phiên ${sessionId} bị thiết bị thứ hai (${token}) mở sau khi thiết bị (${s.claimedBy}) đã quét. ĐÃ HỦY MÃ LẬP TỨC!`,
+      );
+      return {
+        session: null,
+        error:
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chụp và gửi sang thiết bị khác (Zalo/tin nhắn). Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
+      };
+    }
+
+    // 2. Khóa mã QR với thiết bị đầu tiên mở nó
+    if (!s.claimedBy && token) {
+      s.claimedBy = token;
+      s.claimedIp = meta?.clientIp;
+      s.claimedUserAgent = meta?.userAgent;
+    }
+
     if (!s.scannedAt) {
       s.scannedAt = Date.now();
     }
-    // Tự động gia hạn cửa sổ thời gian xác thực khuôn mặt (45 giây)
-    // để không bị huỷ giữa chừng nếu mã QR trên PC đổi sang chu kỳ 15s tiếp theo
-    s.expiresAt = Math.max(s.expiresAt, Date.now() + 45000);
+    // Cấp tối đa 15 giây đếm lùi để hoàn tất quét khuôn mặt
+    s.expiresAt = Math.max(s.expiresAt, Date.now() + 15000);
 
     // Bắn sự kiện báo máy trạm Kiosk PC biết rằng Bác sĩ đã quét mã QR
     if (s.terminalId) {
@@ -678,7 +718,7 @@ export class KioskService implements OnModuleInit {
         roomCode: s.roomCode,
       });
     }
-    return s;
+    return { session: s };
   }
 
   getSession(sessionId: string): KioskSession | null {
@@ -851,8 +891,9 @@ export class KioskService implements OnModuleInit {
     snapshotBase64: string;
     completedChallenges?: string[];
     deviceInfo?: string;
+    claimToken?: string;
   }) {
-    const { sessionId, snapshotBase64, completedChallenges, deviceInfo } = params;
+    const { sessionId, snapshotBase64, completedChallenges, deviceInfo, claimToken } = params;
 
     const session = this.getSession(sessionId);
     if (!session) {
@@ -876,6 +917,17 @@ export class KioskService implements OnModuleInit {
 
     if (session.consumed) {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
+    }
+
+    // Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link / chụp gửi Zalo sang máy khác)
+    const reqClaimToken = claimToken?.trim();
+    if (session.claimedBy && reqClaimToken && session.claimedBy !== reqClaimToken) {
+      session.status = 'EXPIRED';
+      session.consumed = true;
+      this.logger.warn(
+        `[KioskSecurity] PHÁT HIỆN GIAN LẬN: Thiết bị gửi ảnh (${reqClaimToken}) không khớp với thiết bị quét mã QR gốc (${session.claimedBy}). Đã hủy phiên ${sessionId}!`,
+      );
+      throw new ForbiddenException('CẢNH BÁO AN NINH: Thiết bị xác thực khuôn mặt không trùng khớp với thiết bị quét mã QR gốc. Nghi vấn chuyển tiếp mã từ xa!');
     }
 
     // Mutex chống xử lý trùng lặp nhiều frame cùng lúc

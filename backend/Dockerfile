@@ -8,8 +8,9 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 COPY package*.json ./
-# Cài đặt phụ thuộc: dùng npm ci chuẩn, tự động dọn cache và cài lại nếu gặp lỗi cache/mạng
-RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=60000 \
+# Cài đặt phụ thuộc: tận dụng cache npm của BuildKit để tải siêu tốc
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=60000 \
     || (npm cache clean --force && npm install --no-audit --no-fund)
 
 # ---------- Bước 2: biên dịch TypeScript ----------
