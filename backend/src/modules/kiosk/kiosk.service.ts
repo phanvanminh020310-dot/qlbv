@@ -217,7 +217,25 @@ export class KioskService implements OnModuleInit {
     } catch (e: any) {
       console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
     }
-    return 30;
+    return 15;
+  }
+
+  /**
+   * Lấy thời gian đệm xác thực khuôn mặt sau khi quét từ CSDL (Quản trị cấu hình)
+   */
+  async getFaceVerifyBufferSeconds(): Promise<number> {
+    try {
+      const dbSec = await this.settings.get<any>('kiosk.faceVerifyBufferSeconds');
+      if (dbSec !== null && dbSec !== undefined) {
+        const num = Number(dbSec);
+        if (Number.isFinite(num) && num >= 10 && num <= 300) {
+          return Math.floor(num);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi lấy cấu hình faceVerifyBufferSeconds:', e?.message || e);
+    }
+    return 60;
   }
 
   /**
@@ -531,6 +549,7 @@ export class KioskService implements OnModuleInit {
     }
 
     const qrExpiresSec = await this.getQrExpiresSeconds();
+    const faceVerifyBufferSec = await this.getFaceVerifyBufferSeconds();
 
     // 3. Kiểm tra trạng thái mở khoá ca trực của phòng khám
     const activeUnlock = this.activeRoomUnlocks.get(code);
@@ -583,6 +602,7 @@ export class KioskService implements OnModuleInit {
         qrUrl: activeSession.qrUrl,
         expiresInSeconds: remainingSec,
         totalExpiresSeconds: qrExpiresSec,
+        faceVerifyBufferSeconds: faceVerifyBufferSec,
         challengeSequence: activeSession.challengeSequence,
       },
     };
@@ -665,7 +685,7 @@ export class KioskService implements OnModuleInit {
     return session;
   }
 
-  touchSessionScan(
+  async touchSessionScan(
     sessionId: string,
     meta?: {
       claimToken?: string;
@@ -673,7 +693,7 @@ export class KioskService implements OnModuleInit {
       userAgent?: string;
       clientEnv?: string;
     },
-  ): { session: KioskSession | null; error?: string } {
+  ): Promise<{ session: KioskSession | null; error?: string; faceVerifyBufferSeconds?: number }> {
     const s = this.sessions.get(sessionId);
     if (!s) {
       return {
@@ -693,29 +713,31 @@ export class KioskService implements OnModuleInit {
     const userAgent = meta?.userAgent || '';
     const clientEnv = meta?.clientEnv || '';
 
-    // 1. PHÁT HIỆN TRÌNH DUYỆT NHÚNG TRONG ỨNG DỤNG (UNIVERSAL IN-APP WEBVIEW / FORWARDED PHOTO DETECTOR):
-    // Khi ai đó chụp ảnh gửi qua bất kỳ ứng dụng nào (Telegram, Messenger, Viber, Zalo, WeChat, Line, v.v.),
-    // hoặc mở ảnh từ thư viện ảnh:
-    // Trình duyệt mở ra là In-App WebView hoặc có chữ ký WebView (wv, Version/4.0, các app client).
-    // Bác sĩ quét trực tiếp tại màn hình bằng ứng dụng Camera gốc của điện thoại (iOS Camera / Android Camera)
-    // sẽ luôn mở trực tiếp bằng Safari / Chrome tiêu chuẩn.
-    const isInAppWebView =
+    // 1. PHÁT HIỆN TRÌNH DUYỆT NHÚNG / APP QUÉT QR TRÊN CẢ ANDROID & IOS (UNIVERSAL IN-APP & SCANNER APP DETECTOR):
+    // - Trên Android: các app quét mã (Lens, Barcode Scanner, v.v.) mở qua Intent hoặc nhúng WebView.
+    // - Trên iOS: các app quét mã từ App Store hoặc MXH mở qua WKWebView (thiếu Version/xx Safari, hoặc có webkit messageHandlers)
+    //   hoặc có user-agent đặc trưng của app bên thứ 3.
+    // Bác sĩ quét trực tiếp tại màn hình bằng ứng dụng Camera mặc định của iOS / Android sẽ luôn mở trực tiếp
+    // bằng Safari gốc hoặc Chrome gốc (có referrer rỗng và user-agent trình duyệt chuẩn).
+    const isBlockedApp =
       clientEnv === 'in-app-webview' ||
       clientEnv === 'forwarded-photo' ||
-      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(userAgent) ||
+      clientEnv === 'scanner-app' ||
+      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(userAgent) ||
       (/Version\/4\.0.*Chrome/i.test(userAgent) && /Android/i.test(userAgent)) ||
-      /\bwv\b/i.test(userAgent);
+      (/\bwv\b/i.test(userAgent)) ||
+      (/iPhone|iPad|iPod/i.test(userAgent) && !/Version\/[\d.]+.*Safari/i.test(userAgent) && /Mobile\//i.test(userAgent));
 
-    if (isInAppWebView) {
+    if (isBlockedApp) {
       s.status = 'EXPIRED';
       s.consumed = true;
       this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA TRÌNH DUYỆT NHÚNG / ẢNH CHỤP CHUYỂN TIẾP: Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
+        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA APP BÊN THỨ 3 / ẢNH CHỤP CHUYỂN TIẾP (iOS/Android): Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
       );
       return {
         session: null,
         error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
       };
     }
 
@@ -744,17 +766,18 @@ export class KioskService implements OnModuleInit {
     if (!s.scannedAt) {
       s.scannedAt = Date.now();
     }
-    // Cấp 60 giây đếm lùi để bác sĩ lớn tuổi hoàn tất quét khuôn mặt thong thả
-    s.expiresAt = Math.max(s.expiresAt, Date.now() + 60000);
+    const bufferSec = await this.getFaceVerifyBufferSeconds();
+    s.expiresAt = Math.max(s.expiresAt, Date.now() + bufferSec * 1000);
 
     // Bắn sự kiện báo máy trạm Kiosk PC biết rằng Bác sĩ đã quét mã QR
     if (s.terminalId) {
       this.sendToTerminal(s.terminalId, 'SESSION_SCANNED', {
         sessionId: s.sessionId,
         roomCode: s.roomCode,
+        faceVerifyBufferSeconds: bufferSec,
       });
     }
-    return { session: s };
+    return { session: s, faceVerifyBufferSeconds: bufferSec };
   }
 
   getSession(sessionId: string): KioskSession | null {
@@ -957,19 +980,21 @@ export class KioskService implements OnModuleInit {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
     }
 
-    // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp
-    const isInAppWebView =
+    // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp / App quét mã trên iOS và Android
+    const isBlockedApp =
       params.clientEnv === 'in-app-webview' ||
       params.clientEnv === 'forwarded-photo' ||
-      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(params.userAgent || '') ||
+      params.clientEnv === 'scanner-app' ||
+      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(params.userAgent || '') ||
       (/Version\/4\.0.*Chrome/i.test(params.userAgent || '') && /Android/i.test(params.userAgent || '')) ||
-      /\bwv\b/i.test(params.userAgent || '');
+      (/\bwv\b/i.test(params.userAgent || '')) ||
+      (/iPhone|iPad|iPod/i.test(params.userAgent || '') && !/Version\/[\d.]+.*Safari/i.test(params.userAgent || '') && /Mobile\//i.test(params.userAgent || ''));
 
-    if (isInAppWebView) {
+    if (isBlockedApp) {
       session.status = 'EXPIRED';
       session.consumed = true;
       throw new ForbiddenException(
-        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng nhắn tin. Hệ thống từ chối mở máy trạm!',
+        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng quét mã/tin nhắn. Hệ thống từ chối mở máy trạm!',
       );
     }
 

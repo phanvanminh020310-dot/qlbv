@@ -33,8 +33,9 @@ export default function KioskPage() {
   const [qrUrl, setQrUrl] = useState<string>('');
   const [handshakePin, setHandshakePin] = useState<string>('');
   const [terminalId, setTerminalId] = useState<string>('');
-  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(30);
-  const totalExpiresRef = useRef<number>(30);
+  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(15);
+  const totalExpiresRef = useRef<number>(15);
+  const faceVerifyBufferRef = useRef<number>(60);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -161,6 +162,9 @@ export default function KioskPage() {
       if (data?.qrSession?.totalExpiresSeconds) {
         totalExpiresRef.current = data.qrSession.totalExpiresSeconds;
       }
+      if (data?.qrSession?.faceVerifyBufferSeconds) {
+        faceVerifyBufferRef.current = data.qrSession.faceVerifyBufferSeconds;
+      }
 
       const backendQrUrl = data?.qrSession?.qrUrl;
       const scanUrl =
@@ -204,6 +208,9 @@ export default function KioskPage() {
         }
         if (data?.totalExpiresSeconds) {
           totalExpiresRef.current = data.totalExpiresSeconds;
+        }
+        if (data?.faceVerifyBufferSeconds) {
+          faceVerifyBufferRef.current = data.faceVerifyBufferSeconds;
         }
         const backendQr = data?.qrUrl;
         const scanUrl =
@@ -269,15 +276,23 @@ export default function KioskPage() {
       const sseUrl = `/api/kiosk/events/${encodeURIComponent(roomCode)}?terminalId=${encodeURIComponent(terminalId)}`;
       eventSource = new EventSource(sseUrl);
 
-      eventSource.addEventListener('SESSION_SCANNED', () => {
+      eventSource.addEventListener('SESSION_SCANNED', (e: any) => {
         setIsDoctorScanning(true);
-        // Thiết lập thời gian xác thực khuôn mặt 60 giây để bác sĩ lớn tuổi thao tác thong thả
-        setExpiresInSeconds(60);
+        let bufSec = faceVerifyBufferRef.current || 60;
+        try {
+          const payload = JSON.parse(e.data || '{}');
+          if (payload?.faceVerifyBufferSeconds) {
+            bufSec = Number(payload.faceVerifyBufferSeconds);
+            faceVerifyBufferRef.current = bufSec;
+          }
+        } catch {}
+        // Thiết lập thời gian xác thực khuôn mặt từ CSDL cấu hình hệ thống
+        setExpiresInSeconds(bufSec);
         if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
         scanningTimeoutRef.current = setTimeout(() => {
           setIsDoctorScanning(false);
           refreshQrSession();
-        }, 60000);
+        }, bufSec * 1000);
       });
 
       eventSource.addEventListener('UNLOCK_EVENT', (e: any) => {

@@ -58,27 +58,51 @@ export default function MobileScanPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
 
-  // 0. Phát hiện mở từ trình duyệt nhúng của app nhắn tin / mạng xã hội (In-App WebView)
+  // 0. Phát hiện mở từ trình duyệt nhúng của app nhắn tin / app quét mã QR bên thứ 3 trên iOS & Android
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const ua = navigator.userAgent || '';
-    const isInAppWebView =
-      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(ua) ||
-      (/Version\/4\.0.*Chrome/i.test(ua) && /Android/i.test(ua)) ||
-      /\bwv\b/i.test(ua);
+    const ref = document.referrer || '';
 
-    if (isInAppWebView) {
+    // A. Kiểm tra Referrer (Google Lens, app quét mã QR, các app chia sẻ link trên Android & iOS):
+    const isReferrerFromApp =
+      ref.startsWith('android-app://') ||
+      /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(ref);
+
+    // B. Kiểm tra Trình duyệt nhúng trên iOS (WKWebView / In-App Browser của app bên thứ 3):
+    // Trên iOS Safari gốc, window.webkit.messageHandlers không bao giờ tồn tại.
+    // Nếu có window.webkit?.messageHandlers -> 100% là app bên thứ 3 nhúng webview (App quét QR, mạng xã hội).
+    const isIos = /iPhone|iPad|iPod/i.test(ua);
+    const hasIosHandlers = typeof (window as any).webkit !== 'undefined' && Boolean((window as any).webkit?.messageHandlers);
+    const isIosWkWebView = isIos && (!/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua));
+
+    // C. Kiểm tra WebView trên Android:
+    const isAndroidWebView = /Android/i.test(ua) && ((/Version\/4\.0.*Chrome/i.test(ua)) || /\bwv\b/i.test(ua));
+
+    // D. Danh sách app tin nhắn / mạng xã hội / scanner app đã biết:
+    const isKnownApp =
+      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(ua);
+
+    const isBlocked = isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp;
+
+    if (isBlocked) {
       const claimToken = getDeviceClaimToken();
       fetch(`/api/kiosk/session/${sessionId}`, {
         headers: {
           'x-device-claim-token': claimToken,
-          'x-client-env': 'in-app-webview',
+          'x-client-env': 'scanner-app',
         },
       }).catch(() => {});
-      setSessionError(
-        'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
-      );
+
+      let customMsg =
+        'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.';
+      if (isIos) {
+        customMsg =
+          'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.';
+      }
+
+      setSessionError(customMsg);
       setLoadingSession(false);
       return;
     }
@@ -89,12 +113,18 @@ export default function MobileScanPage() {
     const fetchSession = async () => {
       try {
         const ua = navigator.userAgent || '';
-        const isInAppWebView =
-          /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(ua) ||
-          (/Version\/4\.0.*Chrome/i.test(ua) && /Android/i.test(ua)) ||
-          /\bwv\b/i.test(ua);
+        const ref = document.referrer || '';
+        const isReferrerFromApp =
+          ref.startsWith('android-app://') ||
+          /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(ref);
+        const isIos = /iPhone|iPad|iPod/i.test(ua);
+        const hasIosHandlers = typeof (window as any).webkit !== 'undefined' && Boolean((window as any).webkit?.messageHandlers);
+        const isIosWkWebView = isIos && (!/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua));
+        const isAndroidWebView = /Android/i.test(ua) && ((/Version\/4\.0.*Chrome/i.test(ua)) || /\bwv\b/i.test(ua));
+        const isKnownApp =
+          /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(ua);
 
-        if (isInAppWebView) {
+        if (isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp) {
           return;
         }
 

@@ -64,6 +64,7 @@ export class KioskController {
     const protocol = isHttps ? 'https' : 'http';
     const effectiveHost = (fwdHost && !fwdHost.includes('api:')) ? fwdHost : host;
     const qrExpiresSec = await this.service.getQrExpiresSeconds();
+    const faceVerifyBufferSec = await this.service.getFaceVerifyBufferSeconds();
     const session = this.service.createQrSession(
       body.roomCode || 'PK01',
       body.roomName || `Phòng khám ${body.roomCode}`,
@@ -79,6 +80,7 @@ export class KioskController {
       qrUrl: session.qrUrl,
       expiresInSeconds: qrExpiresSec,
       totalExpiresSeconds: qrExpiresSec,
+      faceVerifyBufferSeconds: faceVerifyBufferSec,
       challengeSequence: session.challengeSequence,
       serverTime: Date.now(),
     };
@@ -96,7 +98,7 @@ export class KioskController {
     const clientIp = (req?.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req?.ip;
     const userAgent = req?.headers?.['user-agent'] as string;
 
-    const result = this.service.touchSessionScan(sessionId, {
+    const result = await this.service.touchSessionScan(sessionId, {
       claimToken,
       clientIp,
       userAgent,
@@ -115,6 +117,7 @@ export class KioskController {
       challengeSequence: session.challengeSequence,
       status: session.status,
       verifiedDoctor: session.verifiedDoctor,
+      faceVerifyBufferSeconds: result.faceVerifyBufferSeconds || 60,
     };
   }
 
