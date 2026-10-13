@@ -1,14 +1,13 @@
 import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
+import { Allow, IsArray, IsBoolean, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Audit, CurrentUser, Public, RequirePermissions } from '../../common/decorators';
 import type { AccessContext } from '../../common/types/access-context';
 import { SettingsService, type SettingItem } from './settings.service';
 
-class SettingItemDto implements SettingItem {
-  @IsString()
-  key!: string;
-
+export class UpdateSettingDto {
+  @Allow()
   value!: unknown;
 
   @IsOptional()
@@ -32,8 +31,38 @@ class SettingItemDto implements SettingItem {
   isPublic?: boolean;
 }
 
-class SetManySettingsDto {
+export class SettingItemDto implements SettingItem {
+  @IsString()
+  key!: string;
+
+  @Allow()
+  value!: unknown;
+
+  @IsOptional()
+  @IsString()
+  group?: string;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  valueType?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isPublic?: boolean;
+}
+
+export class SetManySettingsDto {
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SettingItemDto)
   items!: SettingItemDto[];
 }
 
@@ -73,7 +102,7 @@ export class SettingsController {
   @ApiOperation({ summary: 'Lưu một cấu hình' })
   set(
     @Param('key') key: string,
-    @Body() body: { value: unknown; group?: string; label?: string; isPublic?: boolean },
+    @Body() body: UpdateSettingDto,
     @CurrentUser() user: AccessContext,
   ) {
     return this.service.set({ key, ...body }, user.id);

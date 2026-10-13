@@ -251,12 +251,25 @@ export class KioskService implements OnModuleInit {
   }
 
   /**
+   * Helper chuyển đổi giá trị cấu hình sang Boolean chuẩn xác
+   */
+  private toBoolean(val: unknown): boolean {
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'string') {
+      const s = val.trim().toLowerCase();
+      return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+    }
+    if (typeof val === 'number') return val === 1;
+    return false;
+  }
+
+  /**
    * Cấu hình cho phép bác sĩ tự chụp đăng ký khuôn mặt lần đầu trên trang Cá nhân
    */
   async getAllowSelfEnroll(): Promise<boolean> {
     try {
       const val = await this.settings.get<any>('kiosk.allowSelfEnroll');
-      return val === true;
+      return this.toBoolean(val);
     } catch {
       return false;
     }
@@ -268,7 +281,7 @@ export class KioskService implements OnModuleInit {
   async getAllowSelfUpdate(): Promise<boolean> {
     try {
       const val = await this.settings.get<any>('kiosk.allowSelfUpdate');
-      return val === true;
+      return this.toBoolean(val);
     } catch {
       return false;
     }
@@ -1007,27 +1020,33 @@ export class KioskService implements OnModuleInit {
         }
       }
 
-      // LỚP 3: SHIFT LOCK — Khóa cứng nếu nhân viên đang có lịch trực hôm nay
-      const now = Date.now();
-      const candidateDates = candidateDutyDates(now);
-      const activeDuty = await this.db.db
-        .select({ id: dutyAssignments.id })
-        .from(dutyAssignments)
-        .innerJoin(dutySlots, eq(dutySlots.id, dutyAssignments.slotId))
-        .innerJoin(dutyPeriods, eq(dutyPeriods.id, dutySlots.periodId))
-        .where(
-          and(
-            eq(dutyAssignments.userId, userId),
-            inArray(dutySlots.dutyDate, candidateDates),
-            inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
-          ),
-        )
-        .limit(1);
+      // LỚP 3: SHIFT LOCK — Khóa nếu nhân viên đang có lịch trực hôm nay
+      // Lưu ý: Nếu Quản trị viên đã chủ động BẬT "kiosk.allowSelfUpdate" trong Cấu hình hệ thống,
+      // thì quyền của Quản trị viên được ưu tiên tối cao (cho phép cập nhật để sửa lỗi nhận diện khi đang trực).
+      // Chỉ áp dụng SHIFT LOCK khi allowSelfUpdate KHÔNG được bật.
+      const allowSelfUpdate = await this.getAllowSelfUpdate();
+      if (!allowSelfUpdate) {
+        const now = Date.now();
+        const candidateDates = candidateDutyDates(now);
+        const activeDuty = await this.db.db
+          .select({ id: dutyAssignments.id })
+          .from(dutyAssignments)
+          .innerJoin(dutySlots, eq(dutySlots.id, dutyAssignments.slotId))
+          .innerJoin(dutyPeriods, eq(dutyPeriods.id, dutySlots.periodId))
+          .where(
+            and(
+              eq(dutyAssignments.userId, userId),
+              inArray(dutySlots.dutyDate, candidateDates),
+              inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
+            ),
+          )
+          .limit(1);
 
-      if (activeDuty.length > 0) {
-        throw new ForbiddenException(
-          `Bác sĩ ${user.title || ''} ${user.fullName} đang có lịch trực trong ngày. Để bảo đảm tính minh bạch, hệ thống không cho phép thay đổi dữ liệu sinh trắc học khi đang trong ca trực!`,
-        );
+        if (activeDuty.length > 0) {
+          throw new ForbiddenException(
+            `Bác sĩ ${user.title || ''} ${user.fullName} đang có lịch trực trong ngày. Để bảo đảm tính minh bạch, hệ thống tạm khoá tự đổi dữ liệu sinh trắc học khi đang trong ca trực!`,
+          );
+        }
       }
     }
 
@@ -1139,18 +1158,20 @@ export class KioskService implements OnModuleInit {
     const allowSelfEnroll = await this.getAllowSelfEnroll();
     const allowSelfUpdate = await this.getAllowSelfUpdate();
 
-    const isAdmin =
+    const isAdmin = Boolean(
       requestingUser?.isSuperAdmin ||
       requestingUser?.roles?.includes('SUPER_ADMIN') ||
       requestingUser?.roles?.includes('ADMIN') ||
-      requestingUser?.permissions?.includes('user.manage');
+      requestingUser?.permissions?.includes('user.manage') ||
+      requestingUser?.permissions?.includes('kiosk.admin')
+    );
 
     const bio = list[0];
     if (!bio) {
       return {
         enrolled: false,
         avatarUrl: null,
-        canSelfEnroll: isAdmin ? true : allowSelfEnroll,
+        canSelfEnroll: Boolean(isAdmin || allowSelfEnroll),
         canSelfUpdate: false,
       };
     }
@@ -1161,7 +1182,7 @@ export class KioskService implements OnModuleInit {
       enrolledAt: bio.enrolledAt,
       updatedAt: bio.updatedAt,
       canSelfEnroll: false,
-      canSelfUpdate: isAdmin ? true : allowSelfUpdate,
+      canSelfUpdate: Boolean(isAdmin || allowSelfUpdate),
     };
   }
 

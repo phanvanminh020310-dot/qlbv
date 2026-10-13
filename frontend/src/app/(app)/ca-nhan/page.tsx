@@ -220,8 +220,15 @@ export default function ProfilePage() {
       }>(`/kiosk/biometrics/status/${profile?.id}`),
   });
 
-  const canUpdateFace = !!(user?.isSuperAdmin || bioStatus?.canSelfUpdate);
-  const canEnrollFace = !!(user?.isSuperAdmin || bioStatus?.canSelfEnroll);
+  const isAdmin = Boolean(
+    user?.isSuperAdmin ||
+    user?.roles?.includes('SUPER_ADMIN') ||
+    user?.roles?.includes('ADMIN') ||
+    user?.permissions?.includes('user.manage') ||
+    user?.permissions?.includes('kiosk.admin')
+  );
+  const canUpdateFace = Boolean(isAdmin || bioStatus?.canSelfUpdate);
+  const canEnrollFace = Boolean(isAdmin || bioStatus?.canSelfEnroll);
 
   const { data: sessions } = useQuery({
     queryKey: ['sessions'],

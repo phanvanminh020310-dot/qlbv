@@ -230,10 +230,10 @@ export function defaultSettings(): SettingItem[] {
     },
     {
       key: 'kiosk.qrExpiresSeconds',
-      value: 90,
+      value: 15,
       group: 'kiosk',
       label: 'Thời gian hiệu lực mã QR Kiosk (giây)',
-      description: 'Thời gian sống của mỗi mã QR động và mã hiện diện 4 số trước khi tự động đổi mới',
+      description: 'Thời gian sống của mỗi mã QR động trước khi tự động đổi mới (mặc định 15 giây)',
       valueType: 'number',
       isPublic: true,
     },

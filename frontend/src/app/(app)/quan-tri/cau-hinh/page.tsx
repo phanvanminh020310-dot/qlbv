@@ -104,14 +104,53 @@ export default function SettingsPage() {
 
   const valueOf = (item: SettingItem): unknown => (item.key in draft ? draft[item.key] : item.value);
 
+  const isTruthy = (v: unknown): boolean => {
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'string') {
+      const s = v.trim().toLowerCase();
+      return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+    }
+    if (typeof v === 'number') return v === 1;
+    return false;
+  };
+
   const renderField = (item: SettingItem): React.ReactNode => {
     const value = valueOf(item);
     const type = item.valueType ?? (typeof item.value === 'boolean' ? 'boolean' : typeof item.value === 'number' ? 'number' : 'text');
     if (type === 'boolean') {
+      const checked = isTruthy(value);
       return (
-        <div className="flex items-center gap-2 pt-1">
-          <Switch checked={Boolean(value)} disabled={!can('setting.update')} onCheckedChange={(v) => setDraft((s) => ({ ...s, [item.key]: v }))} />
-          <span className="text-xs text-[var(--muted-foreground)]">{value ? 'Bật' : 'Tắt'}</span>
+        <div className="flex items-center gap-3 pt-1">
+          <Switch
+            checked={checked}
+            disabled={!can('setting.update')}
+            onCheckedChange={async (v) => {
+              setDraft((s) => ({ ...s, [item.key]: v }));
+              try {
+                await apiFetch(`/settings/${encodeURIComponent(item.key)}`, {
+                  method: 'PUT',
+                  body: {
+                    value: v,
+                    group: item.group,
+                    label: item.label ?? undefined,
+                    isPublic: item.isPublic,
+                  },
+                });
+                toast.success(`Đã lưu: ${item.label || item.key} → ${v ? 'Bật' : 'Tắt'}`);
+                setDraft((s) => {
+                  const next = { ...s };
+                  delete next[item.key];
+                  return next;
+                });
+                await queryClient.invalidateQueries({ queryKey: ['settings'] });
+              } catch (err: any) {
+                toast.error(err.message || 'Không thể lưu cài đặt');
+              }
+            }}
+          />
+          <span className={cn('text-xs font-semibold', checked ? 'text-teal-600 dark:text-teal-400' : 'text-slate-400')}>
+            {checked ? 'Bật (Đang kích hoạt)' : 'Tắt'}
+          </span>
         </div>
       );
     }

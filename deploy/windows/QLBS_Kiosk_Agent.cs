@@ -52,14 +52,18 @@ namespace QLBS.Kiosk
 
             // 2. Nạp cấu hình từ tệp config.ini
             LoadConfig();
+            Log(string.Format("Agent started. Server: {0}, Room: {1}, Terminal: {2}", serverUrl, roomCode, terminalId));
 
-            // 3. Cài đặt Hook bàn phím cấp độ nhân (Chặn Win, Alt+Tab, Taskmgr...)
+            // 3. Khởi động Local HTTP Listener (cổng 28199) để nhận tín hiệu mở khoá trực tiếp từ trang web trong < 10ms
+            StartLocalHttpListener();
+
+            // 4. Cài đặt Hook bàn phím cấp độ nhân (Chặn Win, Alt+Tab, Taskmgr...)
             hookId = SetHook(hookProc);
 
-            // 4. Khởi động Edge Kiosk lần đầu tiên
+            // 5. Khởi động Edge Kiosk lần đầu tiên
             LaunchEdgeKiosk();
 
-            // 5. Khởi động luồng nền giám sát trạng thái từ máy chủ
+            // 6. Khởi động luồng nền giám sát trạng thái từ máy chủ
             Thread monitorThread = new Thread(BackgroundMonitorLoop)
             {
                 IsBackground = true,
@@ -67,11 +71,24 @@ namespace QLBS.Kiosk
             };
             monitorThread.Start();
 
-            // 6. Chạy vòng lặp thông điệp Windows để duy trì hook
+            // 7. Chạy vòng lặp thông điệp Windows để duy trì hook
             Application.Run();
 
             // Dọn dẹp khi tắt
             CleanupAndExit();
+        }
+
+        private static void Log(string message)
+        {
+            try
+            {
+                string logDir = @"C:\QLBS_Kiosk";
+                if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
+                string logPath = Path.Combine(logDir, "agent.log");
+                string line = string.Format("[{0:yyyy-MM-dd HH:mm:ss.fff}] {1}{2}", DateTime.Now, message, Environment.NewLine);
+                File.AppendAllText(logPath, line);
+            }
+            catch {}
         }
 
         private static void LoadConfig()
@@ -97,6 +114,142 @@ namespace QLBS.Kiosk
                 }
             }
             catch {}
+        }
+
+        // ====================================================================
+        // MÁY CHỦ HTTP CỤC BỘ (PORT 28199) — MỞ KHÓA TỨC THÌ TRONG < 10MS
+        // ====================================================================
+        private static void StartLocalHttpListener()
+        {
+            Thread t = new Thread(() =>
+            {
+                HttpListener listener = null;
+                try
+                {
+                    listener = new HttpListener();
+                    listener.Prefixes.Add("http://127.0.0.1:28199/");
+                    listener.Prefixes.Add("http://localhost:28199/");
+                    listener.Start();
+                    Log("Local HttpListener started on port 28199 (instant unlock bridge)");
+
+                    while (isAppRunning)
+                    {
+                        try
+                        {
+                            HttpListenerContext ctx = listener.GetContext();
+                            ThreadPool.QueueUserWorkItem((state) => HandleLocalRequest(ctx));
+                        }
+                        catch (HttpListenerException)
+                        {
+                            break;
+                        }
+                        catch {}
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log("HttpListener start warning: " + ex.Message);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "LocalHttpListener"
+            };
+            t.Start();
+        }
+
+        private static void HandleLocalRequest(HttpListenerContext ctx)
+        {
+            try
+            {
+                HttpListenerRequest req = ctx.Request;
+                HttpListenerResponse resp = ctx.Response;
+
+                // Cung cấp CORS cho phép trang web Kiosk gọi nội bộ
+                resp.Headers.Add("Access-Control-Allow-Origin", "*");
+                resp.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                resp.Headers.Add("Access-Control-Allow-Headers", "*");
+
+                if (req.HttpMethod == "OPTIONS")
+                {
+                    resp.StatusCode = 204;
+                    resp.Close();
+                    return;
+                }
+
+                string rawUrl = req.RawUrl.ToLowerInvariant();
+                if (rawUrl.Contains("/unlock"))
+                {
+                    Log("Received local /unlock trigger from browser!");
+                    UnlockKioskAndReleaseDesktop("Local browser trigger");
+                    byte[] data = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"Desktop released\"}");
+                    resp.ContentType = "application/json";
+                    resp.OutputStream.Write(data, 0, data.Length);
+                    resp.Close();
+                    return;
+                }
+                else if (rawUrl.Contains("/lock"))
+                {
+                    Log("Received local /lock trigger");
+                    LockKioskAndLaunch("Local lock request");
+                    byte[] data = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"Kiosk locked\"}");
+                    resp.ContentType = "application/json";
+                    resp.OutputStream.Write(data, 0, data.Length);
+                    resp.Close();
+                    return;
+                }
+                else if (rawUrl.Contains("/status"))
+                {
+                    string statusJson = string.Format("{{\"isLocked\":{0},\"roomCode\":\"{1}\",\"terminalId\":\"{2}\"}}",
+                        isLocked ? "true" : "false", roomCode, terminalId);
+                    byte[] data = Encoding.UTF8.GetBytes(statusJson);
+                    resp.ContentType = "application/json";
+                    resp.OutputStream.Write(data, 0, data.Length);
+                    resp.Close();
+                    return;
+                }
+
+                resp.StatusCode = 404;
+                resp.Close();
+            }
+            catch {}
+        }
+
+        // ====================================================================
+        // CHUYỂN TRẠNG THÁI MỞ KHÓA & KHÓA LẠI MÁY TRẠM
+        // ====================================================================
+
+        public static void UnlockKioskAndReleaseDesktop(string source)
+        {
+            if (!isLocked) return;
+            isLocked = false;
+            Log(string.Format("UNLOCKED: {0} -> Killing Edge and releasing desktop 100%", source));
+
+            // 1. Gỡ bỏ Hook bàn phím ngay lập tức để Bác sĩ dùng đầy đủ phím tắt Windows
+            if (hookId != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(hookId);
+                hookId = IntPtr.Zero;
+            }
+
+            // 2. Tắt cửa sổ Kiosk trong chớp mắt giải phóng 100% Desktop (không còn bất kỳ màn hình trắng/thanh nổi)
+            KillKioskProcesses();
+        }
+
+        public static void LockKioskAndLaunch(string source)
+        {
+            if (isLocked) return;
+            isLocked = true;
+            Log(string.Format("LOCKED: {0} -> Hooking keyboard and launching Kiosk Edge", source));
+
+            // 1. Kích hoạt lại Hook bàn phím
+            if (hookId == IntPtr.Zero)
+            {
+                hookId = SetHook(hookProc);
+            }
+
+            // 2. Mở lại màn hình Kiosk toàn màn hình
+            LaunchEdgeKiosk();
         }
 
         // ====================================================================
@@ -150,6 +303,8 @@ namespace QLBS.Kiosk
                     edgeProfileDir
                 );
 
+                Log(string.Format("Launching Kiosk browser: {0} {1}", browserPath, arguments));
+
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
                     FileName = browserPath,
@@ -160,7 +315,10 @@ namespace QLBS.Kiosk
 
                 Process.Start(psi);
             }
-            catch {}
+            catch (Exception ex)
+            {
+                Log("LaunchEdgeKiosk error: " + ex.Message);
+            }
         }
 
         private static string FindBrowserExecutable()
@@ -239,7 +397,7 @@ namespace QLBS.Kiosk
         }
 
         // ====================================================================
-        // VÒNG LẶP THEO DÕI TRẠNG THÁI MỞ KHOÁ TỪ MÁY CHỦ
+        // VÒNG LẶP THEO DÕI TRẠNG THÁI MỞ KHOÁ TỪ MÁY CHỦ (POLLING FALLBACK)
         // ====================================================================
 
         private static void BackgroundMonitorLoop()
@@ -265,32 +423,11 @@ namespace QLBS.Kiosk
 
                         if (isServerUnlocked && isLocked)
                         {
-                            // === CHUYỂN TRẠNG THÁI: KHOÁ -> ĐÃ MỞ KHOÁ ===
-                            isLocked = false;
-
-                            // 1. Gỡ bỏ Hook bàn phím ngay lập tức để Bác sĩ dùng đầy đủ phím tắt Windows
-                            if (hookId != IntPtr.Zero)
-                            {
-                                UnhookWindowsHookEx(hookId);
-                                hookId = IntPtr.Zero;
-                            }
-
-                            // 2. Tắt cửa sổ Kiosk trong chớp mắt (0.05s) giải phóng 100% Desktop
-                            KillKioskProcesses();
+                            UnlockKioskAndReleaseDesktop("Server status unlocked (Background Monitor)");
                         }
                         else if (!isServerUnlocked && !isLocked)
                         {
-                            // === CHUYỂN TRẠNG THÁI: HẾT CA TRỰC HOẶC BỊ KHOÁ LẠI ===
-                            isLocked = true;
-
-                            // 1. Kích hoạt lại Hook bàn phím
-                            if (hookId == IntPtr.Zero)
-                            {
-                                hookId = SetHook(hookProc);
-                            }
-
-                            // 2. Mở lại màn hình Kiosk toàn màn hình
-                            LaunchEdgeKiosk();
+                            LockKioskAndLaunch("Server status locked / shift ended (Background Monitor)");
                         }
                         else if (isLocked)
                         {
@@ -380,13 +517,16 @@ namespace QLBS.Kiosk
                 // 3. CHẶN PHÍM APPLICATION / CONTEXT MENU
                 if (vkCode == 93) return (IntPtr)1;
 
-                // 4. CHẶN ALT + TAB, ALT + ESC, ALT + F4, ALT + SPACE
-                if (alt && (vkCode == (int)Keys.Tab || vkCode == (int)Keys.Escape || vkCode == (int)Keys.F4 || vkCode == (int)Keys.Space))
+                // 4. CHẶN CÁC TỔ HỢP ALT: Alt+Tab, Alt+Esc, Alt+F4, Alt+Space...
+                if (alt)
                 {
-                    return (IntPtr)1;
+                    if (vkCode == (int)Keys.Tab || vkCode == (int)Keys.Escape || vkCode == (int)Keys.F4 || vkCode == (int)Keys.Space)
+                    {
+                        return (IntPtr)1;
+                    }
                 }
 
-                // 5. CHẶN CTRL + ESC, CTRL + SHIFT + ESC (Task Manager)
+                // 5. CHẶN CÁC TỔ HỢP CTRL: Ctrl+Esc (Mở Start Menu), Ctrl+Shift+Esc (Task Manager)
                 if (ctrl && (vkCode == (int)Keys.Escape))
                 {
                     return (IntPtr)1;
@@ -539,14 +679,8 @@ namespace QLBS.Kiosk
                         btnUnlock.Text = "Kiểm tra...";
                         if (verifyPin())
                         {
-                            isLocked = false;
-                            if (hookId != IntPtr.Zero)
-                            {
-                                UnhookWindowsHookEx(hookId);
-                                hookId = IntPtr.Zero;
-                            }
-                            KillKioskProcesses();
-                            MessageBox.Show(f, "Đã mở khoá thành công! Màn hình Desktop đã được giải phóng.", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            UnlockKioskAndReleaseDesktop("IT Emergency Master PIN verification");
+                            MessageBox.Show(f, "Đã mở khoá thành công! Màn hình Desktop đã được giải phóng hoàn toàn.", "Thông báo IT", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             f.Close();
                             return;
                         }
