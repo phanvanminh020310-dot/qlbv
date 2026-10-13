@@ -94,6 +94,7 @@
 | 14 | **Lịch trực khám bệnh**: kỳ lịch tuần, ô trực, ràng buộc (nghỉ tối thiểu, giờ/ngày, giờ/tuần, chức danh, nghỉ phép, khác khoa), tự đăng ký, nhường/đổi, ngoại lệ gửi KHTH, điều chỉnh trực tiếp, chốt theo mốc, nhật ký, Excel, thông báo và realtime | (commit này) |
 | 14b | **Lịch trực — siết chặt, xoá cả kỳ, bảng màu ca, giao diện ngọc lam**: xoá cả kỳ lịch có kiểm soát (lý do, gõ lại tên, chặn khi đã có ca đã diễn ra, nhật ký giữ lại, báo người bị ảnh hưởng); bảng màu ca; ràng buộc chặt hơn (không trùng kỳ, ngày nghỉ, ca/vai trò đang dùng, nghỉ phép); tổng hợp giờ và nhật ký chỉ quản lý; migration 0016–0017 | (commit kế tiếp, sau 3deb70b) |
 | 15 | **API tích hợp lịch trực cho máy khoá phòng khám**: khoá API chỉ đọc (`integration_keys`, migration `0018`, CLI `npm run integration:key -- create/list/revoke`), `GET /api/integration/duty/{on-duty,roster,rooms}` (chuẩn `{success,data}`; chỉ kỳ `CONG_BO`/`DA_CHOT`; loại người đã vô hiệu hoá, phòng đã đóng, người nghỉ phép; ca đêm qua nửa đêm), phạm vi `duty:read`, `INTEGRATION_ALLOWED_IPS`, từ điển dữ liệu | commit cục bộ, **chưa push** (xem mục 6) |
+| 16 | **Kiosk điểm danh sinh trắc học bác sĩ & mở khoá máy trạm phòng khám**: QR động 15s Burn-on-Scan, Windows Native Agent C# (port 28199 local bridge, giải phóng 100% desktop không để lại màn trắng hay thanh nổi, taskkill 10ms), sửa lỗi DTO/ValidationPipe toggle tự đổi ảnh xác thực trong cấu hình hệ thống | d4b20d3 |
 
 Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-label].json.gz` v2.
 
