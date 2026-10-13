@@ -670,7 +670,8 @@ export class KioskService implements OnModuleInit {
       const isTarget = (tid && s.terminalId === tid) || s.roomCode === code;
       if (isTarget && s.status === 'WAITING' && sId !== sessionId) {
         // Nếu phiên cũ đã được quét thật sự tại màn hình và đang trong thời gian đệm xác thực:
-        if (s.scannedAt && (now - s.scannedAt < 60000) && now <= s.expiresAt) {
+        // Bảo lưu tuyệt đối phiên cho người đang đứng trước màn hình xác thực
+        if (s.scannedAt && now <= s.expiresAt) {
           continue;
         }
         // Tất cả phiên cũ chưa được quét hoặc đã quá hạn -> HỦY BỎ VÀ ĐÁNH DẤU HẾT HẠN NGAY!
