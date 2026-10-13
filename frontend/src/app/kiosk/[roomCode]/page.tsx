@@ -728,12 +728,41 @@ export default function KioskPage() {
 
           {/* Cột phải: Mã QR động */}
           <div className="flex flex-col items-center justify-center">
-            <div className="relative p-4 sm:p-5 rounded-3xl bg-white shadow-2xl border-4 border-teal-500/30 flex items-center justify-center min-w-[260px] min-h-[260px]">
-              <canvas ref={qrCanvasRef} className={!qrUrl ? 'hidden' : 'block'} />
+            <div className="relative p-4 sm:p-5 rounded-3xl bg-white shadow-2xl border-4 border-teal-500/30 flex items-center justify-center min-w-[260px] min-h-[260px] overflow-hidden">
+              <canvas
+                ref={qrCanvasRef}
+                className={!qrUrl ? 'hidden' : isDoctorScanning ? 'opacity-10 blur-md pointer-events-none transition-all duration-300' : 'block transition-all duration-300'}
+              />
               {!qrUrl && (
                 <div className="flex flex-col items-center justify-center p-6 text-slate-400 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-teal-600 mb-2" />
                   <span className="text-xs font-medium">Đang tạo mã QR bảo mật...</span>
+                </div>
+              )}
+
+              {/* Lớp phủ bảo mật che kín mã QR trong thời gian đệm xác thực 60s để chống chụp ảnh gửi ra ngoài */}
+              {isDoctorScanning && (
+                <div className="absolute inset-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-4 text-center z-10 transition-all duration-300 animate-in fade-in">
+                  <div className="h-14 w-14 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center mb-2 shadow-inner">
+                    <ShieldCheck className="h-7 w-7 text-teal-600 dark:text-teal-400 animate-pulse" />
+                  </div>
+                  <span className="text-sm font-bold text-slate-800 dark:text-slate-100">Đang xác thực khuôn mặt...</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Mã QR đã che & khóa với thiết bị quét</span>
+                  <div className="mt-2.5 px-3 py-1 rounded-full bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-mono text-xs font-bold border border-teal-200 dark:border-teal-800">
+                    Thời gian còn: {expiresInSeconds}s
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
+                      setIsDoctorScanning(false);
+                      refreshQrSession();
+                    }}
+                    className="mt-3 text-xs text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    <span>Hủy bỏ & đổi mã mới</span>
+                  </button>
                 </div>
               )}
             </div>
