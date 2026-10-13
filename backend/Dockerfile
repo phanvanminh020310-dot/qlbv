@@ -8,10 +8,10 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 COPY package*.json ./
-# Cài đặt phụ thuộc: tận dụng cache npm của BuildKit để tải siêu tốc
+# Cài đặt phụ thuộc: tận dụng cache npm của BuildKit để tải siêu tốc (ưu tiên offline)
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=60000 \
-    || (npm cache clean --force && npm install --no-audit --no-fund)
+    npm ci --prefer-offline --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=60000 \
+    || (npm cache clean --force && npm install --prefer-offline --no-audit --no-fund)
 
 # ---------- Bước 2: biên dịch TypeScript ----------
 FROM node:22-alpine AS build
@@ -19,7 +19,8 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build && npm prune --omit=dev
+ENV NODE_OPTIONS="--max-old-space-size=2048 --dns-result-order=ipv4first"
+RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 # ---------- Bước 3: ảnh chạy thật ----------
 FROM node:22-alpine AS runtime

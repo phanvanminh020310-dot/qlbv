@@ -57,17 +57,64 @@ export default function MobileScanPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
+  const coordsRef = useRef<{ lat?: number; lng?: number }>({});
+
+  // 0. Đối soát môi trường Zalo WebView & Lấy GPS ngầm
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // A. Lấy GPS ngầm để đối soát địa bàn Bệnh viện Quân y 4
+    if (navigator?.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          coordsRef.current = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          };
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 },
+      );
+    }
+
+    // B. Chống mở mã QR từ ảnh chụp Zalo / In-app WebView
+    const ua = navigator.userAgent || '';
+    const isZaloOrInApp = /zalo|micromessenger|fbav|instagram|messenger/i.test(ua);
+    if (isZaloOrInApp) {
+      const claimToken = getDeviceClaimToken();
+      fetch(`/api/kiosk/session/${sessionId}`, {
+        headers: {
+          'x-device-claim-token': claimToken,
+          'x-client-env': 'zalo-forward',
+        },
+      }).catch(() => {});
+      setSessionError(
+        'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ảnh chụp Zalo hoặc ứng dụng nhắn tin. Hệ thống từ chối điểm danh gián tiếp! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã.',
+      );
+      setLoadingSession(false);
+      return;
+    }
+  }, [sessionId]);
 
   // 1. Tải thông tin phiên quét từ sessionId
   useEffect(() => {
     const fetchSession = async () => {
       try {
+        const ua = navigator.userAgent || '';
+        if (/zalo|micromessenger|fbav|instagram|messenger/i.test(ua)) {
+          return;
+        }
+
         const claimToken = getDeviceClaimToken();
-        const resp = await fetch(`/api/kiosk/session/${sessionId}`, {
-          headers: {
-            'x-device-claim-token': claimToken,
-          },
-        });
+        const headers: Record<string, string> = {
+          'x-device-claim-token': claimToken,
+        };
+        if (coordsRef.current.lat && coordsRef.current.lng) {
+          headers['x-latitude'] = String(coordsRef.current.lat);
+          headers['x-longitude'] = String(coordsRef.current.lng);
+        }
+
+        const resp = await fetch(`/api/kiosk/session/${sessionId}`, { headers });
         if (!resp.ok) {
           const errJson = await resp.json().catch(() => null);
           throw new Error(errJson?.message || 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.');
@@ -293,17 +340,25 @@ export default function MobileScanPage() {
   const submitVerification = async (imageBase64: string): Promise<boolean> => {
     try {
       const claimToken = getDeviceClaimToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-device-claim-token': claimToken,
+      };
+      if (coordsRef.current.lat && coordsRef.current.lng) {
+        headers['x-latitude'] = String(coordsRef.current.lat);
+        headers['x-longitude'] = String(coordsRef.current.lng);
+      }
+
       const resp = await fetch('/api/kiosk/verify-face', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-device-claim-token': claimToken,
-        },
+        headers,
         body: JSON.stringify({
           sessionId,
           imageBase64,
           completedChallenges: ['PASSIVE_LIVENESS'],
           claimToken,
+          latitude: coordsRef.current.lat,
+          longitude: coordsRef.current.lng,
         }),
       });
 
@@ -413,8 +468,8 @@ export default function MobileScanPage() {
         clearInterval(interval);
       } else {
         failCount++;
-        // Sau 25 lần quét liên tục (~12 giây) mà không khớp, mới chuyển sang thông báo lỗi
-        if (failCount >= 25 && currentStep === 'scanning') {
+        // Quét liên tục 80 chu kỳ (~36 giây) để bác sĩ lớn tuổi thao tác thong thả
+        if (failCount >= 80 && currentStep === 'scanning') {
           isScanning = false;
           setErrorMessage('Không nhận diện được Bác sĩ hoặc ca trực chưa tới.');
           setCurrentStep('failed');

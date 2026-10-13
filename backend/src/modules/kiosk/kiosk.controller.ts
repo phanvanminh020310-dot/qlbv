@@ -90,12 +90,26 @@ export class KioskController {
   async getSessionInfo(
     @Param('sessionId') sessionId: string,
     @Headers('x-device-claim-token') claimToken?: string,
+    @Headers('x-client-env') clientEnv?: string,
+    @Headers('x-latitude') headerLat?: string,
+    @Headers('x-longitude') headerLng?: string,
+    @Query('lat') queryLat?: string,
+    @Query('lng') queryLng?: string,
     @Req() req?: any,
   ) {
     const clientIp = (req?.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req?.ip;
     const userAgent = req?.headers?.['user-agent'] as string;
+    const latitude = headerLat ? parseFloat(headerLat) : (queryLat ? parseFloat(queryLat) : undefined);
+    const longitude = headerLng ? parseFloat(headerLng) : (queryLng ? parseFloat(queryLng) : undefined);
 
-    const result = this.service.touchSessionScan(sessionId, { claimToken, clientIp, userAgent });
+    const result = this.service.touchSessionScan(sessionId, {
+      claimToken,
+      clientIp,
+      userAgent,
+      clientEnv,
+      latitude,
+      longitude,
+    });
     if (result.error) {
       throw new BadRequestException(result.error);
     }
@@ -157,12 +171,23 @@ export class KioskController {
       livenessChallenges?: string[];
       deviceInfo?: string;
       claimToken?: string;
+      clientEnv?: string;
+      latitude?: number;
+      longitude?: number;
     },
     @Headers('x-device-claim-token') headerClaimToken?: string,
+    @Headers('x-client-env') headerClientEnv?: string,
+    @Headers('x-latitude') headerLat?: string,
+    @Headers('x-longitude') headerLng?: string,
+    @Req() req?: any,
   ) {
     const image = body.snapshotBase64 || body.imageBase64 || '';
     const challenges = body.completedChallenges || body.livenessChallenges || ['PASSIVE_LIVENESS'];
     const claimToken = body.claimToken || headerClaimToken;
+    const clientEnv = body.clientEnv || headerClientEnv;
+    const latitude = body.latitude ?? (headerLat ? parseFloat(headerLat) : undefined);
+    const longitude = body.longitude ?? (headerLng ? parseFloat(headerLng) : undefined);
+    const userAgent = req?.headers?.['user-agent'] as string;
 
     return this.service.verifyFaceAndUnlock({
       sessionId: body.sessionId,
@@ -170,6 +195,10 @@ export class KioskController {
       completedChallenges: challenges,
       deviceInfo: body.deviceInfo,
       claimToken,
+      clientEnv,
+      latitude,
+      longitude,
+      userAgent,
     });
   }
 

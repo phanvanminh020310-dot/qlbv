@@ -210,14 +210,33 @@ export class KioskService implements OnModuleInit {
       const dbSec = await this.settings.get<any>('kiosk.qrExpiresSeconds');
       if (dbSec !== null && dbSec !== undefined) {
         const num = Number(dbSec);
-        if (Number.isFinite(num) && num >= 8 && num <= 600) {
+        if (Number.isFinite(num) && num >= 10 && num <= 600) {
           return Math.floor(num);
         }
       }
     } catch (e: any) {
       console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
     }
-    return 12;
+    return 45;
+  }
+
+  /**
+   * Tính khoảng cách đường chim bay (Haversine) tới Bệnh viện Quân y 4 (km)
+   */
+  calculateDistanceToHospital(lat: number, lng: number): number {
+    const HOSPITAL_LAT = 10.8967;
+    const HOSPITAL_LNG = 106.7725;
+    const R = 6371; // km
+    const dLat = ((lat - HOSPITAL_LAT) * Math.PI) / 180;
+    const dLon = ((lng - HOSPITAL_LNG) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((HOSPITAL_LAT * Math.PI) / 180) *
+        Math.cos((lat * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 
   /**
@@ -627,7 +646,7 @@ export class KioskService implements OnModuleInit {
 
     const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
-    const ttlSeconds = Math.max(8, Math.min(600, expiresInSeconds || 12));
+    const ttlSeconds = Math.max(15, Math.min(600, expiresInSeconds || 45));
 
     const session: KioskSession = {
       sessionId,
@@ -648,8 +667,8 @@ export class KioskService implements OnModuleInit {
       const now = Date.now();
       for (const [sId, s] of this.sessions.entries()) {
         if (s.terminalId === tid && s.status === 'WAITING') {
-          // Nếu phiên đã được điện thoại quét trong 18 giây gần đây thì bảo lưu để hoàn tất
-          if (s.scannedAt && (now - s.scannedAt < 18000)) {
+          // Bảo lưu phiên đang quét dở trong 60s để bác sĩ lớn tuổi không bị hủy giữa chừng
+          if (s.scannedAt && (now - s.scannedAt < 60000)) {
             continue;
           }
           this.sessions.delete(sId);
@@ -663,7 +682,14 @@ export class KioskService implements OnModuleInit {
 
   touchSessionScan(
     sessionId: string,
-    meta?: { claimToken?: string; clientIp?: string; userAgent?: string },
+    meta?: {
+      claimToken?: string;
+      clientIp?: string;
+      userAgent?: string;
+      clientEnv?: string;
+      latitude?: number;
+      longitude?: number;
+    },
   ): { session: KioskSession | null; error?: string } {
     const s = this.sessions.get(sessionId);
     if (!s) {
@@ -681,24 +707,61 @@ export class KioskService implements OnModuleInit {
     }
 
     const token = meta?.claimToken?.trim();
+    const userAgent = meta?.userAgent || '';
+    const clientEnv = meta?.clientEnv || '';
 
-    // 1. CHỐNG CHỤP GỬI ZALO (ANTI-FORWARDING & MULTI-DEVICE DETECTOR):
-    // Nếu mã này đã được 1 thiết bị nhận (claimedBy), mà lại có thiết bị thứ hai mở lên:
+    // 1. CHỐNG CHỤP GỬI ZALO (ANTI-FORWARDING & IN-APP WEBVIEW DETECTOR):
+    // Khi ai đó chụp ảnh gửi qua Zalo, người nhận mở ảnh trong Zalo và bấm "Quét mã QR trong ảnh".
+    // Trình duyệt mở ra là Zalo In-App WebView hoặc có clientEnv là zalo-forward.
+    const isZaloOrInApp =
+      clientEnv === 'zalo-forward' ||
+      /zalo|micromessenger|fbav|instagram|messenger/i.test(userAgent);
+
+    if (isZaloOrInApp) {
+      s.status = 'EXPIRED';
+      s.consumed = true;
+      this.logger.warn(
+        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA ZALO / ẢNH CHỤP: Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
+      );
+      return {
+        session: null,
+        error:
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn Zalo. Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã.',
+      };
+    }
+
+    // 2. CHỐNG CHUYỂN TIẾP ĐA THIẾT BỊ (MULTI-DEVICE CLAIM TOKEN):
     if (s.claimedBy && token && s.claimedBy !== token) {
       // HỦY DIỆT MÃ NGAY LẬP TỨC!
       s.status = 'EXPIRED';
       s.consumed = true;
       this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN MÃ QR BỊ CHỤP/GỬI QUA ZALO: Phiên ${sessionId} bị thiết bị thứ hai (${token}) mở sau khi thiết bị (${s.claimedBy}) đã quét. ĐÃ HỦY MÃ LẬP TỨC!`,
+        `[KioskSecurity] PHÁT HIỆN MÃ QR BỊ CHUYỂN TIẾP: Phiên ${sessionId} bị thiết bị thứ hai (${token}) mở sau khi thiết bị (${s.claimedBy}) đã quét. ĐÃ HỦY MÃ LẬP TỨC!`,
       );
       return {
         session: null,
         error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chụp và gửi sang thiết bị khác (Zalo/tin nhắn). Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chuyển tiếp sang thiết bị khác (Zalo/tin nhắn). Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
       };
     }
 
-    // 2. Khóa mã QR với thiết bị đầu tiên mở nó
+    // 3. ĐỐI SOÁT VỊ TRÍ ĐỊA LÝ GEOFENCE (NẾU CÓ TỌA ĐỘ GPS):
+    if (meta?.latitude && meta?.longitude) {
+      const dist = this.calculateDistanceToHospital(meta.latitude, meta.longitude);
+      if (dist > 2.0) {
+        s.status = 'EXPIRED';
+        s.consumed = true;
+        this.logger.warn(
+          `[KioskSecurity] PHÁT HIỆN ĐIỂM DANH TỪ XA: Tọa độ cách bệnh viện ${dist.toFixed(1)}km. ĐÃ HỦY PHIÊN ${sessionId}!`,
+        );
+        return {
+          session: null,
+          error: `CẢNH BÁO AN NINH: Tọa độ của bạn đang cách Bệnh viện Quân y 4 khoảng ${dist.toFixed(1)}km. Hệ thống từ chối điểm danh từ xa qua ảnh chụp chuyển tiếp!`,
+        };
+      }
+    }
+
+    // 4. Khóa mã QR với thiết bị đầu tiên mở nó
     if (!s.claimedBy && token) {
       s.claimedBy = token;
       s.claimedIp = meta?.clientIp;
@@ -708,8 +771,8 @@ export class KioskService implements OnModuleInit {
     if (!s.scannedAt) {
       s.scannedAt = Date.now();
     }
-    // Cấp tối đa 15 giây đếm lùi để hoàn tất quét khuôn mặt
-    s.expiresAt = Math.max(s.expiresAt, Date.now() + 15000);
+    // Cấp 60 giây đếm lùi để bác sĩ lớn tuổi hoàn tất quét khuôn mặt thong thả
+    s.expiresAt = Math.max(s.expiresAt, Date.now() + 60000);
 
     // Bắn sự kiện báo máy trạm Kiosk PC biết rằng Bác sĩ đã quét mã QR
     if (s.terminalId) {
@@ -892,6 +955,10 @@ export class KioskService implements OnModuleInit {
     completedChallenges?: string[];
     deviceInfo?: string;
     claimToken?: string;
+    latitude?: number;
+    longitude?: number;
+    clientEnv?: string;
+    userAgent?: string;
   }) {
     const { sessionId, snapshotBase64, completedChallenges, deviceInfo, claimToken } = params;
 
@@ -919,7 +986,31 @@ export class KioskService implements OnModuleInit {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
     }
 
-    // Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link / chụp gửi Zalo sang máy khác)
+    // 1. Chống mở từ Zalo / WebView ảnh chụp
+    const isZaloOrInApp =
+      params.clientEnv === 'zalo-forward' ||
+      /zalo|micromessenger|fbav|instagram|messenger/i.test(params.userAgent || '');
+    if (isZaloOrInApp) {
+      session.status = 'EXPIRED';
+      session.consumed = true;
+      throw new ForbiddenException(
+        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp Zalo hoặc ứng dụng nhắn tin. Hệ thống từ chối mở máy trạm!',
+      );
+    }
+
+    // 2. Chống điểm danh từ xa qua tọa độ GPS
+    if (params.latitude && params.longitude) {
+      const dist = this.calculateDistanceToHospital(params.latitude, params.longitude);
+      if (dist > 2.0) {
+        session.status = 'EXPIRED';
+        session.consumed = true;
+        throw new ForbiddenException(
+          `CẢNH BÁO AN NINH: Tọa độ của bạn đang cách Bệnh viện Quân y 4 khoảng ${dist.toFixed(1)}km. Hệ thống từ chối điểm danh từ xa qua ảnh chụp chuyển tiếp!`,
+        );
+      }
+    }
+
+    // 3. Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link / chụp gửi Zalo sang máy khác)
     const reqClaimToken = claimToken?.trim();
     if (session.claimedBy && reqClaimToken && session.claimedBy !== reqClaimToken) {
       session.status = 'EXPIRED';

@@ -140,9 +140,9 @@ TRANSIENT_RE='grpc server closed unexpectedly|frontend grpc|rpc error|connection
 build_service() { # build_service tên log
   local svc=$1 log=$2 try
   for try in 1 2 3; do
-    if [[ $try -eq 1 ]]; then printf '  → đang dựng %s ...\n' "$svc"
+    if [[ $try -eq 1 ]]; then printf '  → đang dựng %s (tiến trình trực tiếp) ...\n' "$svc"
     else printf '  ↻ thử lại lần %s (lỗi tạm thời: mạng/BuildKit) ...\n' "$try"; fi
-    if "${BUILD_CMD[@]}" "$svc" >"$log" 2>&1; then return 0; fi
+    if "${BUILD_CMD[@]}" "$svc" 2>&1 | tee "$log"; then return 0; fi
     grep -qiE "$TRANSIENT_RE" "$log" || return 1
     cp "$log" "$log.lan$try" 2>/dev/null || true
     sleep $((try * 5))
