@@ -217,26 +217,7 @@ export class KioskService implements OnModuleInit {
     } catch (e: any) {
       console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
     }
-    return 45;
-  }
-
-  /**
-   * Tính khoảng cách đường chim bay (Haversine) tới Bệnh viện Quân y 4 (km)
-   */
-  calculateDistanceToHospital(lat: number, lng: number): number {
-    const HOSPITAL_LAT = 10.8967;
-    const HOSPITAL_LNG = 106.7725;
-    const R = 6371; // km
-    const dLat = ((lat - HOSPITAL_LAT) * Math.PI) / 180;
-    const dLon = ((lng - HOSPITAL_LNG) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((HOSPITAL_LAT * Math.PI) / 180) *
-        Math.cos((lat * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+    return 30;
   }
 
   /**
@@ -646,7 +627,7 @@ export class KioskService implements OnModuleInit {
 
     const challengeSequence = ['PASSIVE_LIVENESS'];
     const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
-    const ttlSeconds = Math.max(15, Math.min(600, expiresInSeconds || 45));
+    const ttlSeconds = Math.max(15, Math.min(600, expiresInSeconds || 30));
 
     const session: KioskSession = {
       sessionId,
@@ -671,6 +652,10 @@ export class KioskService implements OnModuleInit {
           if (s.scannedAt && (now - s.scannedAt < 60000)) {
             continue;
           }
+          // Đệm chuyển tiếp 5s cho phiên chưa quét để tránh trường hợp bác sĩ vừa bấm quét ở giây cuối cùng
+          if (!s.scannedAt && now < s.expiresAt + 5000) {
+            continue;
+          }
           this.sessions.delete(sId);
         }
       }
@@ -687,15 +672,13 @@ export class KioskService implements OnModuleInit {
       clientIp?: string;
       userAgent?: string;
       clientEnv?: string;
-      latitude?: number;
-      longitude?: number;
     },
   ): { session: KioskSession | null; error?: string } {
     const s = this.sessions.get(sessionId);
     if (!s) {
       return {
         session: null,
-        error: 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.',
+        error: 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng nhìn lên màn hình phòng khám để quét mã mới.',
       };
     }
     if (s.status === 'VERIFIED') return { session: s };
@@ -710,23 +693,29 @@ export class KioskService implements OnModuleInit {
     const userAgent = meta?.userAgent || '';
     const clientEnv = meta?.clientEnv || '';
 
-    // 1. CHỐNG CHỤP GỬI ZALO (ANTI-FORWARDING & IN-APP WEBVIEW DETECTOR):
-    // Khi ai đó chụp ảnh gửi qua Zalo, người nhận mở ảnh trong Zalo và bấm "Quét mã QR trong ảnh".
-    // Trình duyệt mở ra là Zalo In-App WebView hoặc có clientEnv là zalo-forward.
-    const isZaloOrInApp =
-      clientEnv === 'zalo-forward' ||
-      /zalo|micromessenger|fbav|instagram|messenger/i.test(userAgent);
+    // 1. PHÁT HIỆN TRÌNH DUYỆT NHÚNG TRONG ỨNG DỤNG (UNIVERSAL IN-APP WEBVIEW / FORWARDED PHOTO DETECTOR):
+    // Khi ai đó chụp ảnh gửi qua bất kỳ ứng dụng nào (Telegram, Messenger, Viber, Zalo, WeChat, Line, v.v.),
+    // hoặc mở ảnh từ thư viện ảnh:
+    // Trình duyệt mở ra là In-App WebView hoặc có chữ ký WebView (wv, Version/4.0, các app client).
+    // Bác sĩ quét trực tiếp tại màn hình bằng ứng dụng Camera gốc của điện thoại (iOS Camera / Android Camera)
+    // sẽ luôn mở trực tiếp bằng Safari / Chrome tiêu chuẩn.
+    const isInAppWebView =
+      clientEnv === 'in-app-webview' ||
+      clientEnv === 'forwarded-photo' ||
+      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(userAgent) ||
+      (/Version\/4\.0.*Chrome/i.test(userAgent) && /Android/i.test(userAgent)) ||
+      /\bwv\b/i.test(userAgent);
 
-    if (isZaloOrInApp) {
+    if (isInAppWebView) {
       s.status = 'EXPIRED';
       s.consumed = true;
       this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA ZALO / ẢNH CHỤP: Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
+        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA TRÌNH DUYỆT NHÚNG / ẢNH CHỤP CHUYỂN TIẾP: Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
       );
       return {
         session: null,
         error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn Zalo. Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã.',
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
       };
     }
 
@@ -741,27 +730,11 @@ export class KioskService implements OnModuleInit {
       return {
         session: null,
         error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chuyển tiếp sang thiết bị khác (Zalo/tin nhắn). Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
+          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chuyển tiếp sang thiết bị khác. Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
       };
     }
 
-    // 3. ĐỐI SOÁT VỊ TRÍ ĐỊA LÝ GEOFENCE (NẾU CÓ TỌA ĐỘ GPS):
-    if (meta?.latitude && meta?.longitude) {
-      const dist = this.calculateDistanceToHospital(meta.latitude, meta.longitude);
-      if (dist > 2.0) {
-        s.status = 'EXPIRED';
-        s.consumed = true;
-        this.logger.warn(
-          `[KioskSecurity] PHÁT HIỆN ĐIỂM DANH TỪ XA: Tọa độ cách bệnh viện ${dist.toFixed(1)}km. ĐÃ HỦY PHIÊN ${sessionId}!`,
-        );
-        return {
-          session: null,
-          error: `CẢNH BÁO AN NINH: Tọa độ của bạn đang cách Bệnh viện Quân y 4 khoảng ${dist.toFixed(1)}km. Hệ thống từ chối điểm danh từ xa qua ảnh chụp chuyển tiếp!`,
-        };
-      }
-    }
-
-    // 4. Khóa mã QR với thiết bị đầu tiên mở nó
+    // 3. Khóa mã QR với thiết bị đầu tiên mở nó
     if (!s.claimedBy && token) {
       s.claimedBy = token;
       s.claimedIp = meta?.clientIp;
@@ -955,8 +928,6 @@ export class KioskService implements OnModuleInit {
     completedChallenges?: string[];
     deviceInfo?: string;
     claimToken?: string;
-    latitude?: number;
-    longitude?: number;
     clientEnv?: string;
     userAgent?: string;
   }) {
@@ -986,31 +957,23 @@ export class KioskService implements OnModuleInit {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
     }
 
-    // 1. Chống mở từ Zalo / WebView ảnh chụp
-    const isZaloOrInApp =
-      params.clientEnv === 'zalo-forward' ||
-      /zalo|micromessenger|fbav|instagram|messenger/i.test(params.userAgent || '');
-    if (isZaloOrInApp) {
+    // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp
+    const isInAppWebView =
+      params.clientEnv === 'in-app-webview' ||
+      params.clientEnv === 'forwarded-photo' ||
+      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(params.userAgent || '') ||
+      (/Version\/4\.0.*Chrome/i.test(params.userAgent || '') && /Android/i.test(params.userAgent || '')) ||
+      /\bwv\b/i.test(params.userAgent || '');
+
+    if (isInAppWebView) {
       session.status = 'EXPIRED';
       session.consumed = true;
       throw new ForbiddenException(
-        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp Zalo hoặc ứng dụng nhắn tin. Hệ thống từ chối mở máy trạm!',
+        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng nhắn tin. Hệ thống từ chối mở máy trạm!',
       );
     }
 
-    // 2. Chống điểm danh từ xa qua tọa độ GPS
-    if (params.latitude && params.longitude) {
-      const dist = this.calculateDistanceToHospital(params.latitude, params.longitude);
-      if (dist > 2.0) {
-        session.status = 'EXPIRED';
-        session.consumed = true;
-        throw new ForbiddenException(
-          `CẢNH BÁO AN NINH: Tọa độ của bạn đang cách Bệnh viện Quân y 4 khoảng ${dist.toFixed(1)}km. Hệ thống từ chối điểm danh từ xa qua ảnh chụp chuyển tiếp!`,
-        );
-      }
-    }
-
-    // 3. Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link / chụp gửi Zalo sang máy khác)
+    // 2. Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link sang máy khác)
     const reqClaimToken = claimToken?.trim();
     if (session.claimedBy && reqClaimToken && session.claimedBy !== reqClaimToken) {
       session.status = 'EXPIRED';

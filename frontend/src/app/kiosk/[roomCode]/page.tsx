@@ -33,8 +33,8 @@ export default function KioskPage() {
   const [qrUrl, setQrUrl] = useState<string>('');
   const [handshakePin, setHandshakePin] = useState<string>('');
   const [terminalId, setTerminalId] = useState<string>('');
-  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(15);
-  const totalExpiresRef = useRef<number>(15);
+  const [expiresInSeconds, setExpiresInSeconds] = useState<number>(30);
+  const totalExpiresRef = useRef<number>(30);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -271,13 +271,13 @@ export default function KioskPage() {
 
       eventSource.addEventListener('SESSION_SCANNED', () => {
         setIsDoctorScanning(true);
-        // Thiết lập thời gian xác thực khuôn mặt tối đa 45 giây để bác sĩ thao tác thoải mái
-        setExpiresInSeconds(45);
+        // Thiết lập thời gian xác thực khuôn mặt 60 giây để bác sĩ lớn tuổi thao tác thong thả
+        setExpiresInSeconds(60);
         if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
         scanningTimeoutRef.current = setTimeout(() => {
           setIsDoctorScanning(false);
           refreshQrSession();
-        }, 45000);
+        }, 60000);
       });
 
       eventSource.addEventListener('UNLOCK_EVENT', (e: any) => {

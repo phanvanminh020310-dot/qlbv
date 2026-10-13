@@ -15,7 +15,7 @@ Thư mục này chứa trọn gói giải pháp khóa máy trạm phòng khám c
 | **Khóa phím hệ thống** | Dễ bị lọt phím khi có popup/thông báo Windows hoặc bấm Win+D, F12. | **Khóa tuyệt đối 100% cấp độ nhân & Registry**: Chặn toàn bộ phím bàn phím (`Win`, `Win+D`, `F12`, `Alt+Tab`, `Alt+F4`, `Ctrl+Shift+Esc`, `Ctrl+Esc`, Task Manager). Duy nhất tổ hợp IT `Ctrl+Alt+Shift+F12` được phép. |
 | **Khi mở khóa thành công** | Bị đơ, dính màn hình xanh/trắng, khó giải phóng Desktop. | **Biến mất tức thì trong 0.05 giây**: Cửa sổ Kiosk bị hủy ngay lập tức, trả lại 100% màn hình Desktop Windows sạch sẽ cho bác sĩ. |
 | **Cách ly hồ sơ duyệt web** | Chạy chung với Edge cá nhân của bác sĩ. | **Profile độc lập (`C:\QLBS_Kiosk\EdgeProfile`)**: Không ảnh hưởng đến Edge, tab làm việc hay tài khoản HIS của bác sĩ. |
-| **Chống gian lận chụp QR gửi Zalo** | Mã QR có hạn 90 giây (dễ chụp gửi đi). | **Mã QR động 15 giây + Cơ chế Burn-on-scan (Mã 1 lần)**: Quá 15s tự đổi mã mới; quét rồi lập tức khóa mã, không thể quét từ xa. |
+| **Chống gian lận chụp QR gửi từ xa** | Mã QR tĩnh hoặc TTL dài (dễ chụp gửi đi). | **Mã QR động 30s + Burn-on-Scan + Buffer 60s cho Bác sĩ lớn tuổi**: Mã tự đổi mới sau 30s; ngay khi quét thành công sẽ cấp bộ đệm 60s nhận diện khuôn mặt thong thả; khóa mã theo token thiết bị đầu tiên; chặn 100% việc chụp chuyển tiếp qua tin nhắn/mạng xã hội. |
 | **Phím nóng cứu hộ cho IT** | Khó thao tác hoặc dễ bị người dùng bấm nhầm. | **Tổ hợp phím độc quyền IT `Ctrl + Alt + Shift + F12`**: Bật ngay hộp thoại nhập Master PIN IT để mở khóa cưỡng chế. |
 
 ---
@@ -42,7 +42,7 @@ Thực hiện một lần duy nhất trên máy tính phòng khám:
 
 1. **Khi vào ca trực**:
    - Bác sĩ đứng trước máy trạm phòng khám.
-   - Dùng điện thoại cá nhân quét mã QR hiển thị trên màn hình máy tính (mã đếm lùi 15s).
+   - Dùng điện thoại cá nhân (Camera góc) quét mã QR hiển thị trên màn hình máy tính (mã tự đổi mới 30s, đệm 60s nhận diện khuôn mặt).
    - Camera điện thoại tự bật lên ➔ Nhìn thẳng vào màn hình điện thoại trong 1 giây ➔ AI nhận diện người thật và đối soát lịch trực.
    - **MÁY TÍNH MỞ KHÓA NGAY LẬP TỨC**: Màn hình Kiosk đóng ngay trong 0.05s, màn hình Desktop Windows hiện ra nguyên bản 100% để bác sĩ khám chữa bệnh (mở phần mềm HIS, PACS, Word, v.v.).
 2. **Khi hết ca trực**:

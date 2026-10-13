@@ -57,39 +57,27 @@ export default function MobileScanPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
-  const coordsRef = useRef<{ lat?: number; lng?: number }>({});
 
-  // 0. Đối soát môi trường Zalo WebView & Lấy GPS ngầm
+  // 0. Phát hiện mở từ trình duyệt nhúng của app nhắn tin / mạng xã hội (In-App WebView)
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // A. Lấy GPS ngầm để đối soát địa bàn Bệnh viện Quân y 4
-    if (navigator?.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          coordsRef.current = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          };
-        },
-        () => {},
-        { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 },
-      );
-    }
-
-    // B. Chống mở mã QR từ ảnh chụp Zalo / In-app WebView
     const ua = navigator.userAgent || '';
-    const isZaloOrInApp = /zalo|micromessenger|fbav|instagram|messenger/i.test(ua);
-    if (isZaloOrInApp) {
+    const isInAppWebView =
+      /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(ua) ||
+      (/Version\/4\.0.*Chrome/i.test(ua) && /Android/i.test(ua)) ||
+      /\bwv\b/i.test(ua);
+
+    if (isInAppWebView) {
       const claimToken = getDeviceClaimToken();
       fetch(`/api/kiosk/session/${sessionId}`, {
         headers: {
           'x-device-claim-token': claimToken,
-          'x-client-env': 'zalo-forward',
+          'x-client-env': 'in-app-webview',
         },
       }).catch(() => {});
       setSessionError(
-        'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ảnh chụp Zalo hoặc ứng dụng nhắn tin. Hệ thống từ chối điểm danh gián tiếp! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã.',
+        'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ảnh chụp hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
       );
       setLoadingSession(false);
       return;
@@ -101,7 +89,12 @@ export default function MobileScanPage() {
     const fetchSession = async () => {
       try {
         const ua = navigator.userAgent || '';
-        if (/zalo|micromessenger|fbav|instagram|messenger/i.test(ua)) {
+        const isInAppWebView =
+          /zalo|micromessenger|fbav|fban|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp/i.test(ua) ||
+          (/Version\/4\.0.*Chrome/i.test(ua) && /Android/i.test(ua)) ||
+          /\bwv\b/i.test(ua);
+
+        if (isInAppWebView) {
           return;
         }
 
@@ -109,10 +102,6 @@ export default function MobileScanPage() {
         const headers: Record<string, string> = {
           'x-device-claim-token': claimToken,
         };
-        if (coordsRef.current.lat && coordsRef.current.lng) {
-          headers['x-latitude'] = String(coordsRef.current.lat);
-          headers['x-longitude'] = String(coordsRef.current.lng);
-        }
 
         const resp = await fetch(`/api/kiosk/session/${sessionId}`, { headers });
         if (!resp.ok) {
@@ -344,10 +333,6 @@ export default function MobileScanPage() {
         'Content-Type': 'application/json',
         'x-device-claim-token': claimToken,
       };
-      if (coordsRef.current.lat && coordsRef.current.lng) {
-        headers['x-latitude'] = String(coordsRef.current.lat);
-        headers['x-longitude'] = String(coordsRef.current.lng);
-      }
 
       const resp = await fetch('/api/kiosk/verify-face', {
         method: 'POST',
@@ -357,8 +342,6 @@ export default function MobileScanPage() {
           imageBase64,
           completedChallenges: ['PASSIVE_LIVENESS'],
           claimToken,
-          latitude: coordsRef.current.lat,
-          longitude: coordsRef.current.lng,
         }),
       });
 
