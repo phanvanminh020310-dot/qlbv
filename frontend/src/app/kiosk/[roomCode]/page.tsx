@@ -740,52 +740,36 @@ export default function KioskPage() {
                 </div>
               )}
 
-              {/* Lớp phủ TRẮNG che kín mã QR nguyên bản như commit cũ (00633fb) trong thời gian đệm 60s */}
+              {/* Lớp phủ TRẮNG che kín mã QR trong thời gian xác thực */}
               {isDoctorScanning && (
                 <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-4 text-center z-10 transition-all duration-300 animate-in fade-in">
                   <div className="h-14 w-14 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center mb-2.5">
                     <Loader2 className="h-7 w-7 text-teal-600 animate-spin" />
                   </div>
                   <span className="text-sm font-bold text-slate-800">Đang nhận diện khuôn mặt...</span>
-                  <span className="text-[11px] text-slate-500 mt-0.5">Mã đã khóa với thiết bị quét</span>
                   <div className="mt-3 px-3 py-1 rounded-full bg-teal-50 text-teal-700 font-mono text-xs font-bold border border-teal-200">
                     Thời gian còn: {expiresInSeconds}s
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
-                      setIsDoctorScanning(false);
-                      refreshQrSession();
-                    }}
-                    className="mt-3 text-xs text-rose-600 hover:underline flex items-center gap-1 font-medium cursor-pointer"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                    <span>Hủy bỏ & đổi mã mới</span>
-                  </button>
                 </div>
               )}
             </div>
 
-            {isDoctorScanning ? (
-              <div className="mt-4 flex items-center gap-2 px-4 py-2 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-xs font-bold animate-pulse">
-                <Loader2 className="h-4 w-4 animate-spin text-teal-400" />
-                <span>Bác sĩ đang nhìn camera điện thoại ({expiresInSeconds}s)...</span>
-              </div>
-            ) : (
-              <div className="mt-4 flex items-center gap-3 text-xs opacity-75">
-                <span>Hết hạn sau: <strong className="font-mono text-teal-600 dark:text-teal-400">{expiresInSeconds}s</strong></span>
-                <button
-                  type="button"
-                  onClick={refreshQrSession}
-                  disabled={isRefreshing}
-                  className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
-                >
-                  <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span>Đổi mã mới</span>
-                </button>
-              </div>
-            )}
+            <div className="mt-4 flex items-center justify-center gap-3 text-xs opacity-75 min-h-[24px]">
+              {!isDoctorScanning && (
+                <>
+                  <span>Hết hạn sau: <strong className="font-mono text-teal-600 dark:text-teal-400">{expiresInSeconds}s</strong></span>
+                  <button
+                    type="button"
+                    onClick={refreshQrSession}
+                    disabled={isRefreshing}
+                    className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    <span>Đổi mã mới</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </main>
