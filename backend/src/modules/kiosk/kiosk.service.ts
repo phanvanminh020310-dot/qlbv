@@ -90,15 +90,15 @@ export class KioskService implements OnModuleInit {
       } catch {}
     }
 
-    // Tự động dọn dẹp các phiên QR hết hạn quá 30 phút để giải phóng hoàn toàn bộ nhớ RAM
+    // Tự động dọn dẹp các phiên QR hết hạn quá 2 phút để giải phóng hoàn toàn bộ nhớ RAM
     setInterval(() => {
       const now = Date.now();
       for (const [sId, s] of this.sessions.entries()) {
-        if (s.expiresAt < now - 30 * 60 * 1000) {
+        if (now > s.expiresAt + 2 * 60 * 1000) {
           this.sessions.delete(sId);
         }
       }
-    }, 10 * 60 * 1000);
+    }, 30 * 1000);
 
     // Tự động kiểm tra và khoá phòng khám khi ca trực kết thúc + quá thời gian ân hạn
     setInterval(() => {
@@ -663,21 +663,20 @@ export class KioskService implements OnModuleInit {
       consumed: false,
     };
 
-    // Dọn các phiên WAITING cũ của đúng terminal này, NHƯNG BẢO LƯU phiên mà Bác sĩ đang quét dở
-    if (tid) {
-      const now = Date.now();
-      for (const [sId, s] of this.sessions.entries()) {
-        if (s.terminalId === tid && s.status === 'WAITING') {
-          // Bảo lưu phiên đang quét dở trong 60s để bác sĩ lớn tuổi không bị hủy giữa chừng
-          if (s.scannedAt && (now - s.scannedAt < 60000)) {
-            continue;
-          }
-          // Đệm chuyển tiếp 5s cho phiên chưa quét để tránh trường hợp bác sĩ vừa bấm quét ở giây cuối cùng
-          if (!s.scannedAt && now < s.expiresAt + 5000) {
-            continue;
-          }
-          this.sessions.delete(sId);
+    // Dọn các phiên cũ của đúng phòng khám (roomCode) hoặc máy trạm (terminalId) này:
+    // Khi màn hình Kiosk sinh mã QR mới, TẤT CẢ các mã QR cũ chưa được quét phải bị HỦY NGAY LẬP TỨC!
+    const now = Date.now();
+    for (const [sId, s] of this.sessions.entries()) {
+      const isTarget = (tid && s.terminalId === tid) || s.roomCode === code;
+      if (isTarget && s.status === 'WAITING' && sId !== sessionId) {
+        // Nếu phiên cũ đã được quét thật sự tại màn hình và đang trong thời gian đệm xác thực:
+        if (s.scannedAt && (now - s.scannedAt < 60000) && now <= s.expiresAt) {
+          continue;
         }
+        // Tất cả phiên cũ chưa được quét hoặc đã quá hạn -> HỦY BỎ VÀ ĐÁNH DẤU HẾT HẠN NGAY!
+        s.status = 'EXPIRED';
+        s.consumed = true;
+        this.sessions.delete(sId);
       }
     }
 
@@ -707,6 +706,51 @@ export class KioskService implements OnModuleInit {
         session: null,
         error: 'Mã QR này đã hết hạn hoặc đã được sử dụng. Vui lòng nhìn lên màn hình phòng khám để quét mã mới.',
       };
+    }
+
+    const now = Date.now();
+
+    // 1. KIỂM TRA HẾT HẠN NGAY TỨC THÌ:
+    // Nếu mã QR chưa từng được quét và thời gian hiện tại đã vượt quá hạn hiển thị ban đầu -> HẾT HẠN TỨC THÌ!
+    if (!s.scannedAt && now > s.expiresAt) {
+      s.status = 'EXPIRED';
+      s.consumed = true;
+      this.sessions.delete(sessionId);
+      return {
+        session: null,
+        error: 'Mã QR này đã hết hạn trên màn hình phòng khám. Vui lòng nhìn lên màn hình máy tính để quét mã mới.',
+      };
+    }
+
+    // Nếu đã quét trước đó nhưng đã quá hạn đệm cho phép -> HẾT HẠN!
+    if (now > s.expiresAt) {
+      s.status = 'EXPIRED';
+      s.consumed = true;
+      this.sessions.delete(sessionId);
+      return {
+        session: null,
+        error: 'Phiên xác thực đã quá thời gian cho phép. Vui lòng quét lại mã mới trên màn hình phòng khám.',
+      };
+    }
+
+    // 2. CHỐNG GIAN LẬN CHỤP ẢNH MÃ QR GỬI ĐI (MÃ ĐÃ BỊ THAY THẾ TRÊN MÀN HÌNH):
+    // Nếu trên cùng máy trạm hoặc phòng khám này ĐÃ CÓ MÃ QR MỚI HƠN được sinh ra (mã này đã biến mất khỏi màn hình PC):
+    // Bất kỳ ai quét mã này (từ ảnh chụp gửi đi) phải bị CHẶN ĐỨNG NGAY LẬP TỨC!
+    if (!s.scannedAt) {
+      for (const [otherId, otherSession] of this.sessions.entries()) {
+        const isSameTarget =
+          (s.terminalId && otherSession.terminalId === s.terminalId) || otherSession.roomCode === s.roomCode;
+        if (isSameTarget && otherId !== sessionId && otherSession.createdAt > s.createdAt) {
+          s.status = 'EXPIRED';
+          s.consumed = true;
+          this.sessions.delete(sessionId);
+          return {
+            session: null,
+            error:
+              'Mã QR này đã cũ và đã được thay thế bằng mã mới trên màn hình phòng khám. Vui lòng nhìn trực tiếp vào màn hình máy tính để quét mã đang hiển thị.',
+          };
+        }
+      }
     }
 
     const token = meta?.claimToken?.trim();
@@ -978,6 +1022,13 @@ export class KioskService implements OnModuleInit {
 
     if (session.consumed) {
       throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
+    }
+
+    if (Date.now() > session.expiresAt) {
+      session.status = 'EXPIRED';
+      session.consumed = true;
+      this.sessions.delete(sessionId);
+      throw new BadRequestException('Phiên quét QR đã quá thời gian cho phép. Vui lòng quét lại trên màn hình phòng khám.');
     }
 
     // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp / App quét mã trên iOS và Android
