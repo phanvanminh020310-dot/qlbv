@@ -162,7 +162,7 @@ Nguyên văn (tóm): Khắc phục việc phải nhập lặp lại ngày tháng
   + Dropdown chọn kỳ lịch nhóm theo Năm, gắn nhãn tuần ISO và huy hiệu "Đang diễn ra".
 - **Kiểm thử**:
   + Unit tests đầy đủ: `npm test` 21/21 passed (`backend/test/duty-rules.test.ts`).
-  + TypeScript: `tsc --noEmit` 0 lỗi trên toàn bộ backend và frontend.
+  + Sửa lỗi biên dịch `nest build`: bảng `users` dùng `users.active = true` và `users.deletedAt IS NULL` thay vì `users.status`.
 - **Tương thích**: Giữ nguyên toàn bộ schema DB hiện tại, không ảnh hưởng đến API Kiosk điểm danh, thuật toán đối soát hay quy tắc phân quyền.
 ### Yêu cầu 15 (lượt này): API lịch trực cho máy khoá phòng khám
 Nguyên văn (tóm): "Giờ đã có lịch trực bác sĩ trên VPS. Lấy nó làm API để lấy danh sách lịch trực cho ứng dụng khoá màn hình phòng khám (codebase `/home/user/phongkham-unlock/`, cài trên VPS khác), để giải quyết vấn đề ban đầu."
