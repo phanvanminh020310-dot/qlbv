@@ -143,6 +143,27 @@ Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-lab
 
 
 ## 6. Việc đang mở / đề xuất
+### Yêu cầu 16 (lượt này): Hiện đại hoá phân hệ lịch trực tuần (tự động tuần ISO, sao chép ô trực, bộ lọc lịch sử)
+Nguyên văn (tóm): Khắc phục việc phải nhập lặp lại ngày tháng, tên kỳ, mốc khoá; thêm tính năng tự động phát hiện tuần ISO, tạo tuần 1-chạm, sao chép ô trực từ tuần trước (kèm/không kèm bác sĩ); tổ chức lịch sử khoa học theo Năm/Tháng/Trạng thái và nhảy nhanh về tuần hiện tại; bảo toàn tương thích 100% với kiosk điểm danh và đối soát ca trực.
+
+**Đã làm:**
+- **Backend**:
+  + Thêm các hàm toán học ngày tuần chuẩn ISO 8601: `isoWeekNumber(ymd)`, `isoWeekRange(year, week)`, `smartPeriodTitle(start, end)`, `defaultLockAt(startDate)` (17h00 Thứ Sáu trước tuần trực).
+  + Thêm API `GET /api/duty/periods/suggest-next`: tự động phát hiện tuần kế tiếp từ kỳ gần nhất hoặc ngày hiện tại, tính mốc khoá và sinh tên kỳ chuẩn.
+  + Mở rộng `POST /api/duty/periods` hỗ trợ `autoGenerateSlots` (tự sinh ô từ danh mục phòng/ca/vai trò) và `copyFromPeriodId` (sao chép ô + phân công).
+  + Thêm API `POST /api/duty/periods/:id/clone`: nhân bản nhanh 1-chạm sang tuần tiếp theo (hoặc tuần chỉ định) kèm tuỳ chọn sao chép người trực.
+  + Bổ sung bộ lọc cho `GET /api/duty/periods`: lọc theo `year`, `month`, `status` (`NHAP`, `CONG_BO`, `DA_CHOT`, `CURRENT`), `search` theo tên kỳ.
+- **Frontend**:
+  + Thanh điều hướng tuần thông minh: "Tuần trước", "Tuần tiếp", "Về tuần này" và chỉ báo "Đang diễn ra" (CurrentWeekBadge).
+  + Nút "Tạo tuần tiếp theo" 1-chạm: tự động gợi ý thông số, sinh tiêu đề chuẩn hóa, cho phép sao chép cấu trúc từ tuần gần nhất.
+  + Hộp thoại tạo kỳ lịch mới: hỗ trợ 2 chế độ (Chọn theo Tuần ISO tự động tính ngày hoặc Chọn ngày tùy ý); tích hợp sao chép ô trực từ tuần trước hoặc tự động sinh từ danh mục.
+  + Hộp thoại nhân bản kỳ trực: thao tác 1-chạm trực tiếp trên từng dòng danh sách kỳ lịch.
+  + Bộ lọc lịch sử kỳ lịch đa chiều: lọc theo Năm, Tháng, Trạng thái (kèm tab "Tuần hiện tại") và tìm kiếm nhanh; thanh tiến độ % lấp đầy ô trực (progress bar trực quan).
+  + Dropdown chọn kỳ lịch nhóm theo Năm, gắn nhãn tuần ISO và huy hiệu "Đang diễn ra".
+- **Kiểm thử**:
+  + Unit tests đầy đủ: `npm test` 21/21 passed (`backend/test/duty-rules.test.ts`).
+  + TypeScript: `tsc --noEmit` 0 lỗi trên toàn bộ backend và frontend.
+- **Tương thích**: Giữ nguyên toàn bộ schema DB hiện tại, không ảnh hưởng đến API Kiosk điểm danh, thuật toán đối soát hay quy tắc phân quyền.
 ### Yêu cầu 15 (lượt này): API lịch trực cho máy khoá phòng khám
 Nguyên văn (tóm): "Giờ đã có lịch trực bác sĩ trên VPS. Lấy nó làm API để lấy danh sách lịch trực cho ứng dụng khoá màn hình phòng khám (codebase `/home/user/phongkham-unlock/`, cài trên VPS khác), để giải quyết vấn đề ban đầu."
 
