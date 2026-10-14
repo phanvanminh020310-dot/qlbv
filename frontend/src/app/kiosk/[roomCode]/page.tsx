@@ -212,6 +212,18 @@ export default function KioskPage() {
         if (data?.faceVerifyBufferSeconds) {
           faceVerifyBufferRef.current = data.faceVerifyBufferSeconds;
         }
+        if (data?.currentScheduled !== undefined) {
+          setScheduledDuty(data.currentScheduled);
+        }
+        if (data?.isUnlocked) {
+          setIsUnlocked(true);
+          if (data.activeDoctor) setActiveSession(data.activeDoctor);
+          if (data.shiftEndMs) setShiftEndMs(data.shiftEndMs);
+        } else if (data?.isUnlocked === false) {
+          setIsUnlocked(false);
+          setActiveSession(null);
+          setShiftEndMs(null);
+        }
         const backendQr = data?.qrUrl;
         const scanUrl =
           backendQr && !backendQr.includes('localhost') && !backendQr.includes('api:4000')
@@ -331,6 +343,14 @@ export default function KioskPage() {
         fetchKioskStatus(terminalId);
       });
 
+      // Lắng nghe cập nhật lịch trực realtime từ máy chủ
+      eventSource.addEventListener('SCHEDULE_UPDATED', () => {
+        fetchKioskStatus(terminalId);
+      });
+      eventSource.addEventListener('ROSTER_UPDATED', () => {
+        fetchKioskStatus(terminalId);
+      });
+
       eventSource.onerror = () => {
         // SSE tự động kết nối lại khi có gián đoạn mạng
       };
@@ -363,6 +383,22 @@ export default function KioskPage() {
 
     return () => clearInterval(timer);
   }, [isUnlocked, shiftEndMs, terminalId]);
+
+  // 6c. Đối soát realtime lịch trực và ca khám bệnh định kỳ mỗi 10 giây (khi đang khoá)
+  useEffect(() => {
+    if (isUnlocked) return;
+    const timer = setInterval(() => {
+      fetchKioskStatus(terminalId);
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [isUnlocked, terminalId, roomCode]);
+
+  // 6d. Đồng bộ trạng thái mở hộp thoại IT với Agent C# để cho phép gõ bàn phím nhập PIN
+  useEffect(() => {
+    const flag = isITModalOpen ? '1' : '0';
+    fetch(`http://127.0.0.1:28199/it-mode?enable=${flag}`, { mode: 'no-cors' }).catch(() => {});
+    fetch(`http://localhost:28199/it-mode?enable=${flag}`, { mode: 'no-cors' }).catch(() => {});
+  }, [isITModalOpen]);
 
   // 7. Khoá tính năng Kiosk chống can thiệp (Anti-Tamper Lockdown)
   useEffect(() => {

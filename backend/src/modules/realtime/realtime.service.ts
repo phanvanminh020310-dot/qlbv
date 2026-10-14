@@ -49,6 +49,11 @@ export class RealtimeService {
     else this.connections.set(userId, current - 1);
   }
 
+  /** Luồng toàn bộ sự kiện hệ thống (dùng cho các module tích hợp như Kiosk). */
+  streamAll(): Observable<RealtimeEvent> {
+    return this.events$.asObservable();
+  }
+
   /** Luồng sự kiện đã lọc theo quyền của người dùng. */
   streamFor(user: AccessContext): Observable<RealtimeEvent> {
     return this.events$.pipe(filter((event) => this.match(user, event)));

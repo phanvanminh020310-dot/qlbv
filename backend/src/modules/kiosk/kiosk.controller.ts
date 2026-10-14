@@ -74,6 +74,13 @@ export class KioskController {
       protocol,
       qrExpiresSec,
     );
+    const statusData = await this.service.getKioskStatus(
+      body.roomCode || 'PK01',
+      body.terminalId,
+      body.clientOrigin,
+      effectiveHost,
+      protocol,
+    );
     return {
       success: true,
       sessionId: session.sessionId,
@@ -82,6 +89,10 @@ export class KioskController {
       totalExpiresSeconds: qrExpiresSec,
       faceVerifyBufferSeconds: faceVerifyBufferSec,
       challengeSequence: session.challengeSequence,
+      currentScheduled: statusData.currentScheduled,
+      isUnlocked: statusData.isUnlocked,
+      activeDoctor: statusData.activeDoctor,
+      shiftEndMs: statusData.shiftEndMs,
       serverTime: Date.now(),
     };
   }

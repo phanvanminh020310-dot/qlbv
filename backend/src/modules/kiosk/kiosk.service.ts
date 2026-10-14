@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { and, eq, inArray, sql, desc, gte, lte, or, ilike, asc } from 'drizzle-orm';
 import { Response } from 'express';
 import * as crypto from 'crypto';
@@ -21,6 +21,7 @@ import {
 import { SettingsService } from '../settings/settings.service';
 import { AuditService } from '../audit/audit.service';
 import { IntegrationDutyService } from '../integration/integration-duty.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { bangkokToday, shiftInterval } from '../duty/duty-rules';
 import { coversInstant, bangkokIso, candidateDutyDates } from '../integration/integration-time';
 import type { AccessContext, ClientMeta } from '../../common/types/access-context';
@@ -83,6 +84,7 @@ export class KioskService implements OnModuleInit {
     private readonly integrationDuty: IntegrationDutyService,
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {
     if (!fs.existsSync(this.uploadDir)) {
       try {
@@ -125,6 +127,15 @@ export class KioskService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    // 0. Lắng nghe thay đổi lịch trực realtime để cập nhật tức thì xuống toàn bộ Kiosk PC
+    if (this.realtime) {
+      this.realtime.streamAll().subscribe((evt) => {
+        if (evt.topic === 'duty') {
+          this.broadcastScheduleUpdated();
+        }
+      });
+    }
+
     // Tự động đồng bộ hai chiều giữa đĩa và CSDL:
     // 1. Nếu đĩa có tệp ảnh cũ mà CSDL chưa lưu Base64 -> nạp vào CSDL để tự động sao lưu.
     // 2. Nếu CSDL có ảnh Base64 (sau khi phục hồi từ sao lưu) mà đĩa chưa có tệp -> tự tạo lại tệp trên đĩa.
@@ -391,6 +402,27 @@ export class KioskService implements OnModuleInit {
           this.terminalClients.delete(tid);
           termSet.delete(tid);
         }
+      }
+    }
+  }
+
+  /**
+   * Phát thông báo cập nhật lịch trực realtime xuống Kiosk PC khi lịch bệnh viện có thay đổi
+   */
+  broadcastScheduleUpdated(roomCode?: string) {
+    if (roomCode) {
+      this.broadcastToRoom(roomCode, 'SCHEDULE_UPDATED', {
+        type: 'SCHEDULE_UPDATED',
+        roomCode,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      for (const rCode of this.roomTerminals.keys()) {
+        this.broadcastToRoom(rCode, 'SCHEDULE_UPDATED', {
+          type: 'SCHEDULE_UPDATED',
+          roomCode: rCode,
+          timestamp: new Date().toISOString(),
+        });
       }
     }
   }

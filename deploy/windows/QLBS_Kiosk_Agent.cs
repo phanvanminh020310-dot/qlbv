@@ -23,6 +23,7 @@ namespace QLBS.Kiosk
         private static volatile bool isLocked = true;
         private static volatile bool isAppRunning = true;
         private static volatile bool isItPromptOpen = false;
+        private static volatile bool lastNetworkState = false;
         private static DateTime lastLaunchTime = DateTime.MinValue;
 
         // Windows API Hooks
@@ -64,8 +65,8 @@ namespace QLBS.Kiosk
             // 5. Cài đặt Hook bàn phím cấp độ nhân (Chặn 100% mọi phím khi đang khoá)
             hookId = SetHook(hookProc);
 
-            // 6. Khởi động Edge Kiosk lần đầu tiên
-            LaunchEdgeKiosk();
+            // 6. Kiểm tra kết nối mạng tới máy chủ trước khi khởi động Kiosk (chống lỗi màn hình trắng khi vừa bật máy)
+            WaitForNetworkAndInit();
 
             // 7. Khởi động luồng nền giám sát trạng thái từ máy chủ và cưỡng chế tiêu điểm Kiosk
             Thread monitorThread = new Thread(BackgroundMonitorLoop)
@@ -251,6 +252,27 @@ namespace QLBS.Kiosk
                     string statusJson = string.Format("{{\"isLocked\":{0},\"roomCode\":\"{1}\",\"terminalId\":\"{2}\"}}",
                         isLocked ? "true" : "false", roomCode, terminalId);
                     byte[] data = Encoding.UTF8.GetBytes(statusJson);
+                    resp.ContentType = "application/json";
+                    resp.OutputStream.Write(data, 0, data.Length);
+                    resp.Close();
+                    return;
+                }
+                else if (rawUrl.Contains("/it-mode"))
+                {
+                    bool enable = rawUrl.Contains("enable=1") || rawUrl.Contains("enable=true") || rawUrl.Contains("open=1");
+                    isItPromptOpen = enable;
+                    Log(string.Format("Local HTTP /it-mode: isItPromptOpen = {0}", isItPromptOpen));
+                    byte[] data = Encoding.UTF8.GetBytes(string.Format("{{\"success\":true,\"isItPromptOpen\":{0}}}", isItPromptOpen ? "true" : "false"));
+                    resp.ContentType = "application/json";
+                    resp.OutputStream.Write(data, 0, data.Length);
+                    resp.Close();
+                    return;
+                }
+                else if (rawUrl.Contains("/it-prompt"))
+                {
+                    Log("Received local /it-prompt trigger from web");
+                    ShowEmergencyItPrompt();
+                    byte[] data = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"IT Prompt launched\"}");
                     resp.ContentType = "application/json";
                     resp.OutputStream.Write(data, 0, data.Length);
                     resp.Close();
@@ -448,6 +470,66 @@ namespace QLBS.Kiosk
         }
 
         // ====================================================================
+        // KIỂM TRA MẠNG TRƯỚC KHI KHỞI ĐỘNG KIOSK & TỰ ĐỘNG MỞ LẠI KHI CÓ MẠNG
+        // ====================================================================
+        private static void WaitForNetworkAndInit()
+        {
+            Log(string.Format("Waiting for network connection to {0} before launching Kiosk...", serverUrl));
+            bool connected = false;
+            int attempt = 0;
+
+            while (isAppRunning && !connected)
+            {
+                attempt++;
+                try
+                {
+                    string statusUrl = string.Format("{0}/api/kiosk/status?room={1}&terminalId={2}", serverUrl, roomCode, terminalId);
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(statusUrl);
+                    req.Timeout = 3000;
+                    req.Method = "GET";
+
+                    using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                    using (StreamReader reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    {
+                        if (resp.StatusCode == HttpStatusCode.OK)
+                        {
+                            string json = reader.ReadToEnd();
+                            connected = true;
+                            lastNetworkState = true;
+                            Log("Network connected successfully! Server responded with HTTP 200.");
+
+                            bool isServerUnlocked = (json.IndexOf("\"isUnlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                                 || (json.IndexOf("\"isUnlocked\": true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                                 || (json.IndexOf("\"unlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                                                 || (json.IndexOf("\"unlocked\": true", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                            if (isServerUnlocked)
+                            {
+                                Log("Initial state from server: Workstation is UNLOCKED -> Releasing desktop.");
+                                UnlockKioskAndReleaseDesktop("Initial server state: unlocked");
+                            }
+                            else
+                            {
+                                Log("Initial state from server: Workstation is LOCKED -> Launching Edge Kiosk.");
+                                LaunchEdgeKiosk();
+                            }
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (attempt % 5 == 1)
+                    {
+                        Log(string.Format("Network check attempt #{0}: Not ready yet ({1}). Waiting 2s before retry...", attempt, ex.Message));
+                    }
+                }
+
+                Thread.Sleep(2000);
+            }
+        }
+
+        // ====================================================================
         // VÒNG LẶP THEO DÕI TRẠNG THÁI MỞ KHOÁ TỪ MÁY CHỦ & CƯỠNG CHẾ TIÊU ĐIỂM
         // ====================================================================
 
@@ -457,9 +539,6 @@ namespace QLBS.Kiosk
             {
                 try
                 {
-                    // Khi đang khoá: Cưỡng chế cửa sổ Kiosk luôn toàn màn hình ở lớp trên cùng
-                    EnforceKioskFocus();
-
                     string statusUrl = string.Format("{0}/api/kiosk/status?room={1}&terminalId={2}", serverUrl, roomCode, terminalId);
 
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(statusUrl);
@@ -470,6 +549,14 @@ namespace QLBS.Kiosk
                     using (StreamReader reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
                         string json = reader.ReadToEnd();
+                        bool justReconnected = !lastNetworkState;
+                        lastNetworkState = true;
+
+                        if (justReconnected)
+                        {
+                            Log("Network connection restored! Re-checking Kiosk state immediately...");
+                        }
+
                         bool isServerUnlocked = (json.IndexOf("\"isUnlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
                                              || (json.IndexOf("\"isUnlocked\": true", StringComparison.OrdinalIgnoreCase) >= 0)
                                              || (json.IndexOf("\"unlocked\":true", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -486,16 +573,26 @@ namespace QLBS.Kiosk
                         else if (isLocked)
                         {
                             // Đang trong trạng thái khoá:
-                            // CHỈ mở lại khi Edge bị tắt hoàn toàn khỏi tiến trình VÀ đã qua cooldown 5 giây
-                            if (!IsKioskBrowserRunning())
+                            // Nếu vừa có mạng lại HOẶC Edge bị tắt hoàn toàn khỏi tiến trình -> Mở lại Kiosk liền
+                            if (justReconnected || !IsKioskBrowserRunning())
                             {
                                 LaunchEdgeKiosk();
+                            }
+                            else
+                            {
+                                EnforceKioskFocus();
                             }
                         }
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    if (lastNetworkState)
+                    {
+                        Log(string.Format("Network connection lost: {0}. Waiting for network to restore...", ex.Message));
+                    }
+                    lastNetworkState = false;
+
                     // Khi mất mạng tạm thời: nếu đang khoá thì bảo đảm Edge vẫn chạy
                     if (isLocked && !IsKioskBrowserRunning())
                     {
@@ -666,9 +763,17 @@ namespace QLBS.Kiosk
                     return (IntPtr)1; // Chặn phím không cho lọt xuống hệ thống
                 }
 
-                // 2. Nếu hộp thoại IT Master PIN đang hiển thị, cho phép IT gõ phím để nhập PIN
+                // 2. Nếu hộp thoại IT Master PIN đang hiển thị (cả Form C# lẫn Web modal), cho phép IT gõ phím để nhập PIN
                 if (isItPromptOpen)
                 {
+                    // Vẫn chặn các phím nguy hiểm như WinKey, Alt+Tab để tránh thoát Desktop
+                    bool isWinKey = (vkCode == 91 || vkCode == 92);
+                    bool isAltTab = (isAlt && vkCode == (int)Keys.Tab);
+                    if (isWinKey || isAltTab)
+                    {
+                        return (IntPtr)1;
+                    }
+                    // Cho phép toàn bộ phím số, chữ, Enter, Backspace, Space, Esc, phím điều hướng...
                     return CallNextHookEx(hookId, nCode, wParam, lParam);
                 }
 
