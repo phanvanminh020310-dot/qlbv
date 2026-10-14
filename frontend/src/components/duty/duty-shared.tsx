@@ -41,6 +41,18 @@ export function PhaseBadge({ period }: { period: Pick<DutyPeriod, "phase"> }) {
   return <Badge tone={PHASE_TONE[period.phase]}>{PHASE_LABEL[period.phase]}</Badge>;
 }
 
+/** Huy hiệu Tuần này (Current week indicator) */
+export function CurrentWeekBadge({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 ${className}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+      Đang diễn ra
+    </span>
+  );
+}
+
 export function RequestStatusBadge({ status }: { status: RequestStatus }) {
   return <Badge tone={REQUEST_STATUS_TONE[status]}>{REQUEST_STATUS_LABEL[status]}</Badge>;
 }

@@ -1,21 +1,27 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Switch, Textarea } from "@/components/ui/input";
-import { Badge } from "@/components/ui/card";
+import { Badge, Skeleton } from "@/components/ui/card";
 import {
   ABSENCE_REASON_LABEL,
   DUTY_KEYS,
   dutyApi,
   fmtDate,
+  fmtDateTime,
   fmtDm,
+  addDaysYmd,
+  isoWeekday,
+  smartPeriodTitle,
   REQUEST_TYPE_LABEL,
   SOURCE_LABEL,
   weekdayLabel,
+  type DutyPeriod,
   type GridResponse,
   type GridSlot,
   type RequestType,
@@ -635,6 +641,316 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
           <span>Bỏ qua ràng buộc nếu người được thêm vi phạm (ví dụ quá giờ, sai chức danh). Chỉ dùng khi đã có sự thống nhất của lãnh đạo.</span>
         </label>
         {slot && slot.assignments.length === 0 ? <ViolationList warnings={["Ca chưa có người trực"]} /> : null}
+      </div>
+    </Dialog>
+  );
+}
+
+/* ================================================================== 1-Click Tạo tuần kế tiếp */
+
+export function QuickCreateNextPeriodDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (periodId: number) => void;
+}) {
+  const refresh = useRefreshDuty();
+  const suggest = useQuery({
+    queryKey: ["duty-suggest-next"],
+    queryFn: () => dutyApi.suggestNext(),
+  });
+
+  const [mode, setMode] = useState<"copy" | "auto" | "empty">("copy");
+  const [copyAssignments, setCopyAssignments] = useState(true);
+  const [customName, setCustomName] = useState("");
+
+  const data = suggest.data;
+
+  const create = useMutation({
+    mutationFn: async () => {
+      if (!data) return;
+      const body = {
+        name: customName.trim() || data.name,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        lockAt: data.lockAt,
+        registrationOpensAt: null,
+        autoGenerateSlots: mode === "auto",
+        copyFromPeriodId: mode === "copy" && data.lastPeriod ? data.lastPeriod.id : undefined,
+        copyAssignments: mode === "copy" && copyAssignments,
+      };
+      return dutyApi.createPeriod(body);
+    },
+    onSuccess: (res) => {
+      toast.success(`Đã tạo "${res?.name || "tuần trực mới"}" thành công!`);
+      refresh();
+      if (res?.id) onCreated(res.id);
+      onClose();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+
+  if (suggest.isLoading) {
+    return (
+      <Dialog open onClose={onClose} title="Đang tính toán thông số tuần tiếp theo...">
+        <div className="py-8 space-y-3">
+          <Skeleton className="h-6 w-3/4 mx-auto" />
+          <Skeleton className="h-20 w-full" />
+        </div>
+      </Dialog>
+    );
+  }
+
+  if (!data) return null;
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title="⚡ Tự động tạo lịch trực tuần mới (1-Click)"
+      description="Hệ thống tự động tính số tuần ISO, ngày Thứ Hai → Chủ Nhật và mốc chốt chuẩn y tế."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Huỷ</Button>
+          <Button
+            onClick={() => create.mutate()}
+            disabled={create.isPending}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <Sparkles className="h-4 w-4" /> Khởi tạo {data.name.split(" - ")[0]} ngay
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {/* Banner tóm tắt tuần mới */}
+        <div className="rounded-xl border border-teal-200 bg-teal-50/80 p-4 dark:border-teal-900 dark:bg-teal-950/40">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600 text-white font-bold text-sm shadow">
+                {data.week}
+              </span>
+              <div>
+                <h4 className="font-bold text-teal-950 dark:text-teal-100">{data.name}</h4>
+                <p className="text-xs text-teal-800 dark:text-teal-300">
+                  {fmtDate(data.startDate)} (Thứ 2) → {fmtDate(data.endDate)} (Chủ nhật) · 7 ngày trọn vẹn
+                </p>
+              </div>
+            </div>
+            <Badge tone="info">Tuần {data.week}/{data.year}</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-teal-900 dark:text-teal-200 pt-2 border-t border-teal-200/60 dark:border-teal-800/60">
+            <div>
+              <span className="opacity-75">Mốc chốt tự động:</span>{" "}
+              <strong className="font-semibold">{fmtDateTime(data.lockAt)}</strong>
+            </div>
+            <div>
+              <span className="opacity-75">Trạng thái:</span>{" "}
+              <span className="font-medium">Bản nháp (quản lý xem lại trước khi công bố)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tùy chọn kế thừa */}
+        <div className="space-y-2.5">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+            Tùy chọn tự động hóa ô trực & phân công
+          </Label>
+
+          {data.lastPeriod ? (
+            <div
+              onClick={() => setMode("copy")}
+              className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+                mode === "copy"
+                  ? "border-teal-600 bg-teal-50/40 ring-1 ring-teal-500 dark:bg-teal-950/30"
+                  : "hover:bg-[var(--accent)]"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="gen-mode"
+                  checked={mode === "copy"}
+                  onChange={() => setMode("copy")}
+                  className="mt-1"
+                />
+                <div className="flex-1 text-sm">
+                  <div className="font-semibold flex items-center gap-2">
+                    Sao chép cấu trúc từ tuần gần nhất ({data.lastPeriod.name})
+                    <Badge tone="success">Khuyên dùng</Badge>
+                  </div>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Tự động tạo {data.lastPeriod.slotCount} ô trực theo đúng các phòng và ca trực của tuần trước.
+                  </p>
+                  {mode === "copy" && (
+                    <div className="mt-3 pt-2.5 border-t border-dashed flex items-center gap-2">
+                      <Switch checked={copyAssignments} onCheckedChange={setCopyAssignments} />
+                      <span onClick={() => setCopyAssignments(!copyAssignments)} className="text-xs cursor-pointer font-medium">
+                        Sao chép cả danh sách bác sĩ/nhân viên đã xếp tuần trước ({data.lastPeriod.filledCount} lượt trực)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div
+            onClick={() => setMode("auto")}
+            className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+              mode === "auto"
+                ? "border-teal-600 bg-teal-50/40 ring-1 ring-teal-500 dark:bg-teal-950/30"
+                : "hover:bg-[var(--accent)]"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <input
+                type="radio"
+                name="gen-mode"
+                checked={mode === "auto"}
+                onChange={() => setMode("auto")}
+                className="mt-1"
+              />
+              <div className="flex-1 text-sm">
+                <div className="font-semibold">Tự động sinh toàn bộ ô trực từ danh mục</div>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Tạo ô trực cho mọi phòng khám và ca trực đang hoạt động trong toàn bộ 7 ngày của tuần (bỏ qua ngày nghỉ lễ).
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div
+            onClick={() => setMode("empty")}
+            className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+              mode === "empty"
+                ? "border-teal-600 bg-teal-50/40 ring-1 ring-teal-500 dark:bg-teal-950/30"
+                : "hover:bg-[var(--accent)]"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <input
+                type="radio"
+                name="gen-mode"
+                checked={mode === "empty"}
+                onChange={() => setMode("empty")}
+                className="mt-1"
+              />
+              <div className="flex-1 text-sm">
+                <div className="font-semibold">Chỉ tạo kỳ trống</div>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Tạo khung kỳ lịch nháp, cấu hình ô trực thủ công sau.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Chỉnh sửa tên nếu muốn */}
+        <div className="pt-2">
+          <Label htmlFor="quick-name" className="text-xs">Tên kỳ lịch (tùy chỉnh nếu cần):</Label>
+          <Input
+            id="quick-name"
+            placeholder={data.name}
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            className="mt-1 text-sm"
+          />
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/* ================================================================== Nhân bản kỳ lịch */
+
+export function ClonePeriodDialog({
+  period,
+  onClose,
+  onCloned,
+}: {
+  period: DutyPeriod;
+  onClose: () => void;
+  onCloned: (newId: number) => void;
+}) {
+  const refresh = useRefreshDuty();
+  const nextStart = addDaysYmd(period.endDate, 1);
+  const dow = isoWeekday(nextStart);
+  const start0 = dow === 1 ? nextStart : addDaysYmd(nextStart, 8 - dow);
+  const end0 = addDaysYmd(start0, 6);
+
+  const [startDate, setStartDate] = useState(start0);
+  const [endDate, setEndDate] = useState(end0);
+  const [name, setName] = useState(smartPeriodTitle(start0, end0));
+  const [copyAssignments, setCopyAssignments] = useState(true);
+
+  const clone = useMutation({
+    mutationFn: () =>
+      dutyApi.clonePeriod(period.id, {
+        startDate,
+        endDate,
+        name: name.trim(),
+        copyAssignments,
+      }),
+    onSuccess: (res) => {
+      toast.success(`Đã nhân bản "${period.name}" sang "${res.name}" thành công!`);
+      refresh();
+      if (res.id) onCloned(res.id);
+      onClose();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="md"
+      title="Nhân bản kỳ lịch sang tuần mới"
+      description={`Sao chép toàn bộ cấu trúc ô trực từ "${period.name}" sang khoảng ngày mới.`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Huỷ</Button>
+          <Button onClick={() => clone.mutate()} disabled={clone.isPending}>
+            <Copy className="h-4 w-4" /> Nhân bản ngay
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="cl-name">Tên kỳ lịch mới</Label>
+          <Input id="cl-name" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="cl-start">Từ ngày</Label>
+            <Input
+              id="cl-start"
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                const s = e.target.value;
+                setStartDate(s);
+                const eDate = addDaysYmd(s, 6);
+                setEndDate(eDate);
+                setName(smartPeriodTitle(s, eDate));
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cl-end">Đến ngày</Label>
+            <Input id="cl-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 pt-2">
+          <Switch checked={copyAssignments} onCheckedChange={setCopyAssignments} />
+          <span onClick={() => setCopyAssignments(!copyAssignments)} className="cursor-pointer text-sm font-normal">
+            Sao chép cả phân công người trực từ kỳ này
+          </span>
+        </div>
       </div>
     </Dialog>
   );

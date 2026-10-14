@@ -59,7 +59,7 @@ export function normalizeRules(input: unknown): DutyRules {
 
 /* ------------------------------------------------------------------ Thời gian */
 
-const parseYmd = (ymd: string): [number, number, number] => {
+export const parseYmd = (ymd: string): [number, number, number] => {
   const [y, m, d] = ymd.split('-').map(Number);
   return [y, m, d];
 };
@@ -132,6 +132,48 @@ export const fmtDm = (ymd: string) => {
   const [, m, d] = parseYmd(ymd);
   return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
 };
+
+/** Tính số tuần ISO 8601 và năm ISO của một ngày YMD */
+export function isoWeekNumber(ymd: string): { year: number; week: number } {
+  const [y, m, d] = parseYmd(ymd);
+  const target = new Date(Date.UTC(y, m - 1, d));
+  const dayNr = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNr);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { year: target.getUTCFullYear(), week: weekNo };
+}
+
+/** Tính khoảng ngày Thứ Hai - Chủ Nhật từ năm và số tuần ISO */
+export function isoWeekRange(year: number, week: number): { startDate: string; endDate: string } {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const mondayWeek1 = new Date(jan4.getTime() - (jan4Day - 1) * 86400000);
+  const monday = new Date(mondayWeek1.getTime() + (week - 1) * 7 * 86400000);
+  const sunday = new Date(monday.getTime() + 6 * 86400000);
+  return {
+    startDate: monday.toISOString().slice(0, 10),
+    endDate: sunday.toISOString().slice(0, 10),
+  };
+}
+
+/** Tự động sinh tên chuẩn cho kỳ lịch theo tuần ISO: "Tuần 43 (19/10 – 25/10/2026) - Tháng 10" */
+export function smartPeriodTitle(startDate: string, endDate: string): string {
+  const { year, week } = isoWeekNumber(startDate);
+  const [, m] = parseYmd(startDate);
+  return `Tuần ${week} (${fmtDm(startDate)} – ${fmtDm(endDate)}/${year}) - Tháng ${String(m).padStart(2, '0')}`;
+}
+
+/** Mốc chốt lịch mặc định: Thứ Sáu 17:00 trước ngày bắt đầu ca tuần (giờ Việt Nam +07:00) */
+export function defaultLockAt(startDate: string): string {
+  const dow = isoWeekday(startDate);
+  // Nếu bắt đầu vào Thứ 2 (dow=1), lùi 3 ngày về Thứ Sáu tuần trước
+  // Nếu ngày khác, lùi về Thứ Sáu gần nhất trước ngày bắt đầu
+  const diffToFriday = dow >= 5 ? dow - 5 : dow + 2;
+  const lockFriday = addDays(startDate, -diffToFriday);
+  return `${lockFriday}T17:00:00+07:00`;
+}
+
 const fmtH = (h: number) => (Number.isInteger(h) ? `${h}` : h.toFixed(1));
 
 /* ------------------------------------------------------------------ Kiểm tra ràng buộc */

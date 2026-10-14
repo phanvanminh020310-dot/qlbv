@@ -15,6 +15,7 @@ import {
   dutySlots,
   departments,
   users,
+  type DutyPeriodStatus,
   type DutyRules,
 } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
@@ -23,10 +24,15 @@ import {
   DEFAULT_DUTY_RULES,
   bangkokToday,
   dateRange,
+  defaultLockAt,
   fmtDate,
   fmtDm,
   isoWeekday,
+  isoWeekNumber,
+  isoWeekRange,
   normalizeRules,
+  parseYmd,
+  smartPeriodTitle,
   violationText,
   addDays,
   shiftInterval,
@@ -36,6 +42,7 @@ import type {
   AbsenceDto,
   AbsenceQueryDto,
   AssignDto,
+  ClonePeriodDto,
   DeletePeriodDto,
   ForceDto,
   GenerateSlotsDto,
@@ -90,6 +97,37 @@ export class DutyService {
     if (!this.core.canManageAny(user)) where.push(ne(dutyPeriods.status, 'NHAP'));
     if (q.from) where.push(gte(dutyPeriods.endDate, q.from));
     if (q.to) where.push(lte(dutyPeriods.startDate, q.to));
+
+    const today = bangkokToday();
+    if (q.status === 'CURRENT') {
+      where.push(lte(dutyPeriods.startDate, today));
+      where.push(gte(dutyPeriods.endDate, today));
+    } else if (q.status && ['NHAP', 'CONG_BO', 'DA_CHOT'].includes(q.status)) {
+      where.push(eq(dutyPeriods.status, q.status as DutyPeriodStatus));
+    }
+
+    if (q.year) {
+      where.push(
+        or(
+          sql`EXTRACT(YEAR FROM ${dutyPeriods.startDate}::date) = ${q.year}`,
+          sql`EXTRACT(YEAR FROM ${dutyPeriods.endDate}::date) = ${q.year}`,
+        )!,
+      );
+    }
+
+    if (q.month) {
+      where.push(
+        or(
+          sql`EXTRACT(MONTH FROM ${dutyPeriods.startDate}::date) = ${q.month}`,
+          sql`EXTRACT(MONTH FROM ${dutyPeriods.endDate}::date) = ${q.month}`,
+        )!,
+      );
+    }
+
+    if (q.search && q.search.trim()) {
+      where.push(ilike(dutyPeriods.name, `%${q.search.trim()}%`));
+    }
+
     const periods = await this.db.db
       .select()
       .from(dutyPeriods)
@@ -118,10 +156,17 @@ export class DutyService {
     return periods.map((p) => {
       const { phase, locked } = this.core.phaseOf(p);
       const s = sMap.get(p.id);
+      const isCurrent = p.startDate <= today && p.endDate >= today;
+      const { year, week } = isoWeekNumber(p.startDate);
+      const [pYear, pMonth] = parseYmd(p.startDate);
       return {
         ...p,
         phase,
         locked,
+        isCurrent,
+        isoWeek: week,
+        year: pYear,
+        month: pMonth,
         slotCount: s?.slots ?? 0,
         requiredCount: s?.required ?? 0,
         filledCount: fMap.get(p.id) ?? 0,
@@ -132,7 +177,89 @@ export class DutyService {
   async getPeriodView(user: AccessContext, id: number) {
     const p = await this.core.getPeriod(id);
     if (!this.core.canSeePeriod(user, p.status)) throw new NotFoundException('Không tìm thấy kỳ lịch');
-    return { ...p, ...this.core.phaseOf(p) };
+    const today = bangkokToday();
+    const isCurrent = p.startDate <= today && p.endDate >= today;
+    const { year, week } = isoWeekNumber(p.startDate);
+    const [pYear, pMonth] = parseYmd(p.startDate);
+    return {
+      ...p,
+      ...this.core.phaseOf(p),
+      isCurrent,
+      isoWeek: week,
+      year: pYear,
+      month: pMonth,
+    };
+  }
+
+  /**
+   * Tự động tính toán và gợi ý thông số tạo tuần tiếp theo:
+   * Tìm kỳ có endDate lớn nhất -> lấy tuần kế tiếp -> tính ISO week, ngày Thứ 2 đến Chủ nhật,
+   * tên kỳ chuẩn, mốc chốt mặc định 17h Thứ Sáu trước tuần.
+   */
+  async suggestNextPeriod() {
+    const [last] = await this.db.db
+      .select({
+        id: dutyPeriods.id,
+        name: dutyPeriods.name,
+        startDate: dutyPeriods.startDate,
+        endDate: dutyPeriods.endDate,
+        lockAt: dutyPeriods.lockAt,
+        status: dutyPeriods.status,
+      })
+      .from(dutyPeriods)
+      .orderBy(desc(dutyPeriods.endDate))
+      .limit(1);
+
+    const today = bangkokToday();
+    let nextStart: string;
+    let nextEnd: string;
+
+    if (last) {
+      nextStart = addDays(last.endDate, 1);
+      const dow = isoWeekday(nextStart);
+      if (dow !== 1) {
+        nextStart = addDays(nextStart, dow === 0 ? 1 : 8 - dow);
+      }
+      nextEnd = addDays(nextStart, 6);
+    } else {
+      const currentDow = isoWeekday(today);
+      nextStart = currentDow === 1 ? today : addDays(today, 8 - currentDow);
+      nextEnd = addDays(nextStart, 6);
+    }
+
+    const { year, week } = isoWeekNumber(nextStart);
+    const name = smartPeriodTitle(nextStart, nextEnd);
+    const lockAt = defaultLockAt(nextStart);
+
+    let lastPeriodInfo: { id: number; name: string; slotCount: number; filledCount: number } | null = null;
+    if (last) {
+      const [{ slotCount }] = await this.db.db
+        .select({ slotCount: sql<number>`count(*)::int` })
+        .from(dutySlots)
+        .where(eq(dutySlots.periodId, last.id));
+      const [{ filledCount }] = await this.db.db
+        .select({ filledCount: sql<number>`count(*)::int` })
+        .from(dutyAssignments)
+        .innerJoin(dutySlots, eq(dutySlots.id, dutyAssignments.slotId))
+        .where(eq(dutySlots.periodId, last.id));
+
+      lastPeriodInfo = {
+        id: last.id,
+        name: last.name,
+        slotCount,
+        filledCount,
+      };
+    }
+
+    return {
+      year,
+      week,
+      startDate: nextStart,
+      endDate: nextEnd,
+      name,
+      lockAt,
+      lastPeriod: lastPeriodInfo,
+    };
   }
 
   /** Mỗi ngày chỉ thuộc một kỳ lịch: chặn khoảng ngày giao với kỳ đã có (trừ chính kỳ đang sửa) */
@@ -149,6 +276,163 @@ export class DutyService {
         `Khoảng ngày trùng với kỳ lịch "${hit.name}" (${fmtDm(hit.startDate)} – ${fmtDm(hit.endDate)}). Mỗi ngày chỉ thuộc một kỳ lịch.`,
       );
     }
+  }
+
+  /** Sao chép các ô trực (và phân công) từ kỳ nguồn sang kỳ đích */
+  private async copyPeriodSlots(
+    tx: Executor,
+    actorUserId: number,
+    sourcePeriodId: number,
+    targetPeriodId: number,
+    targetStartDate: string,
+    targetEndDate: string,
+    copyAssignments = false,
+  ) {
+    const [sourcePeriod] = await tx.select().from(dutyPeriods).where(eq(dutyPeriods.id, sourcePeriodId)).limit(1);
+    if (!sourcePeriod) throw new NotFoundException('Không tìm thấy kỳ lịch gốc để sao chép');
+
+    const oldSlots = await tx.select().from(dutySlots).where(eq(dutySlots.periodId, sourcePeriodId));
+    if (!oldSlots.length) return { copiedSlots: 0, copiedAssignments: 0 };
+
+    const activeRooms = new Set((await tx.select({ id: dutyRooms.id }).from(dutyRooms).where(eq(dutyRooms.active, true))).map((r) => r.id));
+    const activeShifts = new Set((await tx.select({ id: dutyShiftTypes.id }).from(dutyShiftTypes).where(eq(dutyShiftTypes.active, true))).map((s) => s.id));
+    const activeRoles = new Set((await tx.select({ id: dutyRoles.id }).from(dutyRoles).where(eq(dutyRoles.active, true))).map((r) => r.id));
+
+    const slotIdMap = new Map<number, number>();
+    let copiedSlots = 0;
+
+    for (const s of oldSlots) {
+      if (!activeRooms.has(s.roomId) || !activeShifts.has(s.shiftId) || !activeRoles.has(s.roleId)) {
+        continue;
+      }
+
+      // Ánh xạ theo thứ trong tuần: Thứ 2 kỳ cũ -> Thứ 2 kỳ mới
+      const dow = isoWeekday(s.dutyDate); // 1 = Thứ 2 ... 7 = Chủ Nhật
+      let newDate = addDays(targetStartDate, dow - 1);
+      if (newDate < targetStartDate || newDate > targetEndDate) {
+        const [sy, sm, sd] = parseYmd(sourcePeriod.startDate);
+        const [dy, dm, dd] = parseYmd(s.dutyDate);
+        const diffDays = Math.round((Date.UTC(dy, dm - 1, dd) - Date.UTC(sy, sm - 1, sd)) / 86400000);
+        newDate = addDays(targetStartDate, diffDays);
+      }
+      if (newDate < targetStartDate || newDate > targetEndDate) continue;
+
+      const [inserted] = await tx
+        .insert(dutySlots)
+        .values({
+          periodId: targetPeriodId,
+          dutyDate: newDate,
+          roomId: s.roomId,
+          shiftId: s.shiftId,
+          roleId: s.roleId,
+          requiredCount: s.requiredCount,
+          note: s.note ?? '',
+        })
+        .onConflictDoNothing()
+        .returning({ id: dutySlots.id });
+
+      if (inserted) {
+        slotIdMap.set(s.id, inserted.id);
+        copiedSlots++;
+      } else {
+        const [existing] = await tx
+          .select({ id: dutySlots.id })
+          .from(dutySlots)
+          .where(
+            and(
+              eq(dutySlots.periodId, targetPeriodId),
+              eq(dutySlots.dutyDate, newDate),
+              eq(dutySlots.roomId, s.roomId),
+              eq(dutySlots.shiftId, s.shiftId),
+              eq(dutySlots.roleId, s.roleId),
+            ),
+          )
+          .limit(1);
+        if (existing) slotIdMap.set(s.id, existing.id);
+      }
+    }
+
+    let copiedAssignments = 0;
+    if (copyAssignments && slotIdMap.size > 0) {
+      const oldSlotIds = Array.from(slotIdMap.keys());
+      const oldAssignments = await tx
+        .select()
+        .from(dutyAssignments)
+        .where(inArray(dutyAssignments.slotId, oldSlotIds));
+
+      const activeUsers = new Set((await tx.select({ id: users.id }).from(users).where(eq(users.status, 'ACTIVE'))).map((u) => u.id));
+
+      for (const a of oldAssignments) {
+        if (!activeUsers.has(a.userId)) continue;
+        const targetSlotId = slotIdMap.get(a.slotId);
+        if (!targetSlotId) continue;
+
+        const inserted = await tx
+          .insert(dutyAssignments)
+          .values({
+            slotId: targetSlotId,
+            userId: a.userId,
+            source: 'PHAN_CONG',
+            assignedBy: actorUserId,
+            note: a.note ? `Sao chép: ${a.note}` : 'Sao chép từ tuần trước',
+          })
+          .onConflictDoNothing()
+          .returning({ id: dutyAssignments.id });
+
+        if (inserted.length) copiedAssignments++;
+      }
+    }
+
+    return { copiedSlots, copiedAssignments };
+  }
+
+  /** Tự động sinh ô trực chuẩn từ danh mục cho toàn bộ phòng và ca đang mở */
+  private async autoGenerateStandardSlots(
+    tx: Executor,
+    actorUserId: number,
+    periodId: number,
+    startDate: string,
+    endDate: string,
+  ) {
+    const rooms = await tx.select().from(dutyRooms).where(eq(dutyRooms.active, true));
+    const shifts = await tx.select().from(dutyShiftTypes).where(eq(dutyShiftTypes.active, true));
+    const roles = await tx.select().from(dutyRoles).where(eq(dutyRoles.active, true));
+
+    if (!rooms.length || !shifts.length || !roles.length) {
+      return { created: 0 };
+    }
+
+    const closed = new Set(
+      (
+        await tx
+          .select({ date: dutyClosedDays.date })
+          .from(dutyClosedDays)
+          .where(and(gte(dutyClosedDays.date, startDate), lte(dutyClosedDays.date, endDate)))
+      ).map((r) => r.date),
+    );
+
+    const days = dateRange(startDate, endDate).filter((d) => !closed.has(d));
+    const values: Array<typeof dutySlots.$inferInsert> = [];
+    for (const d of days) {
+      for (const r of rooms) {
+        for (const s of shifts) {
+          for (const role of roles) {
+            values.push({
+              periodId,
+              dutyDate: d,
+              roomId: r.id,
+              shiftId: s.id,
+              roleId: role.id,
+              requiredCount: 1,
+            });
+          }
+        }
+      }
+    }
+
+    if (!values.length) return { created: 0 };
+    const inserted = await tx.insert(dutySlots).values(values).onConflictDoNothing().returning({ id: dutySlots.id });
+    return { created: inserted.length };
   }
 
   async createPeriod(user: AccessContext, dto: PeriodDto) {
@@ -174,15 +458,124 @@ export class DutyService {
           updatedBy: user.id,
         })
         .returning();
+
+      let autoStats: { copiedSlots?: number; copiedAssignments?: number; createdSlots?: number } = {};
+      if (dto.copyFromPeriodId) {
+        const res = await this.copyPeriodSlots(
+          tx,
+          user.id,
+          dto.copyFromPeriodId,
+          created.id,
+          dto.startDate,
+          dto.endDate,
+          !!dto.copyAssignments,
+        );
+        autoStats = { copiedSlots: res.copiedSlots, copiedAssignments: res.copiedAssignments };
+      } else if (dto.autoGenerateSlots) {
+        const res = await this.autoGenerateStandardSlots(
+          tx,
+          user.id,
+          created.id,
+          dto.startDate,
+          dto.endDate,
+        );
+        autoStats = { createdSlots: res.created };
+      }
+
       await this.core.log(tx, {
         periodId: created.id,
         action: 'PERIOD_CREATE',
         actorId: user.id,
-        detail: { name: created.name, startDate: created.startDate, endDate: created.endDate, lockAt: created.lockAt },
+        detail: {
+          name: created.name,
+          startDate: created.startDate,
+          endDate: created.endDate,
+          lockAt: created.lockAt,
+          ...autoStats,
+        },
       });
-      return created;
+      return { ...created, ...autoStats };
     });
     this.core.emit('period', row.id);
+    if (dto.copyFromPeriodId || dto.autoGenerateSlots) {
+      this.core.emit('slots', row.id);
+    }
+    return row;
+  }
+
+  /**
+   * Nhân bản trực tiếp một kỳ lịch sang tuần mới:
+   * Tự động tính khoảng ngày tuần tiếp theo (hoặc nhận ngày chỉ định),
+   * sao chép cấu trúc ô trực và tuỳ chọn sao chép cả người trực.
+   */
+  async clonePeriod(user: AccessContext, sourcePeriodId: number, dto: ClonePeriodDto) {
+    const source = await this.core.getPeriod(sourcePeriodId);
+    let startDate = dto.startDate;
+    let endDate = dto.endDate;
+
+    if (!startDate) {
+      const nextStart = addDays(source.endDate, 1);
+      const dow = isoWeekday(nextStart);
+      startDate = dow === 1 ? nextStart : addDays(nextStart, 8 - dow);
+      endDate = addDays(startDate, 6);
+    } else if (!endDate) {
+      endDate = addDays(startDate, 6);
+    }
+
+    assertRange(startDate, endDate);
+    const { year, week } = isoWeekNumber(startDate);
+    const name = dto.name?.trim() || smartPeriodTitle(startDate, endDate);
+    const lockAt = parseInstant(defaultLockAt(startDate), 'Thời điểm chốt lịch');
+
+    const row = await this.db.transaction(async (tx) => {
+      await lockPeriodCalendar(tx);
+      await this.assertNoPeriodOverlap(tx, startDate, endDate);
+
+      const [created] = await tx
+        .insert(dutyPeriods)
+        .values({
+          name,
+          startDate,
+          endDate,
+          lockAt,
+          registrationOpensAt: null,
+          rules: source.rules,
+          note: `Nhân bản từ kỳ "${source.name}"`,
+          status: 'NHAP',
+          createdBy: user.id,
+          updatedBy: user.id,
+        })
+        .returning();
+
+      const copyStats = await this.copyPeriodSlots(
+        tx,
+        user.id,
+        sourcePeriodId,
+        created.id,
+        startDate,
+        endDate,
+        !!dto.copyAssignments,
+      );
+
+      await this.core.log(tx, {
+        periodId: created.id,
+        action: 'PERIOD_CREATE',
+        actorId: user.id,
+        detail: {
+          clonedFrom: { id: sourcePeriodId, name: source.name },
+          name: created.name,
+          startDate: created.startDate,
+          endDate: created.endDate,
+          lockAt: created.lockAt,
+          ...copyStats,
+        },
+      });
+
+      return { ...created, ...copyStats };
+    });
+
+    this.core.emit('period', row.id);
+    this.core.emit('slots', row.id);
     return row;
   }
 

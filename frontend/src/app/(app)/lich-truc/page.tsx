@@ -1,12 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Download, Printer, Settings2, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, Printer, Settings2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AssignDialog, CellDialog, RequestDialog } from "@/components/duty/duty-dialogs";
-import { errorText, KpiTile, PhaseBadge, PhaseBanner, ShiftChip, SourceTag } from "@/components/duty/duty-shared";
+import { AssignDialog, CellDialog, QuickCreateNextPeriodDialog, RequestDialog } from "@/components/duty/duty-dialogs";
+import { CurrentWeekBadge, errorText, KpiTile, PhaseBadge, PhaseBanner, ShiftChip, SourceTag } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, EmptyState, Skeleton } from "@/components/ui/card";
@@ -74,12 +74,35 @@ export default function LichTrucPage() {
   const [assignSlotId, setAssignSlotId] = useState<number | null>(null);
   const [request, setRequest] = useState<{ mode: RequestType; slotId: number } | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
   const canView = can("duty.view");
   const periods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: canView });
   useEffect(() => {
     if (periodId === null && periods.data?.length) setPeriodId(pickDefaultPeriod(periods.data));
   }, [periods.data, periodId]);
+
+  const today = bkkTodayYmd();
+  const sortedPeriods = useMemo(() => periods.data ?? [], [periods.data]);
+  const currentPeriod = useMemo(
+    () => sortedPeriods.find((p) => p.startDate <= today && p.endDate >= today) ?? null,
+    [sortedPeriods, today],
+  );
+  const currentIndex = useMemo(() => sortedPeriods.findIndex((p) => p.id === periodId), [sortedPeriods, periodId]);
+
+  const groupedPeriods = useMemo(() => {
+    const map = new Map<string, typeof sortedPeriods>();
+    for (const p of sortedPeriods) {
+      const [y, m] = p.startDate.split("-");
+      const key = `Tháng ${m}/${y}`;
+      const list = map.get(key) ?? [];
+      list.push(p);
+      map.set(key, list);
+    }
+    return Array.from(map.entries());
+  }, [sortedPeriods]);
+
+  const isViewingCurrent = currentPeriod && periodId === currentPeriod.id;
 
   const grid = useQuery({
     queryKey: DUTY_KEYS.grid(periodId ?? 0),
@@ -114,7 +137,6 @@ export default function LichTrucPage() {
   const myOptMap = useMemo(() => new Map((myOpts.data?.items ?? []).map((i) => [i.slotId, i])), [myOpts.data]);
   const mySlots = useMemo(() => (g?.slots ?? []).filter((s) => g?.viewer.mySlotIds.includes(s.id) && !s.past), [g]);
   const assignSlot = useMemo(() => g?.slots.find((s) => s.id === assignSlotId) ?? null, [g, assignSlotId]);
-  const today = bkkTodayYmd();
 
   const openCell = (roomId: number, date: string) => {
     if (!g) return;
@@ -150,33 +172,105 @@ export default function LichTrucPage() {
         description="Lịch trực theo tuần: phòng khám × ngày × ca. Nhân viên xem và đăng ký ca; quản lý phân công và theo dõi thiếu người."
         actions={
           <div className="flex flex-wrap items-center gap-2 print:hidden">
-            <Select
-              className="h-9 min-w-[16rem]"
-              aria-label="Chọn kỳ lịch"
-              value={periodId ? String(periodId) : ""}
-              onChange={(e) => {
-                setPeriodId(e.target.value ? Number(e.target.value) : null);
-                setRoomFilter("ALL");
-              }}
-            >
-              {(periods.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({fmtDm(p.startDate)}–{fmtDm(p.endDate)})
-                </option>
-              ))}
-            </Select>
+            {/* Thanh điều hướng tuần thông minh */}
+            <div className="flex items-center gap-1 bg-[var(--card)] p-1 rounded-xl border shadow-sm">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={currentIndex < 0 || currentIndex >= sortedPeriods.length - 1}
+                onClick={() => {
+                  if (currentIndex < sortedPeriods.length - 1) {
+                    setPeriodId(sortedPeriods[currentIndex + 1].id);
+                    setRoomFilter("ALL");
+                  }
+                }}
+                title="Tuần trước"
+                className="h-8 px-2"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                <span className="hidden md:inline ml-0.5 text-xs">Trước</span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant={isViewingCurrent ? "default" : "outline"}
+                onClick={() => {
+                  if (currentPeriod) {
+                    setPeriodId(currentPeriod.id);
+                    setRoomFilter("ALL");
+                  }
+                }}
+                disabled={!currentPeriod}
+                className="h-8 px-2.5 text-xs font-semibold"
+                title="Nhảy nhanh về tuần đang diễn ra"
+              >
+                ★ Tuần này
+              </Button>
+
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={currentIndex <= 0}
+                onClick={() => {
+                  if (currentIndex > 0) {
+                    setPeriodId(sortedPeriods[currentIndex - 1].id);
+                    setRoomFilter("ALL");
+                  }
+                }}
+                title="Tuần kế tiếp"
+                className="h-8 px-2"
+              >
+                <span className="hidden md:inline mr-0.5 text-xs">Sau</span>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+
+              <Select
+                className="h-8 min-w-[16rem] text-xs font-medium border-0 bg-transparent shadow-none focus:ring-0"
+                aria-label="Chọn kỳ lịch"
+                value={periodId ? String(periodId) : ""}
+                onChange={(e) => {
+                  setPeriodId(e.target.value ? Number(e.target.value) : null);
+                  setRoomFilter("ALL");
+                }}
+              >
+                {groupedPeriods.map(([groupLabel, groupItems]) => (
+                  <optgroup key={groupLabel} label={`── ${groupLabel} ──`}>
+                    {groupItems.map((p) => {
+                      const isCur = p.startDate <= today && p.endDate >= today;
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({fmtDm(p.startDate)}–{fmtDm(p.endDate)}) {isCur ? "★ [Tuần này]" : ""} [{p.status === "NHAP" ? "Nháp" : p.locked ? "Đã chốt" : "Đã công bố"}]
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
+              </Select>
+            </div>
+
+            {can("duty.period.manage") ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                onClick={() => setQuickCreateOpen(true)}
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1" /> Tạo tuần sau
+              </Button>
+            ) : null}
+
             {g?.viewer.canExport ? (
-              <Button variant="outline" onClick={onExport} disabled={exporting}>
+              <Button variant="outline" size="sm" className="h-9" onClick={onExport} disabled={exporting}>
                 <Download className="h-4 w-4" /> Xuất Excel
               </Button>
             ) : null}
-            <Button variant="outline" onClick={() => window.print()}>
+            <Button variant="outline" size="sm" className="h-9" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> In
             </Button>
             {can("duty.period.manage") ? (
               <Link href="/lich-truc/ky-lich">
-                <Button variant="outline">
-                  <Settings2 className="h-4 w-4" /> Kỳ lịch
+                <Button variant="outline" size="sm" className="h-9">
+                  <Settings2 className="h-4 w-4" /> Quản lý kỳ
                 </Button>
               </Link>
             ) : null}
@@ -453,6 +547,16 @@ export default function LichTrucPage() {
           initialSlotId={request.slotId}
           slotChoices={mySlots.map((s) => ({ id: s.id, label: `${fmtDm(s.dutyDate)} · ${s.roomCode} · ${s.shiftCode} · ${s.roleName}` }))}
           grid={g}
+        />
+      ) : null}
+
+      {quickCreateOpen ? (
+        <QuickCreateNextPeriodDialog
+          onClose={() => setQuickCreateOpen(false)}
+          onCreated={(newId) => {
+            setPeriodId(newId);
+            setQuickCreateOpen(false);
+          }}
         />
       ) : null}
     </>

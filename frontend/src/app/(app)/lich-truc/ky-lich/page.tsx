@@ -1,12 +1,27 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CalendarPlus, Download, Eye, Lock, Pencil, Plus, Send, Trash2, Unlock, Wand2 } from "lucide-react";
+import {
+  CalendarPlus,
+  Copy,
+  Download,
+  Eye,
+  Filter,
+  Lock,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  Sparkles,
+  Trash2,
+  Unlock,
+  Wand2,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useRefreshDuty } from "@/components/duty/duty-dialogs";
+import { ClonePeriodDialog, QuickCreateNextPeriodDialog, useRefreshDuty } from "@/components/duty/duty-dialogs";
 import { DeletePeriodDialog } from "@/components/duty/delete-period-dialog";
-import { errorText, KpiTile, PhaseBadge, ShiftChip } from "@/components/duty/duty-shared";
+import { CurrentWeekBadge, errorText, KpiTile, PhaseBadge, ShiftChip } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, EmptyState, Badge, Skeleton } from "@/components/ui/card";
@@ -20,6 +35,8 @@ import {
   ACTION_LABEL,
   addDaysYmd,
   bkkLocalToIso,
+  bkkTodayYmd,
+  defaultLockAtLocal,
   DUTY_KEYS,
   dutyApi,
   fmtDate,
@@ -27,7 +44,10 @@ import {
   fmtDm,
   hoursText,
   isoToBkkLocal,
+  isoWeekNumber,
+  isoWeekRange,
   nextMondayYmd,
+  smartPeriodTitle,
   weekdayLabel,
   type DutyPeriod,
   type DutyRules,
@@ -52,15 +72,72 @@ const DEFAULT_RULES: DutyRules = {
 /** Mount lại mỗi lần mở (parent đặt key) nên state khởi tạo đúng từ props */
 function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPeriod | null }) {
   const refresh = useRefreshDuty();
-  const start0 = nextMondayYmd();
   const isEdit = !!period;
-  const [name, setName] = useState(period?.name ?? "");
-  const [startDate, setStartDate] = useState(period?.startDate ?? start0);
-  const [endDate, setEndDate] = useState(period?.endDate ?? addDaysYmd(start0, 5));
-  const [lockAt, setLockAt] = useState(period ? isoToBkkLocal(period.lockAt) : `${addDaysYmd(start0, -2)}T17:00`);
+  const today = bkkTodayYmd();
+  const initialYear = Number(today.slice(0, 4));
+
+  const [createMode, setCreateMode] = useState<"week" | "custom">("week");
+  const [selectedYear, setSelectedYear] = useState<number>(initialYear);
+  const [selectedWeek, setSelectedWeek] = useState<number>(() => {
+    const nextMon = nextMondayYmd();
+    return isoWeekNumber(nextMon).week;
+  });
+
+  const nextMon = nextMondayYmd();
+  const defaultRange = useMemo(
+    () => ({
+      startDate: nextMon,
+      endDate: addDaysYmd(nextMon, 6),
+    }),
+    [nextMon],
+  );
+
+  const [name, setName] = useState(period?.name ?? smartPeriodTitle(defaultRange.startDate, defaultRange.endDate));
+  const [startDate, setStartDate] = useState(period?.startDate ?? defaultRange.startDate);
+  const [endDate, setEndDate] = useState(period?.endDate ?? defaultRange.endDate);
+  const [lockAt, setLockAt] = useState(period ? isoToBkkLocal(period.lockAt) : defaultLockAtLocal(defaultRange.startDate));
   const [opensAt, setOpensAt] = useState(isoToBkkLocal(period?.registrationOpensAt));
   const [note, setNote] = useState(period?.note ?? "");
   const [rules, setRules] = useState<DutyRules>(period?.rules ?? DEFAULT_RULES);
+
+  const [autoGenSlots, setAutoGenSlots] = useState(false);
+  const [copyPeriodId, setCopyPeriodId] = useState<string>("");
+  const [copyAssigns, setCopyAssigns] = useState(true);
+
+  const existingPeriods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: !isEdit });
+
+  const weeksOfYear = useMemo(() => {
+    const list: Array<{ week: number; startDate: string; endDate: string; label: string }> = [];
+    for (let w = 1; w <= 52; w++) {
+      const range = isoWeekRange(selectedYear, w);
+      const [, m] = range.startDate.split("-").map(Number);
+      list.push({
+        week: w,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        label: `Tuần ${w} (${fmtDm(range.startDate)} – ${fmtDm(range.endDate)}) · Tháng ${String(m).padStart(2, "0")}`,
+      });
+    }
+    return list;
+  }, [selectedYear]);
+
+  const onSelectWeek = (w: number) => {
+    setSelectedWeek(w);
+    const range = isoWeekRange(selectedYear, w);
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+    setName(smartPeriodTitle(range.startDate, range.endDate));
+    setLockAt(defaultLockAtLocal(range.startDate));
+  };
+
+  const onSelectYear = (y: number) => {
+    setSelectedYear(y);
+    const range = isoWeekRange(y, selectedWeek);
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+    setName(smartPeriodTitle(range.startDate, range.endDate));
+    setLockAt(defaultLockAtLocal(range.startDate));
+  };
 
   const save = useMutation({
     mutationFn: () => {
@@ -72,11 +149,14 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
         registrationOpensAt: opensAt ? bkkLocalToIso(opensAt) : null,
         note,
         rules,
+        autoGenerateSlots: !isEdit && autoGenSlots && !copyPeriodId,
+        copyFromPeriodId: !isEdit && copyPeriodId ? Number(copyPeriodId) : undefined,
+        copyAssignments: !isEdit && !!copyPeriodId && copyAssigns,
       };
       return period ? dutyApi.updatePeriod(period.id, body) : dutyApi.createPeriod(body);
     },
-    onSuccess: () => {
-      toast.success(isEdit ? "Đã lưu kỳ lịch" : "Đã tạo kỳ lịch nháp");
+    onSuccess: (res) => {
+      toast.success(isEdit ? "Đã lưu kỳ lịch" : `Đã tạo kỳ lịch "${res?.name || name}" thành công!`);
       refresh();
       onClose();
     },
@@ -91,8 +171,8 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
       open
       onClose={onClose}
       size="lg"
-      title={isEdit ? "Sửa kỳ lịch" : "Tạo kỳ lịch trực"}
-      description="Kỳ lịch thường là một tuần (Thứ 2 → Thứ 7). Tạo xong, sinh ô trực và phân công rồi mới công bố."
+      title={isEdit ? "Sửa cấu hình kỳ lịch" : "Tạo kỳ lịch trực mới"}
+      description="Quản lý thời gian, mốc chốt và thiết lập tự động hóa phân công trực tuần."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
@@ -115,23 +195,78 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
             Kỳ lịch đã chốt: chỉ sửa được tên và ghi chú. Muốn đổi thời gian hay ràng buộc, hãy mở chốt trước.
           </div>
         ) : null}
+
+        {/* Chế độ tạo (chỉ khi tạo mới) */}
+        {!isEdit ? (
+          <div className="flex items-center gap-2 rounded-xl bg-[var(--muted)]/50 p-1 border">
+            <button
+              type="button"
+              onClick={() => setCreateMode("week")}
+              className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-all ${
+                createMode === "week"
+                  ? "bg-white shadow text-teal-700 dark:bg-slate-800 dark:text-teal-300"
+                  : "text-[var(--muted-foreground)] hover:text-foreground"
+              }`}
+            >
+              📅 Chọn theo Tuần trong Năm (ISO Week)
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateMode("custom")}
+              className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-all ${
+                createMode === "custom"
+                  ? "bg-white shadow text-teal-700 dark:bg-slate-800 dark:text-teal-300"
+                  : "text-[var(--muted-foreground)] hover:text-foreground"
+              }`}
+            >
+              🛠️ Tùy chỉnh khoảng ngày
+            </button>
+          </div>
+        ) : null}
+
+        {!isEdit && createMode === "week" ? (
+          <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-3.5 space-y-3 dark:border-teal-900 dark:bg-teal-950/20">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="w-year" className="text-xs">Năm</Label>
+                <Select id="w-year" value={String(selectedYear)} onChange={(e) => onSelectYear(Number(e.target.value))}>
+                  {[initialYear - 1, initialYear, initialYear + 1].map((y) => (
+                    <option key={y} value={y}>Năm {y}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="col-span-2 space-y-1">
+                <Label htmlFor="w-week" className="text-xs">Chọn tuần trong năm</Label>
+                <Select id="w-week" value={String(selectedWeek)} onChange={(e) => onSelectWeek(Number(e.target.value))}>
+                  {weeksOfYear.map((w) => (
+                    <option key={w.week} value={w.week}>{w.label}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <p className="text-[11px] text-teal-800 dark:text-teal-300">
+              ✓ Đã tự động tính Thứ 2 ({fmtDate(startDate)}) đến Chủ Nhật ({fmtDate(endDate)}) và mốc chốt 17h Thứ Sáu tuần trước.
+            </p>
+          </div>
+        ) : null}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="p-name">Tên kỳ lịch *</Label>
-            <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ví dụ: Lịch trực tuần 12/10 – 17/10/2026" />
+            <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ví dụ: Tuần 42 (12/10 – 18/10/2026) - Tháng 10" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="p-start">Từ ngày</Label>
+            <Label htmlFor="p-start">Từ ngày (Thứ 2)</Label>
             <Input id="p-start" type="date" value={startDate} disabled={locked || (isEdit && period?.status !== "NHAP")} onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="p-end">Đến ngày</Label>
+            <Label htmlFor="p-end">Đến ngày (Chủ Nhật)</Label>
             <Input id="p-end" type="date" value={endDate} disabled={locked || (isEdit && period?.status !== "NHAP")} onChange={(e) => setEndDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="p-lock">Mốc chốt lịch *</Label>
             <Input id="p-lock" type="datetime-local" value={lockAt} disabled={locked} onChange={(e) => setLockAt(e.target.value)} />
-            <p className="text-[11px] text-[var(--muted-foreground)]">Sau mốc này lịch tự khoá. Muốn đổi sau đó phải qua yêu cầu ngoại lệ.</p>
+            <p className="text-[11px] text-[var(--muted-foreground)]">Sau mốc này lịch tự khoá. Thay đổi cần qua yêu cầu ngoại lệ.</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="p-open">Mở đăng ký tự nguyện</Label>
@@ -139,6 +274,54 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
             <p className="text-[11px] text-[var(--muted-foreground)]">Để trống: nhân viên đăng ký ngay sau khi công bố.</p>
           </div>
         </div>
+
+        {/* Khối tự động hóa sinh ô trực khi tạo mới */}
+        {!isEdit ? (
+          <div className="rounded-xl border p-3.5 space-y-3 bg-[var(--card)]">
+            <div className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              Tự động hóa ô trực & phân công
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <div>
+                  <div className="font-medium">Sao chép cấu trúc từ kỳ trước</div>
+                  <div className="text-xs text-[var(--muted-foreground)]">Lấy các ô trực từ một kỳ đã có sang kỳ này</div>
+                </div>
+                <Select
+                  className="w-48 text-xs"
+                  value={copyPeriodId}
+                  onChange={(e) => {
+                    setCopyPeriodId(e.target.value);
+                    if (e.target.value) setAutoGenSlots(false);
+                  }}
+                >
+                  <option value="">— Không sao chép —</option>
+                  {(existingPeriods.data ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </Select>
+              </div>
+
+              {copyPeriodId ? (
+                <div className="pl-3 pt-1 border-l-2 border-teal-500">
+                  <ToggleRow
+                    label="Sao chép cả danh sách người trực từ kỳ đó"
+                    checked={copyAssigns}
+                    onChange={setCopyAssigns}
+                  />
+                </div>
+              ) : null}
+
+              {!copyPeriodId ? (
+                <ToggleRow
+                  label="Tự động sinh toàn bộ ô trực từ danh mục (mọi phòng và ca active)"
+                  checked={autoGenSlots}
+                  onChange={setAutoGenSlots}
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <div>
           <h4 className="mb-2 text-sm font-semibold">Ràng buộc xếp trực</h4>
@@ -384,6 +567,8 @@ export default function KyLichPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<DutyPeriod | null>(null);
   const [creating, setCreating] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [clonePeriod, setClonePeriod] = useState<DutyPeriod | null>(null);
   const [generating, setGenerating] = useState(false);
   const [addingSlot, setAddingSlot] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
@@ -396,11 +581,64 @@ export default function KyLichPage() {
   const [deleteSlot, setDeleteSlot] = useState<GridSlot | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  // Bộ lọc lịch sử thông minh
+  const [yearFilter, setYearFilter] = useState<string>("ALL");
+  const [monthFilter, setMonthFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [search, setSearch] = useState<string>("");
+
   const canManage = can("duty.period.manage");
   /** Giờ trực tổng hợp và nhật ký chỉ dành cho người quản lý lịch */
   const canOversee = can("duty.manage") || can("duty.manage-all");
   const periods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: can("duty.view") });
-  const selected = useMemo(() => (periods.data ?? []).find((p) => p.id === selectedId) ?? periods.data?.[0] ?? null, [periods.data, selectedId]);
+  const allPeriods = useMemo(() => periods.data ?? [], [periods.data]);
+  const today = bkkTodayYmd();
+
+  const availableYears = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of allPeriods) s.add(p.startDate.slice(0, 4));
+    const currentYear = today.slice(0, 4);
+    if (!s.has(currentYear)) s.add(currentYear);
+    return Array.from(s).sort((a, b) => b.localeCompare(a));
+  }, [allPeriods, today]);
+
+  const filteredPeriods = useMemo(() => {
+    return allPeriods.filter((p) => {
+      const pYear = p.startDate.slice(0, 4);
+      const pMonth = String(Number(p.startDate.slice(5, 7)));
+      const isCur = p.startDate <= today && p.endDate >= today;
+
+      if (yearFilter !== "ALL" && pYear !== yearFilter) return false;
+      if (monthFilter !== "ALL" && pMonth !== monthFilter) return false;
+      if (statusFilter === "CURRENT" && !isCur) return false;
+      if (statusFilter === "NHAP" && p.status !== "NHAP") return false;
+      if (statusFilter === "CONG_BO" && (p.status !== "CONG_BO" || p.locked)) return false;
+      if (statusFilter === "DA_CHOT" && !p.locked) return false;
+
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const matchName = p.name.toLowerCase().includes(q);
+        const matchDates = `${fmtDate(p.startDate)} ${fmtDate(p.endDate)}`.includes(q);
+        const matchWeek = p.isoWeek ? `tuần ${p.isoWeek}`.includes(q) : false;
+        if (!matchName && !matchDates && !matchWeek) return false;
+      }
+      return true;
+    });
+  }, [allPeriods, yearFilter, monthFilter, statusFilter, search, today]);
+
+  const currentCount = useMemo(() => allPeriods.filter((p) => p.startDate <= today && p.endDate >= today).length, [allPeriods, today]);
+  const draftCount = useMemo(() => allPeriods.filter((p) => p.status === "NHAP").length, [allPeriods]);
+  const publishedCount = useMemo(() => allPeriods.filter((p) => p.status === "CONG_BO" && !p.locked).length, [allPeriods]);
+  const lockedCount = useMemo(() => allPeriods.filter((p) => p.locked).length, [allPeriods]);
+
+  const selected = useMemo(() => {
+    if (selectedId) {
+      const found = allPeriods.find((p) => p.id === selectedId);
+      if (found) return found;
+    }
+    return filteredPeriods[0] ?? allPeriods[0] ?? null;
+  }, [allPeriods, filteredPeriods, selectedId]);
+
   const grid = useQuery({ queryKey: DUTY_KEYS.grid(selected?.id ?? 0), queryFn: () => dutyApi.grid(selected!.id), enabled: !!selected });
   const summary = useQuery({ queryKey: DUTY_KEYS.summary(selected?.id ?? 0), queryFn: () => dutyApi.summary(selected!.id), enabled: !!selected && canOversee && tab === "hours" });
   const logs = useQuery({ queryKey: DUTY_KEYS.logs(selected?.id ?? 0), queryFn: () => dutyApi.logs(selected!.id), enabled: !!selected && canOversee && tab === "logs" });
@@ -437,20 +675,143 @@ export default function KyLichPage() {
         description="Tạo kỳ lịch tuần, sinh ô trực, phân công, công bố và chốt lịch. Theo dõi giờ trực công bằng và nhật ký thay đổi."
         actions={
           canManage ? (
-            <Button onClick={() => setCreating(true)}>
-              <CalendarPlus className="h-4 w-4" /> Tạo kỳ lịch
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => setQuickCreateOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+              >
+                <Sparkles className="h-4 w-4" /> ⚡ Tạo tuần kế tiếp (1-Click)
+              </Button>
+              <Button onClick={() => setCreating(true)} variant="outline">
+                <CalendarPlus className="h-4 w-4" /> Tùy chỉnh kỳ lịch
+              </Button>
+            </div>
           ) : undefined
         }
       />
 
       {periods.isLoading ? <Skeleton className="h-40 w-full" /> : null}
       {!periods.isLoading && !periods.data?.length ? (
-        <EmptyState title="Chưa có kỳ lịch nào" description="Tạo kỳ lịch đầu tiên để bắt đầu." action={canManage ? <Button onClick={() => setCreating(true)}>Tạo kỳ lịch</Button> : undefined} />
+        <EmptyState
+          title="Chưa có kỳ lịch nào"
+          description="Tạo kỳ lịch đầu tiên để bắt đầu."
+          action={
+            canManage ? (
+              <Button onClick={() => setQuickCreateOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Sparkles className="h-4 w-4" /> Tạo kỳ lịch tuần đầu tiên
+              </Button>
+            ) : undefined
+          }
+        />
       ) : null}
 
-      {periods.data?.length ? (
+      {allPeriods.length ? (
         <Card className="mb-4">
+          <CardHeader
+            title={
+              <div className="flex items-center gap-2 text-base">
+                <span>Danh mục kỳ lịch trực</span>
+                <Badge tone="muted">{filteredPeriods.length}/{allPeriods.length} kỳ</Badge>
+              </div>
+            }
+            description="Tìm kiếm, lọc theo Năm / Tháng / Trạng thái và xem tiến độ phân công của từng tuần."
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+                  <Input
+                    className="h-8 pl-8 w-44 text-xs"
+                    placeholder="Tìm tên, tuần..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <Select
+                  className="h-8 text-xs w-32"
+                  value={yearFilter}
+                  onChange={(e) => setYearFilter(e.target.value)}
+                  aria-label="Lọc theo năm"
+                >
+                  <option value="ALL">Tất cả năm</option>
+                  {availableYears.map((y) => (
+                    <option key={y} value={y}>Năm {y}</option>
+                  ))}
+                </Select>
+                <Select
+                  className="h-8 text-xs w-32"
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value)}
+                  aria-label="Lọc theo tháng"
+                >
+                  <option value="ALL">Tất cả tháng</option>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                    <option key={m} value={String(m)}>Tháng {m}</option>
+                  ))}
+                </Select>
+              </div>
+            }
+          />
+
+          {/* Thanh phân loại trạng thái */}
+          <div className="border-t px-4 py-2 bg-[var(--muted)]/20 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold mr-1 text-[var(--muted-foreground)]">Trạng thái:</span>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("ALL")}
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                statusFilter === "ALL"
+                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
+                  : "hover:bg-[var(--accent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              Tất cả ({allPeriods.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("CURRENT")}
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                statusFilter === "CURRENT"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "hover:bg-[var(--accent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              Đang diễn ra ({currentCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("CONG_BO")}
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                statusFilter === "CONG_BO"
+                  ? "bg-teal-600 text-white shadow-sm"
+                  : "hover:bg-[var(--accent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              Đã công bố ({publishedCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("DA_CHOT")}
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                statusFilter === "DA_CHOT"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "hover:bg-[var(--accent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              Đã chốt ({lockedCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("NHAP")}
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                statusFilter === "NHAP"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "hover:bg-[var(--accent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              Bản nháp ({draftCount})
+            </button>
+          </div>
+
           <CardBody className="p-0">
             <TableWrap>
               <table className="w-full text-sm">
@@ -459,36 +820,98 @@ export default function KyLichPage() {
                     <Th>Kỳ lịch</Th>
                     <Th>Thời gian</Th>
                     <Th>Trạng thái</Th>
-                    <Th>Ô trực</Th>
+                    <Th>Tiến độ xếp trực</Th>
                     <Th>Mốc chốt</Th>
                     <Th className="text-right">Thao tác</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {periods.data.map((p) => (
-                    <Tr key={p.id} onClick={() => setSelectedId(p.id)} className={selected?.id === p.id ? "bg-[var(--accent)]" : ""}>
-                      <Td className="font-medium">{p.name}</Td>
-                      <Td className="whitespace-nowrap">{fmtDate(p.startDate)} – {fmtDate(p.endDate)}</Td>
-                      <Td><PhaseBadge period={p} /></Td>
-                      <Td className="whitespace-nowrap">
-                        {p.filledCount ?? 0}/{p.requiredCount ?? 0}
-                        {p.requiredCount && p.filledCount! < p.requiredCount ? <Badge tone="warning" className="ml-2">thiếu</Badge> : null}
-                      </Td>
-                      <Td className="whitespace-nowrap text-xs">{fmtDateTime(p.lockedAt ?? p.lockAt)}</Td>
-                      <Td className="text-right">
-                        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                          <Button size="sm" variant="ghost" onClick={() => setSelectedId(p.id)} title="Xem">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {canManage && p.status === "NHAP" ? (
-                            <Button size="sm" variant="ghost" onClick={() => setEditing(p)} title="Sửa">
-                              <Pencil className="h-4 w-4" />
+                  {filteredPeriods.map((p) => {
+                    const isCur = p.startDate <= today && p.endDate >= today;
+                    const percent = p.requiredCount ? Math.min(100, Math.round(((p.filledCount ?? 0) / p.requiredCount) * 100)) : 0;
+                    const isFull = p.requiredCount && p.filledCount! >= p.requiredCount;
+                    const weekNum = p.isoWeek || isoWeekNumber(p.startDate).week;
+
+                    return (
+                      <Tr
+                        key={p.id}
+                        onClick={() => setSelectedId(p.id)}
+                        className={`transition-colors cursor-pointer ${
+                          selected?.id === p.id
+                            ? "bg-[var(--accent)]/90 ring-1 ring-[var(--primary)]/30"
+                            : isCur
+                              ? "bg-emerald-50/40 dark:bg-emerald-950/20 border-l-4 border-l-emerald-600"
+                              : "hover:bg-[var(--accent)]/50"
+                        }`}
+                      >
+                        <Td className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-[13px]">{p.name}</span>
+                            {isCur ? <CurrentWeekBadge /> : null}
+                            <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-[var(--muted)] text-[var(--muted-foreground)]">
+                              T{weekNum}
+                            </span>
+                          </div>
+                        </Td>
+                        <Td className="whitespace-nowrap">
+                          <div className="text-xs">
+                            <span className="font-medium">{fmtDate(p.startDate)}</span> – <span className="font-medium">{fmtDate(p.endDate)}</span>
+                          </div>
+                          <div className="text-[10.5px] text-[var(--muted-foreground)]">
+                            7 ngày (Thứ 2 → Chủ nhật)
+                          </div>
+                        </Td>
+                        <Td><PhaseBadge period={p} /></Td>
+                        <Td className="whitespace-nowrap">
+                          <div className="w-32 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="tabular-nums font-medium">{p.filledCount ?? 0}/{p.requiredCount ?? 0}</span>
+                              <span className={`text-[11px] font-bold ${isFull ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                {percent}%
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full transition-all duration-300 ${isFull ? "bg-emerald-500" : "bg-amber-500"}`}
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        </Td>
+                        <Td className="whitespace-nowrap text-xs">{fmtDateTime(p.lockedAt ?? p.lockAt)}</Td>
+                        <Td className="text-right">
+                          <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                            <Button size="sm" variant="ghost" onClick={() => setSelectedId(p.id)} title="Xem chi tiết">
+                              <Eye className="h-4 w-4" />
                             </Button>
-                          ) : null}
-                        </div>
-                      </Td>
-                    </Tr>
-                  ))}
+                            {canManage ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setClonePeriod(p)}
+                                title="Nhân bản sang tuần mới"
+                                className="text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40"
+                              >
+                                <Copy className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                            {canManage && p.status === "NHAP" ? (
+                              <Button size="sm" variant="ghost" onClick={() => setEditing(p)} title="Sửa cấu hình">
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        </Td>
+                      </Tr>
+                    );
+                  })}
+                  {filteredPeriods.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">
+                        Không tìm thấy kỳ lịch nào phù hợp với bộ lọc hiện tại.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </TableWrap>
@@ -583,6 +1006,25 @@ export default function KyLichPage() {
 
       {creating || editing ? (
         <PeriodDialog key={editing?.id ?? "new"} onClose={() => { setCreating(false); setEditing(null); }} period={editing} />
+      ) : null}
+      {quickCreateOpen ? (
+        <QuickCreateNextPeriodDialog
+          onClose={() => setQuickCreateOpen(false)}
+          onCreated={(newId) => {
+            setSelectedId(newId);
+            setQuickCreateOpen(false);
+          }}
+        />
+      ) : null}
+      {clonePeriod ? (
+        <ClonePeriodDialog
+          period={clonePeriod}
+          onClose={() => setClonePeriod(null)}
+          onCloned={(newId) => {
+            setSelectedId(newId);
+            setClonePeriod(null);
+          }}
+        />
       ) : null}
       {selected && generating ? <GenerateDialog open={generating} onClose={() => setGenerating(false)} periodId={selected.id} /> : null}
       {selected && addingSlot ? <SlotDialog open={addingSlot} onClose={() => setAddingSlot(false)} period={selected} /> : null}

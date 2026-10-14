@@ -7,12 +7,16 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_DUTY_RULES,
   addDays,
+  defaultLockAt,
   evaluateCandidate,
   isNightWindow,
-  rangesOverlap,
   isoWeekday,
+  isoWeekNumber,
+  isoWeekRange,
   normalizeRules,
+  rangesOverlap,
   shiftInterval,
+  smartPeriodTitle,
   weekStart,
   type EngineDuty,
   type EngineSlot,
@@ -239,4 +243,21 @@ test('kỳ lịch: hai khoảng ngày giao nhau (kể cả chung một ngày) th
   assert.equal(rangesOverlap('2026-10-05', '2026-10-11', '2026-10-12', '2026-10-18'), false);
   assert.equal(rangesOverlap('2026-10-05', '2026-10-31', '2026-10-10', '2026-10-12'), true);
   assert.equal(rangesOverlap('2026-10-10', '2026-10-12', '2026-10-05', '2026-10-31'), true);
+});
+
+test('tính số tuần ISO và khoảng ngày tuần tự động', () => {
+  assert.deepEqual(isoWeekNumber('2026-10-12'), { year: 2026, week: 42 });
+  assert.deepEqual(isoWeekNumber('2026-10-18'), { year: 2026, week: 42 });
+  assert.deepEqual(isoWeekNumber('2026-10-19'), { year: 2026, week: 43 });
+
+  const r42 = isoWeekRange(2026, 42);
+  assert.equal(r42.startDate, '2026-10-12');
+  assert.equal(r42.endDate, '2026-10-18');
+
+  const r43 = isoWeekRange(2026, 43);
+  assert.equal(r43.startDate, '2026-10-19');
+  assert.equal(r43.endDate, '2026-10-25');
+
+  assert.equal(smartPeriodTitle('2026-10-19', '2026-10-25'), 'Tuần 43 (19/10 – 25/10/2026) - Tháng 10');
+  assert.equal(defaultLockAt('2026-10-19'), '2026-10-16T17:00:00+07:00');
 });

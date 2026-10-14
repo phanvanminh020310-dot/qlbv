@@ -257,6 +257,24 @@ export class PeriodDto {
   @ValidateNested()
   @Type(() => RulesDto)
   rules?: RulesDto;
+
+  @ApiPropertyOptional({ description: 'Tự động sinh các ô trực từ danh mục đang mở' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  autoGenerateSlots?: boolean;
+
+  @ApiPropertyOptional({ description: 'Sao chép ô trực từ kỳ trước (mã kỳ ID)' })
+  @IsOptional()
+  @Transform(toIntOrUndef)
+  @IsInt()
+  copyFromPeriodId?: number;
+
+  @ApiPropertyOptional({ description: 'Sao chép cả phân công nhân viên từ kỳ trước' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  copyAssignments?: boolean;
 }
 export class UpdatePeriodDto extends PartialType(PeriodDto) {}
 
@@ -270,6 +288,55 @@ export class PeriodQueryDto {
   @IsOptional()
   @Matches(YMD)
   to?: string;
+
+  @ApiPropertyOptional({ description: 'Lọc theo năm (ví dụ: 2026)' })
+  @IsOptional()
+  @Transform(toIntOrUndef)
+  @IsInt()
+  year?: number;
+
+  @ApiPropertyOptional({ description: 'Lọc theo tháng (1–12)' })
+  @IsOptional()
+  @Transform(toIntOrUndef)
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  month?: number;
+
+  @ApiPropertyOptional({ description: 'Lọc theo trạng thái: NHAP, CONG_BO, DA_CHOT, CURRENT' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Tìm kiếm theo tên kỳ lịch' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
+
+export class ClonePeriodDto {
+  @ApiPropertyOptional({ example: '2026-10-19', description: 'Ngày bắt đầu kỳ mới (mặc định Thứ Hai tuần kế tiếp)' })
+  @IsOptional()
+  @Matches(YMD)
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-10-25', description: 'Ngày kết thúc kỳ mới (mặc định Chủ Nhật)' })
+  @IsOptional()
+  @Matches(YMD)
+  endDate?: string;
+
+  @ApiPropertyOptional({ description: 'Tên kỳ mới (để trống sẽ tự sinh theo chuẩn ISO)' })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(160)
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Sao chép cả danh sách phân công nhân viên' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  copyAssignments?: boolean;
 }
 
 export class PublishDto {

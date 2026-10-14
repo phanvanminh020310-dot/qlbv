@@ -7,6 +7,7 @@ import {
   AbsenceQueryDto,
   AssignDto,
   CandidateQueryDto,
+  ClonePeriodDto,
   ForceDto,
   GenerateSlotsDto,
   PeriodDto,
@@ -75,11 +76,30 @@ export class DutyController {
     return this.service.listPeriods(user, q);
   }
 
+  @Get('periods/suggest-next')
+  @RequirePermissions('duty.view')
+  @ApiOperation({ summary: 'Gợi ý thông số tạo tuần tiếp theo (tự động tính tuần ISO, ngày, mốc chốt)' })
+  suggestNextPeriod() {
+    return this.service.suggestNextPeriod();
+  }
+
   @Post('periods')
   @RequirePermissions('duty.period.manage')
   @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_period', description: 'Tạo kỳ lịch trực' })
   createPeriod(@CurrentUser() user: AccessContext, @Body() dto: PeriodDto) {
     return this.service.createPeriod(user, dto);
+  }
+
+  @Post('periods/:id/clone')
+  @RequirePermissions('duty.period.manage')
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_period', description: 'Nhân bản kỳ lịch sang tuần mới' })
+  @ApiOperation({ summary: 'Sao chép cấu trúc ô trực (và phân công) sang tuần tiếp theo' })
+  clonePeriod(
+    @CurrentUser() user: AccessContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ClonePeriodDto,
+  ) {
+    return this.service.clonePeriod(user, id, dto);
   }
 
   @Get('periods/:id')
