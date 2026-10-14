@@ -252,10 +252,10 @@ export default function LichTrucPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                className="h-9 border-emerald-400 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 font-semibold shadow-xs dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
                 onClick={() => setQuickCreateOpen(true)}
               >
-                <Sparkles className="h-3.5 w-3.5 mr-1" /> Tạo tuần sau
+                <Sparkles className="h-4 w-4 mr-1 text-emerald-600 dark:text-emerald-400" /> Tạo tuần tiếp theo
               </Button>
             ) : null}
 
@@ -296,9 +296,17 @@ export default function LichTrucPage() {
           description={can("duty.period.manage") ? "Tạo kỳ lịch tuần đầu tiên để bắt đầu lập lịch trực." : "Lịch trực sẽ hiển thị khi kỳ lịch được công bố."}
           action={
             can("duty.period.manage") ? (
-              <Link href="/lich-truc/ky-lich">
-                <Button>Tạo kỳ lịch</Button>
-              </Link>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  onClick={() => setQuickCreateOpen(true)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                >
+                  <Sparkles className="h-4 w-4 mr-1" /> Tạo tuần tiếp theo
+                </Button>
+                <Link href="/lich-truc/ky-lich">
+                  <Button variant="outline">Quản lý kỳ lịch</Button>
+                </Link>
+              </div>
             ) : undefined
           }
         />

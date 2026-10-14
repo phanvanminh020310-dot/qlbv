@@ -678,9 +678,9 @@ export default function KyLichPage() {
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 onClick={() => setQuickCreateOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
               >
-                <Sparkles className="h-4 w-4" /> ⚡ Tạo tuần kế tiếp (1-Click)
+                <Sparkles className="h-4 w-4 mr-1" /> Tạo tuần tiếp theo
               </Button>
               <Button onClick={() => setCreating(true)} variant="outline">
                 <CalendarPlus className="h-4 w-4" /> Tùy chỉnh kỳ lịch
