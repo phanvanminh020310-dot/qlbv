@@ -380,7 +380,7 @@ export class DutyService {
             slotId: targetSlotId,
             userId: a.userId,
             source: 'PHAN_CONG',
-            assignedBy: actorUserId,
+            createdBy: actorUserId,
             note: a.note ? `Sao chép: ${a.note}` : 'Sao chép từ tuần trước',
           })
           .onConflictDoNothing()
