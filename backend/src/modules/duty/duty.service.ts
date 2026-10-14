@@ -360,7 +360,14 @@ export class DutyService {
         .from(dutyAssignments)
         .where(inArray(dutyAssignments.slotId, oldSlotIds));
 
-      const activeUsers = new Set((await tx.select({ id: users.id }).from(users).where(eq(users.status, 'ACTIVE'))).map((u) => u.id));
+      const activeUsers = new Set(
+        (
+          await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(and(eq(users.active, true), isNull(users.deletedAt)))
+        ).map((u) => u.id),
+      );
 
       for (const a of oldAssignments) {
         if (!activeUsers.has(a.userId)) continue;
