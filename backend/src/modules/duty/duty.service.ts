@@ -656,9 +656,9 @@ export class DutyService {
       .innerJoin(users, eq(users.id, dutyAssignments.userId))
       .where(eq(dutySlots.periodId, id));
     const past = duties.filter((d) => d.dutyDate <= today).length;
-    if (past > 0 && !dto.force) {
+    if (past > 0) {
       throw new ConflictException(
-        `Kỳ lịch đã có ${past} ca trực đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ trực. Hãy bật xác nhận cưỡng chế xoá nếu muốn xoá để thử nghiệm.`,
+        `Kỳ lịch đã có ${past} ca trực đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ trực. Hãy sửa từng ô thay vì xoá cả kỳ.`,
       );
     }
     const [{ slotCount }] = await this.db.db

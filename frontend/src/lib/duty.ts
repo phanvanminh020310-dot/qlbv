@@ -376,7 +376,7 @@ export const dutyApi = {
   clonePeriod: (id: number, body?: { startDate?: string; endDate?: string; name?: string; copyAssignments?: boolean }) =>
     post<DutyPeriod & { copiedSlots?: number; copiedAssignments?: number }>(`/duty/periods/${id}/clone`, body),
   updatePeriod: (id: number, body: Json) => put<DutyPeriod>(`/duty/periods/${id}`, body),
-  deletePeriod: (id: number, body?: { reason?: string; confirmName?: string; force?: boolean }) =>
+  deletePeriod: (id: number, body?: { reason?: string; confirmName?: string }) =>
     post<{ ok: boolean; notified: number }>(`/duty/periods/${id}/delete`, body ?? {}),
   publish: (id: number, force = false) => post<{ ok: boolean; missing: number; notified: number }>(`/duty/periods/${id}/publish`, { force }),
   lock: (id: number) => post<{ ok: boolean }>(`/duty/periods/${id}/lock`),

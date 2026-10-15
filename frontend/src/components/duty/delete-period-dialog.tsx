@@ -2,14 +2,13 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Trash2 } from "lucide-react";
-import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { DUTY_KEYS, dutyApi, fmtDate, type DutyPeriod } from "@/lib/duty";
 import { errorText } from "./duty-shared";
 
-/** Xoá cả kỳ lịch: Chỉ cần bấm xác nhận, không bắt buộc gõ lại tên kỳ. */
+/** Xoá cả kỳ lịch: Hộp thoại xác nhận xoá nhanh, không cần gõ lại tên kỳ. */
 export function DeletePeriodDialog({
   period,
   onClose,
@@ -20,7 +19,6 @@ export function DeletePeriodDialog({
   onDeleted: () => void;
 }) {
   const qc = useQueryClient();
-  const [force, setForce] = useState(true);
   const published = period.status !== "NHAP";
 
   const mut = useMutation({
@@ -28,7 +26,6 @@ export function DeletePeriodDialog({
       dutyApi.deletePeriod(period.id, {
         reason: "Xoá kỳ lịch trực",
         confirmName: period.name,
-        force,
       }),
     onSuccess: (r) => {
       toast.success(r.notified ? `Đã xoá kỳ lịch và báo ${r.notified} nhân viên liên quan` : "Đã xoá kỳ lịch thành công");
@@ -79,21 +76,10 @@ export function DeletePeriodDialog({
                 <li>Kỳ nháp chưa công bố nên nhân viên không nhận thông báo.</li>
               )}
               <li>Nhật ký thao tác được lưu trữ lại để đối soát hệ thống.</li>
+              <li>Không xoá được nếu đã có ca trực đã diễn ra hoặc đang diễn ra.</li>
             </ul>
           </div>
         </div>
-
-        <label className="flex items-center gap-2.5 rounded-lg border border-dashed border-rose-300 bg-rose-50/50 p-2.5 text-xs text-rose-900 dark:border-rose-800 dark:bg-rose-950/20 dark:text-rose-200 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={force}
-            onChange={(e) => setForce(e.target.checked)}
-            className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500"
-          />
-          <span className="font-medium">
-            Cho phép xoá kể cả khi kỳ lịch đã chốt hoặc đang trong tuần trực (phục vụ kiểm thử / cài đặt lại)
-          </span>
-        </label>
       </div>
     </Dialog>
   );

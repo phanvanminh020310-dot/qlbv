@@ -679,10 +679,4 @@ export class DeletePeriodDto {
   @IsString()
   @MaxLength(200)
   confirmName?: string;
-
-  @ApiPropertyOptional({ description: 'Cưỡng chế xoá kể cả khi đã có ca trực diễn ra (chỉ dành cho quản trị viên)' })
-  @IsOptional()
-  @Transform(toBoolean)
-  @IsBoolean()
-  force?: boolean;
 }
