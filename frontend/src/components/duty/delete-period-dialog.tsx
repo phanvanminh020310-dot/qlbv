@@ -1,16 +1,15 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Input, Label, Textarea } from "@/components/ui/input";
 import { DUTY_KEYS, dutyApi, fmtDate, type DutyPeriod } from "@/lib/duty";
 import { errorText } from "./duty-shared";
 
-/** Xoá cả kỳ lịch: phải có lý do và gõ lại đúng tên kỳ. Máy chủ vẫn kiểm tra lại mọi điều kiện. */
+/** Xoá cả kỳ lịch: Chỉ cần bấm xác nhận, không bắt buộc gõ lại tên kỳ. */
 export function DeletePeriodDialog({
   period,
   onClose,
@@ -21,16 +20,18 @@ export function DeletePeriodDialog({
   onDeleted: () => void;
 }) {
   const qc = useQueryClient();
-  const [reason, setReason] = useState("");
-  const [confirmName, setConfirmName] = useState("");
+  const [force, setForce] = useState(true);
   const published = period.status !== "NHAP";
-  const reasonOk = reason.trim().length >= 5;
-  const nameOk = confirmName.trim() === period.name.trim();
 
   const mut = useMutation({
-    mutationFn: () => dutyApi.deletePeriod(period.id, { reason: reason.trim(), confirmName: confirmName.trim() }),
+    mutationFn: () =>
+      dutyApi.deletePeriod(period.id, {
+        reason: "Xoá kỳ lịch trực",
+        confirmName: period.name,
+        force,
+      }),
     onSuccess: (r) => {
-      toast.success(r.notified ? `Đã xoá kỳ lịch và báo ${r.notified} nhân viên liên quan` : "Đã xoá kỳ lịch");
+      toast.success(r.notified ? `Đã xoá kỳ lịch và báo ${r.notified} nhân viên liên quan` : "Đã xoá kỳ lịch thành công");
       qc.invalidateQueries({ queryKey: DUTY_KEYS.periods });
       onDeleted();
     },
@@ -41,63 +42,58 @@ export function DeletePeriodDialog({
     <Dialog
       open
       onClose={onClose}
-      title="Xoá cả kỳ lịch"
+      title="Xác nhận xoá kỳ lịch trực"
       description={`${period.name} · ${fmtDate(period.startDate)} – ${fmtDate(period.endDate)}`}
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={mut.isPending}>
-            Huỷ
+            Huỷ bỏ
           </Button>
-          <Button variant="danger" disabled={!reasonOk || !nameOk || mut.isPending} onClick={() => mut.mutate()}>
-            {mut.isPending ? "Đang xoá…" : "Xoá kỳ lịch"}
+          <Button
+            variant="danger"
+            disabled={mut.isPending}
+            onClick={() => mut.mutate()}
+            className="gap-1.5"
+          >
+            <Trash2 className="h-4 w-4" />
+            {mut.isPending ? "Đang xoá…" : "Xác nhận xoá"}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        <div className="flex gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-medium">Thao tác không hoàn tác được.</p>
-            <ul className="list-disc space-y-0.5 pl-4 text-[13px]">
-              <li>Xoá {period.slotCount ?? 0} ô trực và {period.filledCount ?? 0} lượt phân công trong kỳ.</li>
-              <li>Huỷ các yêu cầu nhường/đổi ca đang chờ của kỳ này.</li>
+        <div className="flex gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-sm text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600 dark:text-rose-400" />
+          <div className="space-y-1.5">
+            <p className="font-semibold text-rose-950 dark:text-rose-200">
+              Bạn có chắc chắn muốn xoá kỳ lịch &quot;{period.name}&quot;?
+            </p>
+            <p className="text-xs text-rose-800 dark:text-rose-300">
+              Thao tác này sẽ xoá hoàn toàn <strong>{period.slotCount ?? 0} ô trực</strong> và{" "}
+              <strong>{period.filledCount ?? 0} lượt phân công</strong> trong kỳ.
+            </p>
+            <ul className="list-disc space-y-0.5 pl-4 text-xs text-rose-700 dark:text-rose-300/80">
               {published ? (
-                <li>Nhân viên đã được xếp sẽ nhận thông báo huỷ ca kèm lý do.</li>
+                <li>Nhân viên đã được xếp ca trong kỳ sẽ được thông báo huỷ lịch.</li>
               ) : (
                 <li>Kỳ nháp chưa công bố nên nhân viên không nhận thông báo.</li>
               )}
-              <li>Nhật ký kỳ được giữ lại để đối soát.</li>
-              <li>Không xoá được nếu đã có ca trực đã diễn ra hoặc đang diễn ra.</li>
+              <li>Nhật ký thao tác được lưu trữ lại để đối soát hệ thống.</li>
             </ul>
           </div>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="del-reason">
-            Lý do xoá <span className="text-[var(--danger)]">*</span>
-          </Label>
-          <Textarea
-            id="del-reason"
-            rows={2}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Ví dụ: nhập nhầm khoảng ngày, sẽ lập lại theo mẫu mới"
+
+        <label className="flex items-center gap-2.5 rounded-lg border border-dashed border-rose-300 bg-rose-50/50 p-2.5 text-xs text-rose-900 dark:border-rose-800 dark:bg-rose-950/20 dark:text-rose-200 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(e) => setForce(e.target.checked)}
+            className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500"
           />
-          <div className="text-[11px] text-[var(--muted-foreground)]">Tối thiểu 5 ký tự. Lý do được ghi vào nhật ký.</div>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="del-name">
-            Gõ lại tên kỳ lịch để xác nhận <span className="text-[var(--danger)]">*</span>
-          </Label>
-          <Input
-            id="del-name"
-            value={confirmName}
-            onChange={(e) => setConfirmName(e.target.value)}
-            placeholder={period.name}
-            autoComplete="off"
-          />
-          {confirmName && !nameOk ? <div className="text-[11px] text-rose-600">Tên chưa khớp với kỳ lịch.</div> : null}
-        </div>
+          <span className="font-medium">
+            Cho phép xoá kể cả khi kỳ lịch đã chốt hoặc đang trong tuần trực (phục vụ kiểm thử / cài đặt lại)
+          </span>
+        </label>
       </div>
     </Dialog>
   );

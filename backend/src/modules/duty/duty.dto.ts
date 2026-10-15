@@ -666,17 +666,23 @@ export class CandidateQueryDto {
 }
 
 export class DeletePeriodDto {
-  @ApiProperty({ example: 'Nhập sai khoảng ngày, sẽ lập lại kỳ mới' })
+  @ApiPropertyOptional({ example: 'Nhập sai khoảng ngày, sẽ lập lại kỳ mới' })
+  @IsOptional()
   @Transform(trim)
   @IsString()
-  @MinLength(5, { message: 'Vui lòng nêu lý do xoá kỳ lịch (tối thiểu 5 ký tự)' })
   @MaxLength(300, { message: 'Lý do tối đa 300 ký tự' })
-  reason!: string;
+  reason?: string;
 
-  @ApiProperty({ description: 'Gõ lại đúng tên kỳ lịch để xác nhận' })
+  @ApiPropertyOptional({ description: 'Gõ lại đúng tên kỳ lịch để xác nhận (tuỳ chọn)' })
+  @IsOptional()
   @Transform(trim)
   @IsString()
-  @MinLength(1, { message: 'Vui lòng gõ lại tên kỳ lịch để xác nhận' })
   @MaxLength(200)
-  confirmName!: string;
+  confirmName?: string;
+
+  @ApiPropertyOptional({ description: 'Cưỡng chế xoá kể cả khi đã có ca trực diễn ra (chỉ dành cho quản trị viên)' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  force?: boolean;
 }

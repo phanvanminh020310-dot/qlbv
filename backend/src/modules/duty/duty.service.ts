@@ -645,7 +645,9 @@ export class DutyService {
    */
   async deletePeriod(user: AccessContext, id: number, dto: DeletePeriodDto) {
     const p = await this.core.getPeriod(id);
-    if (dto.confirmName.trim() !== p.name.trim()) throw new BadRequestException('Tên xác nhận chưa khớp với tên kỳ lịch');
+    if (dto.confirmName && dto.confirmName.trim() !== p.name.trim()) {
+      throw new BadRequestException('Tên xác nhận chưa khớp với tên kỳ lịch');
+    }
     const today = bangkokToday();
     const duties = await this.db.db
       .select({ userId: dutyAssignments.userId, fullName: users.fullName, dutyDate: dutySlots.dutyDate })
@@ -654,9 +656,9 @@ export class DutyService {
       .innerJoin(users, eq(users.id, dutyAssignments.userId))
       .where(eq(dutySlots.periodId, id));
     const past = duties.filter((d) => d.dutyDate <= today).length;
-    if (past > 0) {
+    if (past > 0 && !dto.force) {
       throw new ConflictException(
-        `Kỳ lịch đã có ${past} ca trực đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ trực. Hãy sửa từng ô thay vì xoá cả kỳ.`,
+        `Kỳ lịch đã có ${past} ca trực đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ trực. Hãy bật xác nhận cưỡng chế xoá nếu muốn xoá để thử nghiệm.`,
       );
     }
     const [{ slotCount }] = await this.db.db
@@ -673,7 +675,7 @@ export class DutyService {
       cur.n += 1;
       perUser.set(d.userId, cur);
     }
-    const reason = dto.reason.trim();
+    const reason = dto.reason?.trim() || 'Xoá kỳ lịch trực';
     await this.db.transaction(async (tx) => {
       await this.core.log(tx, {
         periodId: id,
