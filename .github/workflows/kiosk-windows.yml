@@ -31,10 +31,10 @@ jobs:
   server-regression:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -47,10 +47,10 @@ jobs:
   phone-and-web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -67,10 +67,10 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -83,7 +83,17 @@ jobs:
           $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
           New-Item -ItemType Directory -Force $package | Out-Null
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-          & $csc /nologo /codepage:65001 /langversion:5 /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$package\QLBS_Kiosk.exe" /reference:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll deploy/windows/QLBS_Kiosk.cs
+          # The inbox compiler interprets forward slashes in source arguments as option separators.
+          # Resolve an absolute Windows path and pass each compiler argument as one array item.
+          $source = (Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'deploy\windows\QLBS_Kiosk.cs')).ProviderPath
+          $compileArgs = @(
+            '/nologo', '/codepage:65001', '/langversion:5', '/target:winexe',
+            '/platform:anycpu', '/optimize+', '/warnaserror+',
+            "/out:$package\QLBS_Kiosk.exe",
+            '/reference:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll',
+            $source
+          )
+          & $csc @compileArgs
           if ($LASTEXITCODE -ne 0) { throw 'Windows compilation failed' }
           Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/go_bo_kiosk.bat,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
           "QLBS Kiosk 2.0.0`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
@@ -91,8 +101,12 @@ jobs:
         run: |
           $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
           $qa = Join-Path $env:RUNNER_TEMP 'kiosk-qa'
-          $p = Start-Process "$package\QLBS_Kiosk.exe" -ArgumentList @('/self-test', '/output', $qa) -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw 'Native self-tests failed' }
+          New-Item -ItemType Directory -Force $qa | Out-Null
+          $p = Start-Process "$package\QLBS_Kiosk.exe" -ArgumentList @('/self-test', '/output', $qa) -RedirectStandardOutput "$qa\native-selftest.stdout.log" -RedirectStandardError "$qa\native-selftest.stderr.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Get-Content "$qa\native-selftest.stdout.log", "$qa\native-selftest.stderr.log" -ErrorAction SilentlyContinue
+            throw 'Native self-tests failed'
+          }
           node backend/scripts/verify-kiosk-qr.cjs "$qa\qr-matrices.json"
           if ($LASTEXITCODE -ne 0) { throw 'Independent QR verification failed' }
           foreach ($state in @('qr', 'scanned')) {
