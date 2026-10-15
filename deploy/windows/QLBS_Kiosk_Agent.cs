@@ -919,7 +919,8 @@ namespace QLBS.Kiosk
                             }
                             catch (WebException wex)
                             {
-                                if (wex.Response is HttpWebResponse errResp && errResp.StatusCode == HttpStatusCode.Unauthorized)
+                                HttpWebResponse errResp = wex.Response as HttpWebResponse;
+                                if (errResp != null && errResp.StatusCode == HttpStatusCode.Unauthorized)
                                 {
                                     return false; // Sai mã PIN
                                 }
