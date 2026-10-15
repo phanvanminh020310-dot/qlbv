@@ -50,11 +50,17 @@ reg delete "HKCU\Software\Policies\Google\Chrome" /v DeveloperToolsAvailability 
 echo [OK] Da mo khoa lai Task Manager, phim Windows va F12 binh thuong.
 
 :: 5. Xoa thu muc cai dat C:\QLBS_Kiosk
-echo [4/4] Don dep thu muc cai dat C:\QLBS_Kiosk...
+echo [4/5] Don dep thu muc cai dat C:\QLBS_Kiosk...
 if exist "C:\QLBS_Kiosk" (
     rmdir /s /q "C:\QLBS_Kiosk" >nul 2>&1
 )
 echo [OK] Da xoa sach thu muc du lieu va profile Kiosk.
+
+:: 6. Khoi dong lai Windows Explorer de khoi phuc phim Windows ngay lap tuc
+echo [5/5] Khoi dong lai Windows Explorer de khoi phuc phim Windows ngay lap tuc...
+taskkill /f /im explorer.exe >nul 2>&1
+start explorer.exe
+echo [OK] Windows Explorer da duoc khoi dong lai - Phim Windows va Task Manager hoat dong binh thuong 100%%.
 
 echo.
 echo ============================================================================

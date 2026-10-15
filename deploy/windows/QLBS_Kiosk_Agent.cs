@@ -128,17 +128,7 @@ namespace QLBS.Kiosk
         {
             try
             {
-                // 1. Chặn toàn bộ phím tắt Windows (Win+D, Win+R, Win+E, Win+X, Win+S...) cấp OS Shell
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"))
-                {
-                    if (key != null) key.SetValue("NoWinKeys", 1, RegistryValueKind.DWord);
-                }
-            }
-            catch {}
-
-            try
-            {
-                // 2. Chặn Task Manager và khoá Win+L
+                // 1. Chặn Task Manager và khoá Win+L
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\System"))
                 {
                     if (key != null)
@@ -152,7 +142,7 @@ namespace QLBS.Kiosk
 
             try
             {
-                // 3. Chặn F12 và Developer Tools trên Microsoft Edge & Google Chrome triệt để cấp Engine
+                // 2. Chặn F12 và Developer Tools trên Microsoft Edge & Google Chrome triệt để cấp Engine
                 using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Policies\Microsoft\Edge"))
                 {
                     if (key != null) key.SetValue("DeveloperToolsAvailability", 2, RegistryValueKind.DWord);
