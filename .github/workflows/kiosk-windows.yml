@@ -1,0 +1,135 @@
+name: Kiosk standalone quality gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/windows/**"
+      - "backend/src/modules/kiosk/**"
+      - "backend/src/modules/settings/**"
+      - "backend/test/kiosk*.test.ts"
+      - "backend/scripts/verify-kiosk-qr.cjs"
+      - "frontend/src/app/kiosk/**"
+      - "frontend/src/app/scan/**"
+      - "frontend/src/app/(app)/quan-tri/cau-hinh/**"
+      - ".github/workflows/kiosk-windows.yml"
+  pull_request:
+    paths:
+      - "deploy/windows/**"
+      - "backend/src/modules/kiosk/**"
+      - "backend/test/kiosk*.test.ts"
+      - "frontend/src/app/kiosk/**"
+      - "frontend/src/app/scan/**"
+      - "frontend/src/app/(app)/quan-tri/cau-hinh/**"
+      - ".github/workflows/kiosk-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  server-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: backend
+      - run: npm run typecheck && npm test && npm run build
+        working-directory: backend
+
+  phone-and-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm run typecheck && npm run build
+        working-directory: frontend
+
+  windows-package:
+    runs-on: windows-latest
+    needs: [server-regression, phone-and-web]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: backend
+      - name: Compile with the actual inbox .NET Framework C# compiler
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
+          New-Item -ItemType Directory -Force $package | Out-Null
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $csc /nologo /codepage:65001 /langversion:5 /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$package\QLBS_Kiosk.exe" /reference:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll deploy/windows/QLBS_Kiosk.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Windows compilation failed' }
+          Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/go_bo_kiosk.bat,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
+          "QLBS Kiosk 2.0.0`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
+      - name: Native self-tests and off-screen WinForms rendering
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
+          $qa = Join-Path $env:RUNNER_TEMP 'kiosk-qa'
+          $p = Start-Process "$package\QLBS_Kiosk.exe" -ArgumentList @('/self-test', '/output', $qa) -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Native self-tests failed' }
+          node backend/scripts/verify-kiosk-qr.cjs "$qa\qr-matrices.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Independent QR verification failed' }
+          foreach ($state in @('qr', 'scanned')) {
+            $args = @('/snapshot', "$qa\$state.png")
+            if ($state -eq 'scanned') { $args += '/scanned' }
+            $p = Start-Process "$package\QLBS_Kiosk.exe" -ArgumentList $args -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "Rendering failed: $state" }
+          }
+      - name: Parse the embedded recovery script without executing destructive operations
+        run: |
+          $text = [IO.File]::ReadAllText((Resolve-Path deploy/windows/go_bo_kiosk.bat))
+          $marker = '#--QLBS-RECOVERY-POWERSHELL--'
+          $script = $text.Substring($text.LastIndexOf($marker) + $marker.Length)
+          $tokens = $null; $errors = $null
+          [Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+          $qa = Join-Path $env:RUNNER_TEMP 'kiosk-qa'
+          [Management.Automation.Language.Parser]::ParseFile("$qa/deferred-uninstall.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Source-only BAT compile and safe failure path
+        run: |
+          & cmd.exe /d /c 'deploy\windows\cai_dat_kiosk.bat /server invalid-origin /room PK01 /quiet /no-start'
+          if ($LASTEXITCODE -ne 1) { throw 'Invalid configuration must fail before installing anything' }
+          $global:LASTEXITCODE = 0
+      - name: Package with checksums
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
+          Get-ChildItem $package -File | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content "$package\SHA256SUMS.txt" -Encoding ascii
+          Compress-Archive -Path "$package\*" -DestinationPath "$env:RUNNER_TEMP\QLBS_Kiosk_2.0.0.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QLBS-Kiosk-Windows-2.0.0
+          path: |
+            ${{ runner.temp }}/QLBS_Kiosk_2.0.0.zip
+            ${{ runner.temp }}/kiosk-qa/self-test.txt
+            ${{ runner.temp }}/kiosk-qa/qr.png
+            ${{ runner.temp }}/kiosk-qa/scanned.png
+          if-no-files-found: error

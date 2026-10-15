@@ -1,124 +1,121 @@
-# KIẾN TRÚC HỆ THỐNG ĐIỂM DANH SINH TRẮC HỌC VÀ MỞ KHOÁ PHÒNG KHÁM (2-VPS TOPOLOGY)
+# Kiến trúc xác thực ca trực và Kiosk phòng khám — bản 2
 
-Hệ thống điểm danh bác sĩ và kiểm soát máy trạm phòng khám hoạt động theo mô hình phân tán 2 VPS:
+## Mô hình triển khai
 
-```
-┌────────────────────────────────────────────────────────┐         ┌───────────────────────────────────────────────────────┐
-│                    VPS 1 (ỨNG DỤNG BỆNH VIỆN)          │         │                  VPS 2 (AI MICROSERVICE)              │
-│                 pvminh94/qlbv (Port 3000 & 5000)       │         │           pvminh94/qlbs-attendance-web (Port 8001)   │
-│                                                        │         │                                                       │
-│  ┌───────────────────────┐   ┌───────────────────────┐ │         │  ┌──────────────────────────────────────────────────┐ │
-│  │    Next.js 15 UI      │   │     NestJS API        │ │  HTTP   │  │              FastAPI AI Service                  │ │
-│  │   /kiosk/[roomCode]   │   │  /api/kiosk/*         │─┼─────────┼─▶│  /detect-face       - Trích xuất khuôn mặt    │ │
-│  │   /scan/[sessionId]   │   │  - QR Session Manager │ │  Port   │  │  /verify-liveness   - Thử thách ISO 30107     │ │
-│  └───────────────────────┘   │  - SSE Real-time Sync │ │  8001   │  │  /compare-face      - So khớp ArcFace vector  │ │
-│                              │  - Direct DB Duty Chk │ │         │  └──────────────────────────────────────────────────┘ │
-│                              └───────────┬───────────┘ │         │                                                       │
-│                                          │             │         │  - Tách biệt tải AI nặng (ArcFace, ONNX, OpenCV)     │
-│                                          ▼             │         │  - Không ảnh hưởng đến CPU/RAM máy chủ bệnh viện      │
-│                              ┌───────────────────────┐ │         └───────────────────────────────────────────────────────┘
-│                              │   PostgreSQL (QLBV)   │ │
-│                              │  - duty_assignments   │ │
-│                              │  - user_biometrics    │ │
-│                              │  - duty_attendance    │ │
-│                              └───────────────────────┘ │
-└────────────────────────────────────────────────────────┘
-                       ▲                     ▲
-            SSE Stream │                     │ HTTP Scan
-                       │                     │
-       ┌───────────────┴───────────────┐  ┌──┴────────────────────────┐
-       │   Máy tính Windows phòng khám │  │ Smartphone Bác sĩ         │
-       │   Edge / Chrome Kiosk (Full)  │  │ Quét QR -> Camera Liveness│
-       │   Tự động mở khóa Desktop     │  │ WebRTC Canvas ISO 30107   │
-       └───────────────────────────────┘  └───────────────────────────┘
+```text
+PC phòng khám (Windows 10/11)              Điện thoại bác sĩ
+QLBS_Kiosk.exe — một WinForms EXE         Camera mặc định → browser hệ thống
+  ├─ GDI+ UI, QR native                   /scan/<sessionId>
+  ├─ keyboard hook WH_KEYBOARD_LL           ├─ claim một thiết bị
+  ├─ cửa sổ phủ các monitor                └─ camera trước → ảnh sống
+  └─ SSE + status polling 3 giây                  │
+            │                                     │
+            └────────── HTTPS / LAN ──────────────┘
+                              │
+VPS 1: QLBV                   ▼
+  Next.js (3000) → /api proxy → NestJS (4000)
+    KioskService: QR/claim/lease/unicast/SSE/PIN
+    IntegrationDutyService: lịch đã công bố, giờ UTC+7
+    PostgreSQL: phân công, nghỉ phép, sinh trắc học, điểm danh, audit
+    Redis: cache/các hạ tầng hiện có
+                              │
+                              │ server-to-server, mạng riêng/firewall
+                              ▼
+VPS 2: AI stateless FastAPI (8001)
+  /api/ai/verify-and-extract
+  /api/ai/liveness-pad + /api/ai/extract-embedding (tương thích)
+  ArcFace / PAD hiện có — không đưa model về PC
 ```
 
----
+**Không có Agent riêng + Edge, WebView2, HTTP listener localhost, PIN bốn số, GPS hay webcam PC.** Một EXE vẫn cần chạy kín để biết khi nào phải khoá lại; đây là cùng tiến trình WinForms, không phải dịch vụ/agent phụ cần cài riêng. Khi unlock, tất cả cửa sổ ẩn và không có taskbar/tray/badge/dock. Không tự khởi chạy HIS.
 
-## 1. PHÂN CÔNG TÀI NGUYÊN & MÔ HÌNH TRIỂN KHAI
+## 1. Các tệp chính
 
-### VPS 1: Máy chủ Hệ thống Bệnh viện (`pvminh94/qlbv`)
-- **Vai trò:** Vận hành toàn bộ phần mềm QLBV (Quản lý bệnh nhân, viện phí, kho dược, lịch trực khám bệnh, Kiosk phòng khám).
-- **Thành phần:**
-  - **Backend (Port 5000):** NestJS + Drizzle ORM + PostgreSQL + Redis.
-  - **Frontend (Port 3000):** Next.js 15.
-    - Giao diện Kiosk máy trạm: `/kiosk/[roomCode]` (Ví dụ: `/kiosk/PK01`).
-    - Giao diện Bác sĩ quét mặt: `/scan/[sessionId]`.
-- **Cơ chế kiểm tra lịch trực:** Truy vấn trực tiếp các bảng `duty_assignments`, `duty_rooms`, `duty_slots`, `duty_shift_types` trong CSDL PostgreSQL. Độ trễ 0ms, không phụ thuộc API ngoài.
-- **Lưu trữ sinh trắc học an toàn:** Vector đặc trưng khuôn mặt (512 chiều) được mã hóa bằng chuẩn AES-256-CBC trong bảng `user_biometrics`.
+| Tệp | Vai trò |
+|---|---|
+| `deploy/windows/QLBS_Kiosk.cs` | Một nguồn C# 5 gồm runtime, state/UI, keyboard hook, HTTP/SSE, bộ cài, PIN dialog, self-test và QR MIT nhúng |
+| `deploy/windows/cai_dat_kiosk.bat` | Hai cách: dùng EXE phát hành hoặc compile bằng compiler .NET có sẵn |
+| `deploy/windows/go_bo_kiosk.bat` | Cứu hộ độc lập, không dựa vào EXE hay config còn hoạt động |
+| `deploy/windows/HUONG_DAN_SU_DUNG.md` | Cài từng máy/hàng loạt, vận hành, giới hạn bảo vệ, checklist nghiệm thu |
+| `backend/src/modules/kiosk/kiosk.service.ts` | Nguồn sự thật về QR, scan, lease, thời hạn và đối soát phân công |
+| `backend/src/modules/kiosk/kiosk-security.ts` | Khoá đích máy trạm, so sánh PIN, throttle, phát hiện client nhúng |
+| `frontend/src/app/scan/[sessionId]/page.tsx` | Luồng điện thoại dùng chung, camera trước/PAD không gesture challenge |
+| `frontend/src/app/kiosk/[roomCode]/page.tsx` | Giữ route web tương thích/chẩn đoán; không phải ranh giới khoá Windows của bản mới |
+| `.github/workflows/kiosk-windows.yml` | Quality gate và gói Windows có checksums; không công bố/ký số giả |
 
-### VPS 2: Máy chủ Microservice Trí tuệ Nhân tạo (`pvminh94/qlbs-attendance-web`)
-- **Vai trò:** Microservice AI chuyên trách nhận diện khuôn mặt và phát hiện giả mạo (Anti-Spoofing / PAD).
-- **Thành phần:**
-  - **FastAPI Container (Port 8001):** Kiến trúc stateless siêu nhẹ, tự khởi động lại qua Docker Compose.
-  - **Mô hình AI:** ArcFace 512-dim embedding kết hợp thuật toán kiểm tra chuyển động mắt/khuôn mặt và tán xạ ánh sáng (Screen Flash Reflection) theo chuẩn ISO/IEC 30107-3 PAD.
-- **Ưu điểm:** Tách tải tính toán ma trận AI ra khỏi VPS chính của bệnh viện; VPS chính luôn mượt mà phục vụ khám chữa bệnh.
+## 2. Giao thức máy trạm v2
 
----
+`GET /api/kiosk/status?room=PK01&terminalId=<random>&clientOrigin=<hospital-web-origin>` trả snapshot, có thể nằm trong envelope `{ success, data, timestamp }`:
 
-## 2. QUY TRÌNH MỞ KHOÁ MÁY TRẠM PHÒNG KHÁM
-
-1. **Khởi động máy tính phòng khám:**
-   - Kịch bản Windows Kiosk tự động chạy trình duyệt toàn màn hình (`--kiosk --edge-kiosk-type=fullscreen`) mở trang `http://<IP_VPS_1>:3000/kiosk/PK01`.
-   - Windows bị khoá các phím nguy hiểm (Win+D, Task Manager, Alt+Tab, cử chỉ vuốt mép màn hình).
-   - Máy trạm hiển thị mã QR động (tự đổi sau mỗi 90 giây) và thiết lập kết nối Server-Sent Events (SSE) tới `/api/kiosk/events/PK01`.
-
-2. **Bác sĩ đến nhận ca trực:**
-   - Dùng Camera điện thoại quét mã QR trên màn hình máy tính.
-   - Trình duyệt điện thoại mở trang quét khuôn mặt `/scan/<sessionId>`.
-   - Bác sĩ thực hiện thử thách người thật (Chớp mắt tự nhiên / Giữ thẳng mặt).
-
-3. **Xác thực và Đối soát:**
-   - Điện thoại gửi ảnh chụp về VPS 1 (`/api/kiosk/verify-face`).
-   - VPS 1 gọi sang VPS 2 (Port 8001) để lấy vector đặc trưng và kiểm tra PAD.
-   - VPS 1 giải mã vector gốc của Bác sĩ trong PostgreSQL, tính khoảng cách Cosine Similarity.
-   - Nếu độ tương đồng $\ge 0.60$ và Bác sĩ có lịch trực hợp lệ tại phòng khám này trong khung giờ hiện tại:
-     - VPS 1 ghi nhật ký điểm danh vào bảng `duty_attendance`.
-     - VPS 1 phát sự kiện SSE `UNLOCK_EVENT` tới máy trạm.
-
-4. **Giải phóng Desktop máy trạm:**
-   - Trình duyệt tại máy tính phòng khám nhận sự kiện mở khoá, tự động thoát chế độ toàn màn hình (`exitFullscreen()`).
-   - Thanh công cụ Kiosk thu nhỏ thành Mini Dock ở góc màn hình.
-   - Bác sĩ có toàn quyền thao tác trên màn hình Desktop Windows và các phần mềm chuyên môn.
-   - Khi hết ca hoặc rời phòng, Bác sĩ chỉ cần bấm nút **"Khoá máy / Rời phòng"** trên Mini Dock để kích hoạt lại chế độ bảo vệ.
-
----
-
-## 3. CƠ CHẾ BẢO VỆ MÁY TRẠM & BẢN CÀI ĐẶT WINDOWS NATIVE AGENT
-
-Tại thư mục `deploy/windows/`, hệ thống được trang bị kiến trúc **Windows Native Kiosk Agent** chuyên dụng:
-1. `QLBS_Kiosk_Agent.cs`: Mã nguồn C# .NET siêu nhẹ (~3MB), biên dịch trực tiếp bằng `csc.exe` có sẵn trên mọi máy tính Windows 10/11.
-   - **Khóa bàn phím cấp độ nhân (Low-Level Hook `WH_KEYBOARD_LL`)**: Chặn 100% phím `Windows`, `Alt+Tab`, `Alt+F4`, `Ctrl+Esc`, `Ctrl+Shift+Esc`, Task Manager.
-   - **Giải phóng Desktop tức thì trong 0.05 giây**: Khi bác sĩ xác thực thành công, Agent lập tức đóng cửa sổ Kiosk, giải phóng 100% màn hình Desktop sạch sẽ cho bác sĩ làm việc mà không để lại bất kỳ khung mờ hay canvas nào.
-   - **Tự động khóa lại khi hết ca**: Theo dõi thời gian kết thúc ca trực (+ thời gian ân hạn `kiosk.lateCheckoutMinutes`), tự động bật lại toàn màn hình khóa để đón bác sĩ ca tiếp theo.
-   - **Phím nóng IT khẩn cấp**: Bấm `Ctrl + Alt + Shift + F12` (hoặc nhấp 5 lần vào Logo Bệnh viện) để mở bảng nhập Master PIN IT cứu hộ máy trạm.
-2. `cai_dat_kiosk.bat`: Cài đặt trọn gói A-Z: cấu hình IP, mã phòng khám, tự biên dịch Agent ra `.exe`, khóa Task Manager, và đăng ký tự khởi động cùng Windows.
-3. `go_bo_kiosk.bat`: Kịch bản dự phòng cho bộ phận IT khi cần bảo trì hoặc gỡ bỏ triệt để Kiosk, khôi phục 100% cài đặt mặc định của Windows trong 2 giây.
-
----
-
-## 4. QUY TRÌNH TRIỂN KHAI VÀ CẬP NHẬT HỆ THỐNG
-
-### Trên VPS 2 (AI Microservice Container)
-```bash
-git clone https://github.com/pvminh94/qlbs-attendance-web.git /opt/qlbs-attendance-web
-cd /opt/qlbs-attendance-web
-docker compose up -d --build
+```text
+protocolVersion: 2
+terminalId: đúng máy đang yêu cầu
+roomExists, room: đúng phòng đang hoạt động
+serverTime: Unix milliseconds
+currentScheduled: phân công chuẩn hoặc null
+isUnlocked, activeDoctor, shiftEndMs: lease của riêng (phòng, terminal)
+qrSession: null nếu đã mở, nếu khoá gồm:
+  sessionId, qrUrl
+  expiresAt: deadline tuyệt đối theo giờ server
+  status: WAITING | SCANNED
+  scannedAt: null hoặc thời điểm claim đầu tiên
+  totalExpiresSeconds, faceVerifyBufferSeconds
 ```
 
-### Trên VPS 1 (Ứng dụng QLBV — Cập nhật chuẩn qua update.sh)
-Hệ thống QLBV được đóng gói tự động hóa hoàn toàn với Docker Compose. Khi có mã nguồn mới, **chỉ cần chạy duy nhất 1 lệnh**:
+- Client không tin đồng hồ PC; đồng bộ `serverTime` rồi chạy bằng `Stopwatch` monotonic.
+- Chỉ snapshot đúng terminal/phòng, phiên bản hợp lệ và lease hữu hạn còn hạn mới được mở Desktop.
+- `UNLOCK_EVENT` kích hoạt lấy lại snapshot; **không** tự mở chỉ vì có gói SSE.
+- Bộ cài xác minh cả trang `/scan/...` là HTML trên origin QLBV, tránh nhầm cổng backend.
+- Client chỉ vẽ QR có URL hợp lệ và cùng origin đã cài, không tự bịa session/QR khi server lỗi. HTTPS dùng certificate validation chuẩn Windows, không có callback chấp nhận mọi chứng chỉ.
 
-```bash
-cd /opt/qlbs   # (hoặc thư mục chứa mã nguồn QLBV)
-sudo bash deploy/update.sh
-```
+## 3. QR và chống dùng lại
 
-**Cách thức `update.sh` tự động xử lý ngầm:**
-1. **Tự động `git pull`:** Kéo nhánh mới nhất mà không cần thao tác git thủ công.
-2. **Tự động phát hiện thay đổi:** Nhận biết thay đổi ở `backend/` và `frontend/` để kích hoạt dựng lại dịch vụ tương ứng (`qlbs-api` và `qlbs-web`) với BuildKit cache.
-3. **Tự động chạy Migration CSDL:** Khi container `qlbs-api` khởi động, entrypoint trong `backend/Dockerfile` tự động kích hoạt `scripts/migrate.ts` để áp dụng ngay các tệp migration mới (`0019_kiosk_duty_attendance.sql`) vào PostgreSQL. Người quản trị không cần gõ lệnh migration thủ công.
-4. **Tự động kiểm tra sức khỏe:** Kiểm tra điểm cuối `/health` của API và trang web đăng nhập trước khi hoàn tất thông báo `✓ Cập nhật xong`.
+1. Tạo QR ngẫu nhiên bằng UUID, default TTL **15 giây**, đọc `kiosk.qrExpiresSeconds` (10–600).
+2. Tạo mới chỉ huỷ QR cũ của **cùng `(room, terminal)`**, không huỷ QR của PC khác chung phòng.
+3. Điện thoại phải claim bằng token ổn định. Kiểm tra hạn và claim được thực hiện lại sau khi đọc cấu hình, tránh hai request tranh quyền qua đoạn `await`.
+4. Lần scan đầu chốt `expiresAt = scannedAt + buffer` (`kiosk.faceVerifyBufferSeconds`, default 60, 10–300). Những request tiếp theo không kéo dài deadline.
+5. SSE `SESSION_SCANNED` mang `sessionId`, `terminalId`, `expiresAt`, buffer và `serverTime`. Máy trạm bỏ nét QR, phủ **trắng đục** và đếm lùi. Không dùng blur/opacity có thể nhìn xuyên.
+6. Status/refresh/reconnect giữ lại session đã scan; không phát lại QR trong lúc xác thực. Client có epoch để loại phản hồi WAITING cũ về sau event scan/lock.
+7. Claim thiếu/sai thiết bị bị từ chối; lần mở trên thiết bị thứ hai vô hiệu hoá phiên. Không cho bỏ token ở đường `verify-face` để né claim.
+8. AI trả kết quả sau hạn/phiên bị huỷ không được unlock. Các request AI có timeout; mutex per-session chặn xử lý frame trùng.
 
-*(Nếu muốn đổi IP kết nối tới VPS 2, thêm dòng `AI_SERVICE_URL=http://<IP_VPS_2>:8001` vào file `.env` tại thư mục gốc trước khi chạy `update.sh`).*
+Các kiểm tra UA/referrer/WebView Android/iOS hiện có được giữ và gom logic server dùng chung. Chúng là phòng vệ heuristic, **không chứng thực nguồn Camera** hoặc bảo đảm chặn được mọi hình thức relay; xem giới hạn bảo vệ trong hướng dẫn triển khai.
 
+## 4. Roster và lease mở Desktop
+
+- Chỉ nhận phân công trong kỳ `CONG_BO`/`DA_CHOT`, phòng và nhân sự đang hoạt động.
+- Đối chiếu đúng mã phòng; không match `PK01` bằng phép tìm chuỗi con vào `PK010`.
+- Loại nghỉ phép, tính cả ngày kết thúc ca đêm. Bao gồm ngày trước/ngày hiện tại và ngày kế khi cần nhận ca sớm qua nửa đêm.
+- Face/PAD thành công vẫn cần bác sĩ có ca trong khoảng `start - earlyCheckin` đến `end + lateCheckout`.
+- Ghi `duty_attendance` kèm `slot_id`, `room_id`; giữ schema, API và nghiệp vụ lịch trực hiện có.
+- Map lease dùng key `(roomCode, terminalId)`, không chỉ room. PC A unlock không làm PC B mở qua polling. Event bound với terminal **không fallback broadcast** nếu socket đích offline.
+- SSE reconnect cho phép socket cũ/mới chồng nhau; đóng socket cũ không xoá socket mới.
+- Mỗi status request đối soát lại lease với lịch đã công bố: sửa/huỷ ca, xoá phân công, thêm nghỉ phép sẽ thu hồi lease. Thay giờ kết thúc/grace cập nhật deadline.
+- Server kiểm tra hết lease mỗi giây. Client có timer độc lập dựa trên giờ server để khoá đúng hạn, ngay cả khi SSE trễ. Sau resume luôn khoá trước rồi đối soát.
+- Mất kết nối API: không giữ trạng thái mở không kiểm chứng, không hiển thị QR cũ. Hồi mạng: đồng bộ lại; lease cũ chỉ dùng nếu còn hợp lệ và được server xác nhận.
+
+**Trạng thái QR/lease/SSE là in-memory của một API process**. Restart server làm các PC khoá/xác thực lại. Không tăng replica Kiosk API khi chưa thiết kế kho trạng thái chung; Redis hiện có không tự làm các Map này thành phân tán.
+
+## 5. CNTT và bộ cài
+
+- Hộp thoại PIN native từ nút hỗ trợ / nhấp logo 5 lần / Ctrl+Alt+Shift+F12.
+- Không giữ PIN trong config hoặc nhị phân. Chỉ PIN do quản trị cấu hình (`kiosk.itMasterPin`, fallback env `IT_MASTER_PIN` khi DB rỗng).
+- Bỏ các mật khẩu fallback cố định. PIN so sánh qua hash constant-time, giới hạn 5 lần thử/10 phút theo IP và đích máy trạm, có audit server.
+- Lease CNTT có hạn ca; ngoài ca tối đa 4 giờ và không vượt bắt đầu ca kế tiếp. Mất server dùng bộ gỡ với Administrator, không mở bằng secret offline.
+- Install kiểm tra trước, giữ stable ID khi cài lại cùng phòng, lưu Program Files/ProgramData với quyền phù hợp, một HKLM Run. Không cài nhiều startup task hay khoá registry dai dẳng.
+- Migration dọn Agent cũ/profile Kiosk riêng, không kill mọi browser/HIS. Bộ cứu hộ không cần config/EXE còn nguyên và chạy được nhiều lần.
+- Runtime không có local listener `/unlock`, không CORS localhost `*`, không tắt SSL validation.
+
+## 6. Giới hạn và nghiệm thu bắt buộc
+
+`WH_KEYBOARD_LL` là hook user-mode, không phải driver. Không chặn được Ctrl+Alt+Del, secure desktop, quản trị viên, startup gap hay can thiệp vật lý. WinForms + HKLM Run không thay thế Windows logon hoặc một thiết kế Windows kiosk/shell policy được quản trị đúng cách. Việc đạt yêu cầu khoá OS phải nghiệm thu trên tài khoản tiêu chuẩn/image Windows thật với chính sách phù hợp; không tuyên bố “chặn 100% cấp kernel”.
+
+Không có kết quả benchmark/conformance của model AI hoặc thử phần cứng Windows từ kiểm thử mock/off-screen. Bộ test tự động là quality gate, không phải chứng nhận sản phẩm không lỗi. Checklist trước rollout nằm trong [hướng dẫn máy trạm](windows/HUONG_DAN_SU_DUNG.md).
+
+## 7. Cập nhật hai VPS
+
+VPS 1: từ thư mục ứng dụng đang vận hành, chạy **`sudo bash deploy/update.sh`**. Thay đổi backend/frontend được build theo cơ chế hiện có; cấu hình Compose truyền `SCAN_BASE_URL`, `PUBLIC_URL`, `IT_MASTER_PIN` đúng vào API. Không yêu cầu migration thủ công mới cho đợt chuyển WinForms này.
+
+VPS 2: giữ các endpoint AI hiện có. Chỉ cập nhật microservice khi có thay đổi riêng của model/API; không gộp lại vào VPS 1. Chặn cổng 8001 khỏi truy cập công cộng, chỉ cho VPS 1 gọi.
+
+Sau máy chủ, phân phối cùng một EXE cho các PC; mã phòng là tham số setup. Không clone terminal ID và không phân phối kèm PIN IT.

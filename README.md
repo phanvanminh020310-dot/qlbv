@@ -155,3 +155,17 @@ Sau khi chạy, đăng nhập thử: `khtb.lan` / `123456` (duyệt phiếu),
 ## 6. Giấy phép
 
 MIT — xem [LICENSE](LICENSE).
+
+## Kiosk phòng khám — WinForms độc lập
+
+Máy trạm dùng một `QLBS_Kiosk.exe`, không cần Edge/WebView hay Agent phụ.
+QR native 15s, che trắng sau scan, buffer xác thực cấu hình được, đối soát lịch trực,
+unicast đúng máy, tự khoá theo ca và trả hoàn toàn Desktop khi mở.
+
+- [Cài từng phòng / triển khai hàng loạt / cứu hộ CNTT](deploy/windows/HUONG_DAN_SU_DUNG.md)
+- [Kiến trúc hai VPS và giao thức máy trạm v2](deploy/KIOSK_ATTENDANCE_ARCHITECTURE.md)
+- [Kết quả kiểm thử và các mục còn phải nghiệm thu Windows](deploy/windows/KIEM_THU_V2.md)
+- Workflow `Kiosk standalone quality gate` tạo gói Windows có EXE và SHA-256 khi các gate đều đạt.
+
+Khoá WinForms là bảo vệ user-mode, không phải kernel/Windows secure desktop;
+Ctrl+Alt+Del và chính sách OS phải được quản trị và nghiệm thu riêng.

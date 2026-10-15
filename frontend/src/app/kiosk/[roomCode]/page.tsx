@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import React, { useState, useEffect, useRef } from "react";
+import { useParams } from "next/navigation";
 import {
   Shield,
   ShieldCheck,
@@ -16,23 +16,22 @@ import {
   AlertCircle,
   Loader2,
   ArrowRight,
-} from 'lucide-react';
-import QRCode from 'qrcode';
-import { KioskLockdown } from '@/lib/kiosk-lockdown';
+} from "lucide-react";
+import QRCode from "qrcode";
+import { KioskLockdown } from "@/lib/kiosk-lockdown";
 
 export default function KioskPage() {
   const routeParams = useParams();
-  const rawRoomCode = (routeParams?.roomCode as string) || 'PK01';
+  const rawRoomCode = (routeParams?.roomCode as string) || "PK01";
   const roomCode = decodeURIComponent(rawRoomCode).toUpperCase();
 
   const [roomInfo, setRoomInfo] = useState<{ code: string; name: string }>({
     code: roomCode,
-    name: `Phòng khám số ${roomCode.replace(/^[^\d]*/, '') || roomCode}`,
+    name: `Phòng khám số ${roomCode.replace(/^[^\d]*/, "") || roomCode}`,
   });
   const [scheduledDuty, setScheduledDuty] = useState<any>(null);
-  const [qrUrl, setQrUrl] = useState<string>('');
-  const [handshakePin, setHandshakePin] = useState<string>('');
-  const [terminalId, setTerminalId] = useState<string>('');
+  const [qrUrl, setQrUrl] = useState<string>("");
+  const [terminalId, setTerminalId] = useState<string>("");
   const [expiresInSeconds, setExpiresInSeconds] = useState<number>(15);
   const totalExpiresRef = useRef<number>(15);
   const faceVerifyBufferRef = useRef<number>(60);
@@ -40,9 +39,9 @@ export default function KioskPage() {
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [activeSession, setActiveSession] = useState<any>(null);
-  const [currentTime, setCurrentTime] = useState<string>('');
+  const [currentTime, setCurrentTime] = useState<string>("");
   const [isITModalOpen, setIsITModalOpen] = useState(false);
-  const [itPinInput, setItPinInput] = useState('');
+  const [itPinInput, setItPinInput] = useState("");
   const [itError, setItError] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -53,13 +52,16 @@ export default function KioskPage() {
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const secretClickCountRef = useRef(0);
   const secretClickTimeoutRef = useRef<any>(null);
-  const scanningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const qrDeadlineRef = useRef<number | null>(null);
+  const scannedSessionRef = useRef<string | null>(null);
+  const securityEpochRef = useRef(0);
+  const refreshPendingRef = useRef(false);
 
   // 0. Khởi tạo mã định danh duy nhất của máy trạm này (Terminal ID)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
     const urlParams = new URLSearchParams(window.location.search);
-    const queryTid = urlParams.get('terminalId');
+    const queryTid = urlParams.get("terminalId");
     const key = `kiosk_term_${roomCode}`;
     let tid = queryTid || sessionStorage.getItem(key);
     if (!tid) {
@@ -71,18 +73,21 @@ export default function KioskPage() {
 
   // 1. Đồng hồ thời gian thực đồng bộ máy chủ bệnh viện (Chống người dùng chỉnh sửa giờ máy phòng khám)
   const serverBaseTimeRef = useRef<number>(Date.now());
-  const perfBaseTimeRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : 0);
+  const perfBaseTimeRef = useRef<number>(
+    typeof performance !== "undefined" ? performance.now() : 0,
+  );
 
   const syncServerTime = (serverTimeMs?: number) => {
-    if (serverTimeMs && typeof serverTimeMs === 'number') {
+    if (serverTimeMs && typeof serverTimeMs === "number") {
       serverBaseTimeRef.current = serverTimeMs;
-      perfBaseTimeRef.current = typeof performance !== 'undefined' ? performance.now() : 0;
+      perfBaseTimeRef.current =
+        typeof performance !== "undefined" ? performance.now() : 0;
     }
   };
 
   useEffect(() => {
     // Lấy giờ máy chủ chuẩn ban đầu
-    fetch('/api/kiosk/time')
+    fetch("/api/kiosk/time")
       .then((res) => res.json())
       .then((raw) => {
         const data = raw?.data ?? raw;
@@ -94,20 +99,23 @@ export default function KioskPage() {
 
     const updateTime = () => {
       try {
-        const elapsed = typeof performance !== 'undefined' ? performance.now() - perfBaseTimeRef.current : 0;
+        const elapsed =
+          typeof performance !== "undefined"
+            ? performance.now() - perfBaseTimeRef.current
+            : 0;
         const now = new Date(serverBaseTimeRef.current + elapsed);
-        const timeStr = now.toLocaleTimeString('vi-VN', {
-          timeZone: 'Asia/Bangkok',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
+        const timeStr = now.toLocaleTimeString("vi-VN", {
+          timeZone: "Asia/Bangkok",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
         });
-        const dateStr = now.toLocaleDateString('vi-VN', {
-          timeZone: 'Asia/Bangkok',
-          weekday: 'long',
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
+        const dateStr = now.toLocaleDateString("vi-VN", {
+          timeZone: "Asia/Bangkok",
+          weekday: "long",
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
         });
         setCurrentTime(`${timeStr} · ${dateStr}`);
       } catch {}
@@ -117,26 +125,64 @@ export default function KioskPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const serverNow = () =>
+    serverBaseTimeRef.current +
+    (typeof performance !== "undefined"
+      ? performance.now() - perfBaseTimeRef.current
+      : 0);
+
+  const applyQrSession = (qr: any) => {
+    if (!qr?.sessionId) {
+      setQrUrl("");
+      qrDeadlineRef.current = null;
+      return;
+    }
+    const scanned = !!qr.scannedAt || qr.status === "SCANNED";
+    if (!scanned && scannedSessionRef.current === qr.sessionId) return;
+    totalExpiresRef.current = qr.totalExpiresSeconds || totalExpiresRef.current;
+    faceVerifyBufferRef.current =
+      qr.faceVerifyBufferSeconds || faceVerifyBufferRef.current;
+    qrDeadlineRef.current =
+      qr.expiresAt ||
+      serverNow() + (qr.expiresInSeconds ?? totalExpiresRef.current) * 1000;
+    setExpiresInSeconds(
+      Math.max(0, Math.ceil((qrDeadlineRef.current! - serverNow()) / 1000)),
+    );
+    scannedSessionRef.current = scanned ? qr.sessionId : null;
+    setIsDoctorScanning(scanned);
+    if (scanned) {
+      setQrUrl("");
+      return;
+    }
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const backendUrl = qr.qrUrl;
+    setQrUrl(
+      backendUrl &&
+        !backendUrl.includes("localhost") &&
+        !backendUrl.includes("api:4000")
+        ? backendUrl
+        : `${origin}/scan/${qr.sessionId}`,
+    );
+  };
+
   // 2. Tải trạng thái phòng và tạo/lấy phiên QR gắn với đúng máy trạm này
   const fetchKioskStatus = async (curTid?: string) => {
     if (!roomCode) return;
     const tid = curTid || terminalId;
+    const epoch = securityEpochRef.current;
     try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : "";
       const query = new URLSearchParams({ room: roomCode });
-      if (tid) query.set('terminalId', tid);
-      if (origin) query.set('clientOrigin', origin);
+      if (tid) query.set("terminalId", tid);
+      if (origin) query.set("clientOrigin", origin);
 
       const resp = await fetch(`/api/kiosk/status?${query.toString()}`);
-      if (!resp.ok) {
-        // Dự phòng phiên QR cục bộ nếu API trả lỗi
-        const fallbackUrl = `${origin}/scan/${roomCode}_${Date.now()}`;
-        setQrUrl((prev) => prev || fallbackUrl);
-        return;
-      }
+      if (!resp.ok) throw new Error("Máy chủ Kiosk chưa sẵn sàng.");
       const raw = await resp.json();
       // Bóc lớp { success: true, data: { ... } } do TransformInterceptor của NestJS tạo ra
       const data = raw?.data ?? raw;
+      if (epoch !== securityEpochRef.current) return;
 
       if (data?.serverTime) {
         syncServerTime(data.serverTime);
@@ -159,50 +205,41 @@ export default function KioskPage() {
         setShiftEndMs(null);
       }
 
-      if (data?.qrSession?.totalExpiresSeconds) {
-        totalExpiresRef.current = data.qrSession.totalExpiresSeconds;
-      }
-      if (data?.qrSession?.faceVerifyBufferSeconds) {
-        faceVerifyBufferRef.current = data.qrSession.faceVerifyBufferSeconds;
-      }
-
-      const backendQrUrl = data?.qrSession?.qrUrl;
-      const scanUrl =
-        backendQrUrl && !backendQrUrl.includes('localhost') && !backendQrUrl.includes('api:4000')
-          ? backendQrUrl
-          : `${origin}/scan/${data?.qrSession?.sessionId || ''}`;
-
-      if (data?.qrSession?.sessionId || backendQrUrl) {
-        setQrUrl(scanUrl);
-        setExpiresInSeconds(data?.qrSession?.expiresInSeconds ?? totalExpiresRef.current);
-      }
+      applyQrSession(data?.qrSession);
     } catch (err: any) {
-      console.warn('Lỗi nạp trạng thái Kiosk:', err?.message || err);
-      if (typeof window !== 'undefined') {
-        const fallbackUrl = `${window.location.origin}/scan/${roomCode}_fallback`;
-        setQrUrl((prev) => prev || fallbackUrl);
+      console.warn("Lỗi nạp trạng thái Kiosk:", err?.message || err);
+      if (epoch === securityEpochRef.current) {
+        setQrUrl("");
+        qrDeadlineRef.current = null;
+        setIsUnlocked(false);
+        setActiveSession(null);
       }
     }
   };
 
   // 3. Làm mới mã QR gắn với đúng máy trạm này
   const refreshQrSession = async () => {
+    if (refreshPendingRef.current) return;
+    refreshPendingRef.current = true;
     setIsRefreshing(true);
-    if (scanningTimeoutRef.current) {
-      clearTimeout(scanningTimeoutRef.current);
-      scanningTimeoutRef.current = null;
-    }
-    setIsDoctorScanning(false);
+    const epoch = securityEpochRef.current;
     try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const resp = await fetch('/api/kiosk/session/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode, roomName: roomInfo.name, terminalId, clientOrigin: origin }),
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const resp = await fetch("/api/kiosk/session/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomCode,
+          roomName: roomInfo.name,
+          terminalId,
+          clientOrigin: origin,
+        }),
       });
       if (resp.ok) {
         const raw = await resp.json();
         const data = raw?.data ?? raw;
+        if (epoch !== securityEpochRef.current) return;
         if (data?.serverTime) {
           syncServerTime(data.serverTime);
         }
@@ -224,20 +261,19 @@ export default function KioskPage() {
           setActiveSession(null);
           setShiftEndMs(null);
         }
-        const backendQr = data?.qrUrl;
-        const scanUrl =
-          backendQr && !backendQr.includes('localhost') && !backendQr.includes('api:4000')
-            ? backendQr
-            : `${origin}/scan/${data?.sessionId || ''}`;
-
-        if (data?.sessionId || backendQr) {
-          setQrUrl(scanUrl);
-          setExpiresInSeconds(data?.expiresInSeconds ?? totalExpiresRef.current);
-        }
+        applyQrSession(data?.qrSession || data);
+      } else if (epoch === securityEpochRef.current) {
+        setQrUrl("");
+        qrDeadlineRef.current = null;
       }
     } catch (err) {
-      console.warn('Lỗi làm mới QR:', err);
+      if (epoch === securityEpochRef.current) {
+        setQrUrl("");
+        qrDeadlineRef.current = null;
+      }
+      console.warn("Lỗi làm mới QR:", err);
     } finally {
+      refreshPendingRef.current = false;
       setIsRefreshing(false);
     }
   };
@@ -249,32 +285,31 @@ export default function KioskPage() {
         width: 240,
         margin: 2,
         color: {
-          dark: '#0f766e',
-          light: '#ffffff',
+          dark: "#0f766e",
+          light: "#ffffff",
         },
       }).catch((err) => {
-        console.warn('Không thể vẽ QR canvas:', err);
+        console.warn("Không thể vẽ QR canvas:", err);
       });
     }
   }, [qrUrl]);
 
-  // 5. Đếm lùi thời gian sống mã QR (Đảm bảo không bao giờ bị treo cứng màn hình)
+  // 5. One monotonic server deadline: no timer reset can prolong a scanned QR.
   useEffect(() => {
     if (isUnlocked) return;
     const timer = setInterval(() => {
-      setExpiresInSeconds((prev) => {
-        if (prev <= 1) {
-          if (scanningTimeoutRef.current) {
-            clearTimeout(scanningTimeoutRef.current);
-            scanningTimeoutRef.current = null;
-          }
-          setIsDoctorScanning(false);
-          refreshQrSession();
-          return totalExpiresRef.current;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+      if (qrDeadlineRef.current === null) return;
+      const remaining = Math.max(
+        0,
+        Math.ceil((qrDeadlineRef.current - serverNow()) / 1000),
+      );
+      setExpiresInSeconds(remaining);
+      if (remaining === 0) {
+        qrDeadlineRef.current = null;
+        setQrUrl("");
+        void refreshQrSession();
+      }
+    }, 250);
     return () => clearInterval(timer);
   }, [roomInfo.name, isUnlocked, roomCode, terminalId]);
 
@@ -288,37 +323,43 @@ export default function KioskPage() {
       const sseUrl = `/api/kiosk/events/${encodeURIComponent(roomCode)}?terminalId=${encodeURIComponent(terminalId)}`;
       eventSource = new EventSource(sseUrl);
 
-      eventSource.addEventListener('SESSION_SCANNED', (e: any) => {
-        setIsDoctorScanning(true);
-        let bufSec = faceVerifyBufferRef.current || 60;
+      eventSource.addEventListener("SESSION_SCANNED", (e: any) => {
         try {
-          const payload = JSON.parse(e.data || '{}');
-          if (payload?.faceVerifyBufferSeconds) {
-            bufSec = Number(payload.faceVerifyBufferSeconds);
-            faceVerifyBufferRef.current = bufSec;
-          }
-        } catch {}
-        // Thiết lập thời gian xác thực khuôn mặt từ CSDL cấu hình hệ thống
-        setExpiresInSeconds(bufSec);
-        if (scanningTimeoutRef.current) clearTimeout(scanningTimeoutRef.current);
-        scanningTimeoutRef.current = setTimeout(() => {
-          setIsDoctorScanning(false);
-          refreshQrSession();
-        }, bufSec * 1000);
+          const payload = JSON.parse(e.data || "{}");
+          if (payload.terminalId !== terminalId) return;
+          securityEpochRef.current++;
+          if (payload.serverTime) syncServerTime(payload.serverTime);
+          const buffer =
+            Number(payload.faceVerifyBufferSeconds) ||
+            faceVerifyBufferRef.current;
+          faceVerifyBufferRef.current = buffer;
+          scannedSessionRef.current = payload.sessionId;
+          qrDeadlineRef.current =
+            payload.expiresAt || serverNow() + buffer * 1000;
+          setExpiresInSeconds(
+            Math.max(
+              0,
+              Math.ceil((qrDeadlineRef.current! - serverNow()) / 1000),
+            ),
+          );
+          setIsDoctorScanning(true);
+          setQrUrl(""); // Remove the QR pixels as well as covering the area with opaque white.
+        } catch {
+          /* Invalid events cannot release the workstation. */
+        }
       });
 
-      eventSource.addEventListener('UNLOCK_EVENT', (e: any) => {
+      eventSource.addEventListener("UNLOCK_EVENT", (e: any) => {
         try {
           const payload = JSON.parse(e.data);
           // Kiểm tra đích danh: Chỉ mở khoá nếu sự kiện gửi đích danh cho máy trạm này
-          if (payload.terminalId && payload.terminalId !== terminalId) {
+          if (payload.terminalId !== terminalId) {
             return;
           }
-          if (payload.type === 'UNLOCK_SUCCESS') {
-            if (scanningTimeoutRef.current) {
-              clearTimeout(scanningTimeoutRef.current);
-              scanningTimeoutRef.current = null;
-            }
+          if (payload.type === "UNLOCK_SUCCESS") {
+            securityEpochRef.current++;
+            qrDeadlineRef.current = null;
+            scannedSessionRef.current = null;
             setIsDoctorScanning(false);
             setIsUnlocked(true);
             setActiveSession(payload.doctor);
@@ -326,15 +367,15 @@ export default function KioskPage() {
             KioskLockdown.exitFullscreen().catch(() => {});
           }
         } catch (err) {
-          console.warn('Lỗi xử lý sự kiện SSE:', err);
+          console.warn("Lỗi xử lý sự kiện SSE:", err);
         }
       });
 
-      eventSource.addEventListener('LOCK_EVENT', () => {
-        if (scanningTimeoutRef.current) {
-          clearTimeout(scanningTimeoutRef.current);
-          scanningTimeoutRef.current = null;
-        }
+      eventSource.addEventListener("LOCK_EVENT", () => {
+        securityEpochRef.current++;
+        scannedSessionRef.current = null;
+        qrDeadlineRef.current = null;
+        setQrUrl("");
         setIsDoctorScanning(false);
         setIsUnlocked(false);
         setActiveSession(null);
@@ -344,10 +385,10 @@ export default function KioskPage() {
       });
 
       // Lắng nghe cập nhật lịch trực realtime từ máy chủ
-      eventSource.addEventListener('SCHEDULE_UPDATED', () => {
+      eventSource.addEventListener("SCHEDULE_UPDATED", () => {
         fetchKioskStatus(terminalId);
       });
-      eventSource.addEventListener('ROSTER_UPDATED', () => {
+      eventSource.addEventListener("ROSTER_UPDATED", () => {
         fetchKioskStatus(terminalId);
       });
 
@@ -355,7 +396,7 @@ export default function KioskPage() {
         // SSE tự động kết nối lại khi có gián đoạn mạng
       };
     } catch (err) {
-      console.warn('Không thể khởi tạo EventSource SSE:', err);
+      console.warn("Không thể khởi tạo EventSource SSE:", err);
     }
 
     return () => {
@@ -370,9 +411,11 @@ export default function KioskPage() {
     if (!isUnlocked || !shiftEndMs) return;
 
     const timer = setInterval(() => {
-      const now = Date.now();
+      const now = serverNow();
       if (now >= shiftEndMs) {
-        console.log('[Kiosk] Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá máy cho ca tiếp theo...');
+        console.log(
+          "[Kiosk] Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá máy cho ca tiếp theo...",
+        );
         setIsUnlocked(false);
         setActiveSession(null);
         setShiftEndMs(null);
@@ -384,21 +427,13 @@ export default function KioskPage() {
     return () => clearInterval(timer);
   }, [isUnlocked, shiftEndMs, terminalId]);
 
-  // 6c. Đối soát realtime lịch trực và ca khám bệnh định kỳ mỗi 10 giây (khi đang khoá)
+  // 6c. Poll even while unlocked, so SSE outages cannot hide a roster revocation.
   useEffect(() => {
-    if (isUnlocked) return;
     const timer = setInterval(() => {
       fetchKioskStatus(terminalId);
     }, 10000);
     return () => clearInterval(timer);
   }, [isUnlocked, terminalId, roomCode]);
-
-  // 6d. Đồng bộ trạng thái mở hộp thoại IT với Agent C# để cho phép gõ bàn phím nhập PIN
-  useEffect(() => {
-    const flag = isITModalOpen ? '1' : '0';
-    fetch(`http://127.0.0.1:28199/it-mode?enable=${flag}`, { mode: 'no-cors' }).catch(() => {});
-    fetch(`http://localhost:28199/it-mode?enable=${flag}`, { mode: 'no-cors' }).catch(() => {});
-  }, [isITModalOpen]);
 
   // 7. Khoá tính năng Kiosk chống can thiệp (Anti-Tamper Lockdown)
   useEffect(() => {
@@ -417,7 +452,7 @@ export default function KioskPage() {
       });
       lockdown.activate();
     } catch (err) {
-      console.warn('Không thể khởi động KioskLockdown:', err);
+      console.warn("Không thể khởi động KioskLockdown:", err);
     }
 
     return () => {
@@ -443,53 +478,46 @@ export default function KioskPage() {
     e.preventDefault();
     setItError(null);
     try {
-      const resp = await fetch('/api/kiosk/override-pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const resp = await fetch("/api/kiosk/override-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roomCode, pin: itPinInput, terminalId }),
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.message || 'Mã PIN khẩn cấp không đúng.');
+        throw new Error(data.message || "Mã PIN khẩn cấp không đúng.");
       }
       setIsITModalOpen(false);
-      setItPinInput('');
+      setItPinInput("");
     } catch (err: any) {
-      setItError(err.message || 'Lỗi mở khoá IT.');
+      setItError(err.message || "Lỗi mở khoá IT.");
     }
   };
 
   const handleLockRoom = async () => {
     try {
-      await fetch('/api/kiosk/lock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch("/api/kiosk/lock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roomCode }),
       });
-      // Gửi tín hiệu khoá lại đến Agent C# cục bộ
-      fetch('http://127.0.0.1:28199/api/lock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
-      fetch('http://localhost:28199/api/lock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
       setLockConfirmOpen(false);
       setIsUnlocked(false);
       setActiveSession(null);
       KioskLockdown.enterFullscreen().catch(() => {});
       fetchKioskStatus();
     } catch (e) {
-      console.warn('Lỗi khoá phòng:', e);
+      console.warn("Lỗi khoá phòng:", e);
     }
   };
 
   const handleExitToDesktop = () => {
     try {
-      // 1. Gửi tín hiệu cưỡng chế tắt Edge ngay đến Agent C# cục bộ
-      fetch('http://127.0.0.1:28199/api/unlock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
-      fetch('http://localhost:28199/api/unlock', { method: 'POST', mode: 'no-cors' }).catch(() => {});
-
-      // 2. Thử đóng cửa sổ theo chuẩn Chromium
-      if (typeof document !== 'undefined' && document.fullscreenElement) {
+      // Legacy web diagnostic page only; the standalone EXE handles desktop release itself.
+      if (typeof document !== "undefined" && document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
-      window.open('', '_self', '');
+      window.open("", "_self", "");
       window.close();
     } catch {}
   };
@@ -497,22 +525,11 @@ export default function KioskPage() {
   // Tự động đóng cửa sổ trình duyệt và giải phóng Desktop ngay khi mở khoá thành công
   useEffect(() => {
     if (isUnlocked) {
-      // Bắn tín hiệu đến Agent C# cục bộ để taskkill Edge trong < 0.05 giây
-      const notifyAgent = async () => {
-        try {
-          await fetch('http://127.0.0.1:28199/api/unlock', { method: 'POST', mode: 'no-cors' });
-        } catch {}
-        try {
-          await fetch('http://localhost:28199/api/unlock', { method: 'POST', mode: 'no-cors' });
-        } catch {}
-      };
-      notifyAgent();
-
       try {
-        if (typeof document !== 'undefined' && document.fullscreenElement) {
+        if (typeof document !== "undefined" && document.fullscreenElement) {
           document.exitFullscreen().catch(() => {});
         }
-        window.open('', '_self', '');
+        window.open("", "_self", "");
         window.close();
       } catch {}
     }
@@ -520,7 +537,7 @@ export default function KioskPage() {
 
   // --- TRẠNG THÁI 1: ĐÃ MỞ KHOÁ (GIẢI PHÓNG TOÀN DIỆN MÀN HÌNH DESKTOP) ---
   // Tuyệt đối không để màn hình trắng hoặc thanh nổi chắn màn hình.
-  // Nếu Edge chưa bị tắt ngay bởi Agent, hiển thị màn hình thông báo sẫm màu rõ ràng kèm nút đóng trình duyệt trực tiếp.
+  // Browser fallback cannot close a normal user tab automatically; native Kiosk hides all of its own windows.
   if (isUnlocked) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white p-6 text-center select-none animate-in fade-in duration-300">
@@ -535,14 +552,18 @@ export default function KioskPage() {
               ĐÃ ĐIỂM DANH & MỞ KHOÁ THÀNH CÔNG
             </div>
             <h2 className="text-2xl font-black text-white tracking-tight">
-              {activeSession?.title ? `${activeSession.title} ` : 'BS '}
-              {activeSession?.fullName || 'Bác sĩ trực'}
+              {activeSession?.title ? `${activeSession.title} ` : "BS "}
+              {activeSession?.fullName || "Bác sĩ trực"}
             </h2>
             <p className="text-sm text-slate-300">
-              Phòng làm việc: <strong className="text-teal-400">{roomInfo.name}</strong> ({roomInfo.code})
+              Phòng làm việc:{" "}
+              <strong className="text-teal-400">{roomInfo.name}</strong> (
+              {roomInfo.code})
             </p>
             <p className="text-xs text-slate-400 pt-1 leading-relaxed">
-              Kiosk Agent đang giải phóng màn hình. Bác sĩ có thể bấm nút bên dưới hoặc nhấn <strong>Alt + F4</strong> để vào Desktop làm việc ngay:
+              Kiosk Agent đang giải phóng màn hình. Bác sĩ có thể bấm nút bên
+              dưới hoặc nhấn <strong>Alt + F4</strong> để vào Desktop làm việc
+              ngay:
             </p>
           </div>
 
@@ -574,8 +595,8 @@ export default function KioskPage() {
     <div
       className={`relative min-h-screen w-screen flex flex-col justify-between overflow-hidden select-none transition-colors duration-300 ${
         isDarkMode
-          ? 'bg-gradient-to-b from-slate-950 via-slate-900 to-teal-950/40 text-slate-100'
-          : 'bg-gradient-to-b from-slate-100 via-white to-teal-50 text-slate-900'
+          ? "bg-gradient-to-b from-slate-950 via-slate-900 to-teal-950/40 text-slate-100"
+          : "bg-gradient-to-b from-slate-100 via-white to-teal-50 text-slate-900"
       }`}
     >
       {/* Cảnh báo khi người dùng thoát toàn màn hình */}
@@ -587,9 +608,12 @@ export default function KioskPage() {
           <div className="h-20 w-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-400 flex items-center justify-center mb-4">
             <Shield className="h-10 w-10 animate-pulse" />
           </div>
-          <h2 className="text-xl font-black text-white">MÁY TRẠM YÊU CẦU TOÀN MÀN HÌNH</h2>
+          <h2 className="text-xl font-black text-white">
+            MÁY TRẠM YÊU CẦU TOÀN MÀN HÌNH
+          </h2>
           <p className="mt-2 text-xs text-slate-400 max-w-sm">
-            Nhấp chuột vào bất kỳ đâu để khôi phục chế độ toàn màn hình bảo vệ phòng khám.
+            Nhấp chuột vào bất kỳ đâu để khôi phục chế độ toàn màn hình bảo vệ
+            phòng khám.
           </p>
           <button
             type="button"
@@ -603,7 +627,9 @@ export default function KioskPage() {
       {/* Header đỉnh máy trạm */}
       <header
         className={`px-6 sm:px-8 py-4 sm:py-5 flex items-center justify-between border-b backdrop-blur-md ${
-          isDarkMode ? 'border-slate-800/80 bg-slate-950/60' : 'border-slate-200 bg-white/80 shadow-sm'
+          isDarkMode
+            ? "border-slate-800/80 bg-slate-950/60"
+            : "border-slate-200 bg-white/80 shadow-sm"
         }`}
       >
         <div className="flex items-center gap-3 sm:gap-4">
@@ -622,7 +648,10 @@ export default function KioskPage() {
               </span>
             </div>
             <h1 className="text-lg sm:text-2xl font-black tracking-tight mt-0.5">
-              {roomInfo.name} <span className="text-teal-600 dark:text-teal-400 font-mono">[{roomInfo.code}]</span>
+              {roomInfo.name}{" "}
+              <span className="text-teal-600 dark:text-teal-400 font-mono">
+                [{roomInfo.code}]
+              </span>
             </h1>
           </div>
         </div>
@@ -633,7 +662,9 @@ export default function KioskPage() {
               <Clock className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
               <span>GIỜ HỆ THỐNG</span>
             </div>
-            <div className="text-base sm:text-lg font-bold font-mono mt-0.5">{currentTime}</div>
+            <div className="text-base sm:text-lg font-bold font-mono mt-0.5">
+              {currentTime}
+            </div>
           </div>
 
           <button
@@ -642,7 +673,11 @@ export default function KioskPage() {
             className="p-2.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 cursor-pointer"
             title="Chuyển chế độ Sáng / Tối"
           >
-            {isDarkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-teal-600" />}
+            {isDarkMode ? (
+              <Sun className="h-4 w-4 text-amber-400" />
+            ) : (
+              <Moon className="h-4 w-4 text-teal-600" />
+            )}
           </button>
 
           <button
@@ -675,14 +710,17 @@ export default function KioskPage() {
                 Quét mã QR bằng Camera điện thoại để mở khoá ca làm việc
               </h2>
               <p className="mt-2 text-xs sm:text-sm opacity-75 leading-relaxed">
-                Hệ thống xác thực khuôn mặt và tự động đối soát với bảng phân công ca trực của bệnh viện.
+                Hệ thống xác thực khuôn mặt và tự động đối soát với bảng phân
+                công ca trực của bệnh viện.
               </p>
             </div>
 
             {/* Thông tin Bác sĩ được xếp trực từ PostgreSQL CSDL QLBV */}
             <div
               className={`rounded-2xl border p-4 sm:p-5 space-y-3 ${
-                isDarkMode ? 'border-teal-500/20 bg-teal-950/20' : 'border-teal-200 bg-teal-50/60 shadow-sm'
+                isDarkMode
+                  ? "border-teal-500/20 bg-teal-950/20"
+                  : "border-teal-200 bg-teal-50/60 shadow-sm"
               }`}
             >
               <div className="flex items-center justify-between border-b border-teal-500/20 pb-2">
@@ -690,32 +728,46 @@ export default function KioskPage() {
                   <Stethoscope className="h-4 w-4" />
                   PHÂN CÔNG CA TRỰC HIỆN TẠI
                 </span>
-                <span className={`text-xs font-mono px-2.5 py-0.5 rounded-full font-bold ${
-                  scheduledDuty ? 'bg-teal-600 text-white' : 'bg-slate-700 text-slate-300'
-                }`}>
-                  {scheduledDuty?.shiftName || 'Ngoài ca trực'}
+                <span
+                  className={`text-xs font-mono px-2.5 py-0.5 rounded-full font-bold ${
+                    scheduledDuty
+                      ? "bg-teal-600 text-white"
+                      : "bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  {scheduledDuty?.shiftName || "Ngoài ca trực"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-xs opacity-70 block">Bác sĩ khám chính:</span>
-                  <span className={`font-bold text-sm sm:text-base ${
-                    scheduledDuty ? 'text-teal-400' : 'text-slate-400'
-                  }`}>
+                  <span className="text-xs opacity-70 block">
+                    Bác sĩ khám chính:
+                  </span>
+                  <span
+                    className={`font-bold text-sm sm:text-base ${
+                      scheduledDuty ? "text-teal-400" : "text-slate-400"
+                    }`}
+                  >
                     {scheduledDuty?.fullName
-                      ? `${scheduledDuty.title ? `${scheduledDuty.title} ` : ''}${scheduledDuty.fullName}`
-                      : 'Không có ca trực hoạt động'}
+                      ? `${scheduledDuty.title ? `${scheduledDuty.title} ` : ""}${scheduledDuty.fullName}`
+                      : "Không có ca trực hoạt động"}
                   </span>
                 </div>
                 <div>
-                  <span className="text-xs opacity-70 block">Khung giờ trực:</span>
-                  <span className={`font-semibold font-mono ${
-                    scheduledDuty ? 'text-teal-600 dark:text-teal-300' : 'text-slate-400'
-                  }`}>
+                  <span className="text-xs opacity-70 block">
+                    Khung giờ trực:
+                  </span>
+                  <span
+                    className={`font-semibold font-mono ${
+                      scheduledDuty
+                        ? "text-teal-600 dark:text-teal-300"
+                        : "text-slate-400"
+                    }`}
+                  >
                     {scheduledDuty?.startTime && scheduledDuty?.endTime
                       ? `${scheduledDuty.startTime} – ${scheduledDuty.endTime}`
-                      : 'Đã hết giờ làm việc'}
+                      : "Đã hết giờ làm việc"}
                   </span>
                 </div>
               </div>
@@ -729,7 +781,9 @@ export default function KioskPage() {
                   1
                 </div>
                 <p className="text-xs font-bold leading-tight">Quét mã QR</p>
-                <p className="text-[10px] opacity-70 mt-0.5">Camera điện thoại</p>
+                <p className="text-[10px] opacity-70 mt-0.5">
+                  Camera điện thoại
+                </p>
               </div>
 
               {/* Mũi tên 1 -> 2 */}
@@ -742,8 +796,12 @@ export default function KioskPage() {
                 <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-xs mb-1">
                   2
                 </div>
-                <p className="text-xs font-bold leading-tight">Nhìn thẳng camera điện thoại để xác thực</p>
-                <p className="text-[10px] opacity-70 mt-0.5">Xác thực tự động</p>
+                <p className="text-xs font-bold leading-tight">
+                  Nhìn thẳng camera điện thoại để xác thực
+                </p>
+                <p className="text-[10px] opacity-70 mt-0.5">
+                  Xác thực tự động
+                </p>
               </div>
 
               {/* Mũi tên 2 -> 3 */}
@@ -756,8 +814,12 @@ export default function KioskPage() {
                 <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-xs mb-1">
                   3
                 </div>
-                <p className="text-xs font-bold leading-tight">Mở khóa màn hình thành công</p>
-                <p className="text-[10px] opacity-70 mt-0.5">Vào màn hình Desktop</p>
+                <p className="text-xs font-bold leading-tight">
+                  Mở khóa màn hình thành công
+                </p>
+                <p className="text-[10px] opacity-70 mt-0.5">
+                  Vào màn hình Desktop
+                </p>
               </div>
             </div>
           </div>
@@ -767,22 +829,26 @@ export default function KioskPage() {
             <div className="relative p-4 sm:p-5 rounded-3xl bg-white shadow-2xl border-4 border-teal-500/30 flex items-center justify-center min-w-[260px] min-h-[260px] overflow-hidden">
               <canvas
                 ref={qrCanvasRef}
-                className={!qrUrl ? 'hidden' : isDoctorScanning ? 'opacity-20 blur-sm pointer-events-none transition-all duration-300' : 'block transition-all duration-300'}
+                className={!qrUrl || isDoctorScanning ? "hidden" : "block"}
               />
               {!qrUrl && (
                 <div className="flex flex-col items-center justify-center p-6 text-slate-400 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-teal-600 mb-2" />
-                  <span className="text-xs font-medium">Đang tạo mã QR bảo mật...</span>
+                  <span className="text-xs font-medium">
+                    Đang tạo mã QR bảo mật...
+                  </span>
                 </div>
               )}
 
               {/* Lớp phủ TRẮNG che kín mã QR trong thời gian xác thực */}
               {isDoctorScanning && (
-                <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-4 text-center z-10 transition-all duration-300 animate-in fade-in">
+                <div className="absolute inset-0 bg-white rounded-3xl flex flex-col items-center justify-center p-4 text-center z-10">
                   <div className="h-14 w-14 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center mb-2.5">
                     <Loader2 className="h-7 w-7 text-teal-600 animate-spin" />
                   </div>
-                  <span className="text-sm font-bold text-slate-800">Đang nhận diện khuôn mặt...</span>
+                  <span className="text-sm font-bold text-slate-800">
+                    Đang nhận diện khuôn mặt...
+                  </span>
                   <div className="mt-3 px-3 py-1 rounded-full bg-teal-50 text-teal-700 font-mono text-xs font-bold border border-teal-200">
                     Thời gian còn: {expiresInSeconds}s
                   </div>
@@ -793,14 +859,21 @@ export default function KioskPage() {
             <div className="mt-4 flex items-center justify-center gap-3 text-xs opacity-75 min-h-[24px]">
               {!isDoctorScanning && (
                 <>
-                  <span>Hết hạn sau: <strong className="font-mono text-teal-600 dark:text-teal-400">{expiresInSeconds}s</strong></span>
+                  <span>
+                    Hết hạn sau:{" "}
+                    <strong className="font-mono text-teal-600 dark:text-teal-400">
+                      {expiresInSeconds}s
+                    </strong>
+                  </span>
                   <button
                     type="button"
                     onClick={refreshQrSession}
                     disabled={isRefreshing}
                     className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
                   >
-                    <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    <RefreshCw
+                      className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`}
+                    />
                     <span>Đổi mã mới</span>
                   </button>
                 </>
@@ -813,7 +886,9 @@ export default function KioskPage() {
       {/* Footer đáy màn hình */}
       <footer
         className={`px-6 sm:px-8 py-3.5 border-t text-xs flex items-center justify-center text-center font-bold tracking-wider uppercase opacity-85 ${
-          isDarkMode ? 'border-slate-800/80 bg-slate-950/80 text-slate-300' : 'border-slate-200 bg-white/80 text-slate-700'
+          isDarkMode
+            ? "border-slate-800/80 bg-slate-950/80 text-slate-300"
+            : "border-slate-200 bg-white/80 text-slate-700"
         }`}
       >
         <span>Bệnh viện quân y 4</span>
@@ -828,9 +903,13 @@ export default function KioskPage() {
           >
             <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
               <Shield className="h-5 w-5 text-amber-400" />
-              <h3 className="text-sm font-bold">Mở khoá Khẩn cấp dành cho IT</h3>
+              <h3 className="text-sm font-bold">
+                Mở khoá Khẩn cấp dành cho IT
+              </h3>
             </div>
-            <p className="text-xs text-slate-400">Nhập mã PIN Quản trị viên để mở khoá trực tiếp máy trạm.</p>
+            <p className="text-xs text-slate-400">
+              Nhập mã PIN Quản trị viên để mở khoá trực tiếp máy trạm.
+            </p>
             {itError && <p className="text-xs text-rose-400">{itError}</p>}
             <input
               type="password"

@@ -76,6 +76,9 @@ services:
       BACKUPS_DIR: /app/backups
       AI_SERVICE_URL: ${AI_SERVICE_URL:-${BIOMETRIC_AI_SERVICE_URL:-http://localhost:8001}}
       BIOMETRIC_AI_SERVICE_URL: ${AI_SERVICE_URL:-${BIOMETRIC_AI_SERVICE_URL:-http://localhost:8001}}
+      SCAN_BASE_URL: ${SCAN_BASE_URL:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      IT_MASTER_PIN: ${IT_MASTER_PIN:-}
     volumes:
       - ${UPLOAD_HOST_DIR:-./data/uploads}:/app/uploads
       - ${BACKUP_HOST_DIR:-./data/backups}:/app/backups

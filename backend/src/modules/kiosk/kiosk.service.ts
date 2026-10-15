@@ -1,10 +1,21 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
-import { and, eq, inArray, sql, desc, gte, lte, or, ilike, asc } from 'drizzle-orm';
-import { Response } from 'express';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
-import { DbService } from '../../db/db.service';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  OnModuleDestroy,
+  Optional,
+  UnauthorizedException,
+  HttpException,
+} from "@nestjs/common";
+import { and, eq, inArray, sql, or, asc } from "drizzle-orm";
+import { Response } from "express";
+import * as crypto from "crypto";
+import * as fs from "fs";
+import * as path from "path";
+import { DbService } from "../../db/db.service";
 import {
   departments,
   dutyAbsences,
@@ -17,34 +28,46 @@ import {
   dutySlots,
   userBiometrics,
   users,
-} from '../../db/schema';
-import { SettingsService } from '../settings/settings.service';
-import { AuditService } from '../audit/audit.service';
-import { IntegrationDutyService } from '../integration/integration-duty.service';
-import { RealtimeService } from '../realtime/realtime.service';
-import { bangkokToday, shiftInterval } from '../duty/duty-rules';
-import { coversInstant, bangkokIso, candidateDutyDates } from '../integration/integration-time';
-import type { AccessContext, ClientMeta } from '../../common/types/access-context';
+} from "../../db/schema";
+import { SettingsService } from "../settings/settings.service";
+import { AuditService } from "../audit/audit.service";
+import { IntegrationDutyService } from "../integration/integration-duty.service";
+import { RealtimeService } from "../realtime/realtime.service";
+import { addDays, bangkokToday, shiftInterval } from "../duty/duty-rules";
+import { candidateDutyDates } from "../integration/integration-time";
+import { Subscription } from "rxjs";
+import {
+  kioskTargetKey,
+  sameKioskTarget,
+  matchesMasterPin,
+  KioskAttemptLimiter,
+  isBlockedKioskClient,
+} from "./kiosk-security";
+import type {
+  AccessContext,
+  ClientMeta,
+} from "../../common/types/access-context";
 
 export interface KioskSession {
   sessionId: string;
   roomCode: string;
   roomName: string;
-  terminalId: string;       // ID máy trạm duy nhất gắn với phiên này
-  handshakePin?: string;    // Mã 4 số xác nhận hiện diện (tuỳ chọn)
+  terminalId: string; // ID máy trạm duy nhất gắn với phiên này
+  handshakePin?: string; // Mã 4 số xác nhận hiện diện (tuỳ chọn)
   createdAt: number;
   expiresAt: number;
   qrUrl: string;
   challengeSequence: string[];
   flashColorSequence: string[];
-  status: 'WAITING' | 'VERIFIED' | 'EXPIRED';
+  status: "WAITING" | "VERIFIED" | "EXPIRED";
   consumed?: boolean;
-  scannedAt?: number;       // Thời điểm điện thoại Bác sĩ quét và mở trang
-  claimedBy?: string;       // Device Claim Token duy nhất của thiết bị đầu tiên mở mã
-  claimedIp?: string;       // IP thiết bị quét
-  claimedUserAgent?: string;// User-Agent thiết bị quét
-  isVerifying?: boolean;    // Đang có frame AI xử lý
-  failCount?: number;       // Số lần frame lỗi tạm thời
+  faceVerifyBufferSeconds?: number;
+  scannedAt?: number; // Thời điểm điện thoại Bác sĩ quét và mở trang
+  claimedBy?: string; // Device Claim Token duy nhất của thiết bị đầu tiên mở mã
+  claimedIp?: string; // IP thiết bị quét
+  claimedUserAgent?: string; // User-Agent thiết bị quét
+  isVerifying?: boolean; // Đang có frame AI xử lý
+  failCount?: number; // Số lần frame lỗi tạm thời
   verifiedDoctor?: any;
 }
 
@@ -59,23 +82,29 @@ export interface ActiveRoomUnlock {
 }
 
 @Injectable()
-export class KioskService implements OnModuleInit {
+export class KioskService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(KioskService.name);
   private readonly sessions = new Map<string, KioskSession>();
   // Lưu kết nối SSE theo từng terminalId (Unicast)
-  private readonly terminalClients = new Map<string, Response>();
+  private readonly terminalClients = new Map<
+    string,
+    { roomCode: string; clients: Set<Response> }
+  >();
+  private readonly timers: ReturnType<typeof setInterval>[] = [];
+  private realtimeSubscription?: Subscription;
+  private readonly pinAttempts = new KioskAttemptLimiter();
   // Lưu danh sách terminal theo từng roomCode
   private readonly roomTerminals = new Map<string, Set<string>>();
   // Lưu trạng thái phòng khám đã mở khoá và thời điểm hết hạn ca trực (+ ân hạn)
   private readonly activeRoomUnlocks = new Map<string, ActiveRoomUnlock>();
 
   // Thư mục lưu ảnh khuôn mặt bác sĩ
-  private readonly uploadDir = path.resolve(process.cwd(), 'uploads', 'faces');
+  private readonly uploadDir = path.resolve(process.cwd(), "uploads", "faces");
 
   // Khoá mã hoá AES-256 cho dữ liệu sinh trắc học
   private readonly encryptionKey = crypto.scryptSync(
-    process.env.BIOMETRIC_SECRET || 'qlbs_biometric_salt_secure_bvqy4_2026',
-    'hospital_biometric_vault',
+    process.env.BIOMETRIC_SECRET || "qlbs_biometric_salt_secure_bvqy4_2026",
+    "hospital_biometric_vault",
     32,
   );
 
@@ -93,44 +122,60 @@ export class KioskService implements OnModuleInit {
     }
 
     // Tự động dọn dẹp các phiên QR hết hạn quá 2 phút để giải phóng hoàn toàn bộ nhớ RAM
-    setInterval(() => {
-      const now = Date.now();
-      for (const [sId, s] of this.sessions.entries()) {
-        if (now > s.expiresAt + 2 * 60 * 1000) {
-          this.sessions.delete(sId);
+    this.timers.push(
+      setInterval(() => {
+        const now = Date.now();
+        for (const [sId, s] of this.sessions.entries()) {
+          if (now > s.expiresAt + 2 * 60 * 1000) {
+            this.sessions.delete(sId);
+          }
         }
-      }
-    }, 30 * 1000);
+      }, 30 * 1000),
+    );
 
     // Tự động kiểm tra và khoá phòng khám khi ca trực kết thúc + quá thời gian ân hạn
-    setInterval(() => {
-      const now = Date.now();
-      for (const [rCode, info] of this.activeRoomUnlocks.entries()) {
-        if (now > info.shiftEndMs) {
-          this.activeRoomUnlocks.delete(rCode);
-          this.broadcastToRoom(rCode, 'LOCK_EVENT', {
-            type: 'AUTO_LOCK_SHIFT_EXPIRED',
-            roomCode: rCode,
-            reason: 'Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá phòng khám cho ca tiếp theo.',
-            timestamp: new Date().toISOString(),
-          });
-          void this.audit.log({
-            action: 'KIOSK_AUTO_LOCK',
-            module: 'KIOSK',
-            entity: 'duty_attendance',
-            description: `Hệ thống tự động khoá máy tính phòng khám ${rCode} do ca trực của ${info.doctor?.title || ''} ${info.doctor?.fullName || ''} đã kết thúc và quá thời gian ân hạn`,
-            entityId: rCode,
-          });
+    this.timers.push(
+      setInterval(() => {
+        const now = Date.now();
+        for (const [key, info] of this.activeRoomUnlocks.entries()) {
+          if (now >= info.shiftEndMs) {
+            const rCode = info.roomCode;
+            this.activeRoomUnlocks.delete(key);
+            this.emitToTarget(rCode, info.terminalId, "LOCK_EVENT", {
+              type: "AUTO_LOCK_SHIFT_EXPIRED",
+              roomCode: rCode,
+              reason:
+                "Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá phòng khám cho ca tiếp theo.",
+              timestamp: new Date().toISOString(),
+            });
+            void this.audit.log({
+              action: "KIOSK_AUTO_LOCK",
+              module: "KIOSK",
+              entity: "duty_attendance",
+              description: `Hệ thống tự động khoá máy tính phòng khám ${rCode} do ca trực của ${info.doctor?.title || ""} ${info.doctor?.fullName || ""} đã kết thúc và quá thời gian ân hạn`,
+              entityId: rCode,
+            });
+          }
         }
-      }
-    }, 10 * 1000);
+      }, 1000),
+    );
+  }
+
+  onModuleDestroy() {
+    for (const timer of this.timers) clearInterval(timer);
+    this.realtimeSubscription?.unsubscribe();
+    for (const entry of this.terminalClients.values()) {
+      for (const client of entry.clients) client.end();
+    }
+    this.terminalClients.clear();
+    this.roomTerminals.clear();
   }
 
   async onModuleInit() {
     // 0. Lắng nghe thay đổi lịch trực realtime để cập nhật tức thì xuống toàn bộ Kiosk PC
     if (this.realtime) {
-      this.realtime.streamAll().subscribe((evt) => {
-        if (evt.topic === 'duty') {
+      this.realtimeSubscription = this.realtime.streamAll().subscribe((evt) => {
+        if (evt.topic === "duty") {
           this.broadcastScheduleUpdated();
         }
       });
@@ -156,31 +201,38 @@ export class KioskService implements OnModuleInit {
       let restoredCount = 0;
 
       for (const rec of records) {
-        const filePath = path.join(this.uploadDir, `user_${rec.userId}_avatar.jpg`);
+        const filePath = path.join(
+          this.uploadDir,
+          `user_${rec.userId}_avatar.jpg`,
+        );
         const fileExists = fs.existsSync(filePath);
 
         if (!rec.avatarData && fileExists) {
           try {
             const buf = fs.readFileSync(filePath);
-            const dataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+            const dataUrl = `data:image/jpeg;base64,${buf.toString("base64")}`;
             await this.db.db
               .update(userBiometrics)
               .set({ avatarData: dataUrl })
               .where(eq(userBiometrics.id, rec.id));
             syncedCount++;
           } catch (e) {
-            this.logger.warn(`Không thể nạp ảnh đĩa vào CSDL cho user ${rec.userId}: ${e}`);
+            this.logger.warn(
+              `Không thể nạp ảnh đĩa vào CSDL cho user ${rec.userId}: ${e}`,
+            );
           }
         } else if (rec.avatarData && !fileExists) {
           try {
             let b64 = rec.avatarData;
-            if (b64.includes(',')) b64 = b64.split(',')[1];
+            if (b64.includes(",")) b64 = b64.split(",")[1];
             if (b64) {
-              fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+              fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
               restoredCount++;
             }
           } catch (e) {
-            this.logger.warn(`Không thể khôi phục ảnh từ CSDL ra đĩa cho user ${rec.userId}: ${e}`);
+            this.logger.warn(
+              `Không thể khôi phục ảnh từ CSDL ra đĩa cho user ${rec.userId}: ${e}`,
+            );
           }
         }
       }
@@ -200,7 +252,7 @@ export class KioskService implements OnModuleInit {
    */
   async getItMasterPin(): Promise<string> {
     try {
-      const dbPin = await this.settings.get<any>('kiosk.itMasterPin');
+      const dbPin = await this.settings.get<any>("kiosk.itMasterPin");
       if (dbPin !== null && dbPin !== undefined) {
         const pinStr = String(dbPin).trim();
         if (pinStr.length > 0) {
@@ -208,9 +260,12 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi lấy mã PIN IT từ CSDL:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi lấy mã PIN IT từ CSDL:",
+        e?.message || e,
+      );
     }
-    return (process.env.IT_MASTER_PIN || '999888').trim();
+    return (process.env.IT_MASTER_PIN || "").trim();
   }
 
   /**
@@ -218,7 +273,7 @@ export class KioskService implements OnModuleInit {
    */
   async getQrExpiresSeconds(): Promise<number> {
     try {
-      const dbSec = await this.settings.get<any>('kiosk.qrExpiresSeconds');
+      const dbSec = await this.settings.get<any>("kiosk.qrExpiresSeconds");
       if (dbSec !== null && dbSec !== undefined) {
         const num = Number(dbSec);
         if (Number.isFinite(num) && num >= 10 && num <= 600) {
@@ -226,7 +281,10 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi lấy thời gian hiệu lực QR từ CSDL:",
+        e?.message || e,
+      );
     }
     return 15;
   }
@@ -236,7 +294,9 @@ export class KioskService implements OnModuleInit {
    */
   async getFaceVerifyBufferSeconds(): Promise<number> {
     try {
-      const dbSec = await this.settings.get<any>('kiosk.faceVerifyBufferSeconds');
+      const dbSec = await this.settings.get<any>(
+        "kiosk.faceVerifyBufferSeconds",
+      );
       if (dbSec !== null && dbSec !== undefined) {
         const num = Number(dbSec);
         if (Number.isFinite(num) && num >= 10 && num <= 300) {
@@ -244,7 +304,10 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi lấy cấu hình faceVerifyBufferSeconds:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi lấy cấu hình faceVerifyBufferSeconds:",
+        e?.message || e,
+      );
     }
     return 60;
   }
@@ -254,7 +317,7 @@ export class KioskService implements OnModuleInit {
    */
   async getEarlyCheckinMinutes(): Promise<number> {
     try {
-      const dbVal = await this.settings.get<any>('kiosk.earlyCheckinMinutes');
+      const dbVal = await this.settings.get<any>("kiosk.earlyCheckinMinutes");
       if (dbVal !== null && dbVal !== undefined) {
         const num = Number(dbVal);
         if (Number.isFinite(num) && num >= 0 && num <= 240) {
@@ -262,7 +325,10 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi lấy cấu hình earlyCheckinMinutes:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi lấy cấu hình earlyCheckinMinutes:",
+        e?.message || e,
+      );
     }
     return 60;
   }
@@ -272,7 +338,7 @@ export class KioskService implements OnModuleInit {
    */
   async getLateCheckoutMinutes(): Promise<number> {
     try {
-      const dbVal = await this.settings.get<any>('kiosk.lateCheckoutMinutes');
+      const dbVal = await this.settings.get<any>("kiosk.lateCheckoutMinutes");
       if (dbVal !== null && dbVal !== undefined) {
         const num = Number(dbVal);
         if (Number.isFinite(num) && num >= 0 && num <= 240) {
@@ -280,7 +346,10 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi lấy cấu hình lateCheckoutMinutes:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi lấy cấu hình lateCheckoutMinutes:",
+        e?.message || e,
+      );
     }
     return 30;
   }
@@ -289,12 +358,12 @@ export class KioskService implements OnModuleInit {
    * Helper chuyển đổi giá trị cấu hình sang Boolean chuẩn xác
    */
   private toBoolean(val: unknown): boolean {
-    if (typeof val === 'boolean') return val;
-    if (typeof val === 'string') {
+    if (typeof val === "boolean") return val;
+    if (typeof val === "string") {
       const s = val.trim().toLowerCase();
-      return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+      return s === "true" || s === "1" || s === "yes" || s === "on";
     }
-    if (typeof val === 'number') return val === 1;
+    if (typeof val === "number") return val === 1;
     return false;
   }
 
@@ -303,7 +372,7 @@ export class KioskService implements OnModuleInit {
    */
   async getAllowSelfEnroll(): Promise<boolean> {
     try {
-      const val = await this.settings.get<any>('kiosk.allowSelfEnroll');
+      const val = await this.settings.get<any>("kiosk.allowSelfEnroll");
       return this.toBoolean(val);
     } catch {
       return false;
@@ -315,7 +384,7 @@ export class KioskService implements OnModuleInit {
    */
   async getAllowSelfUpdate(): Promise<boolean> {
     try {
-      const val = await this.settings.get<any>('kiosk.allowSelfUpdate');
+      const val = await this.settings.get<any>("kiosk.allowSelfUpdate");
       return this.toBoolean(val);
     } catch {
       return false;
@@ -327,7 +396,7 @@ export class KioskService implements OnModuleInit {
    */
   async getFaceDuplicateThreshold(): Promise<number> {
     try {
-      const val = await this.settings.get<any>('kiosk.faceDuplicateThreshold');
+      const val = await this.settings.get<any>("kiosk.faceDuplicateThreshold");
       const num = Number(val);
       if (Number.isFinite(num) && num >= 0.4 && num <= 0.95) {
         return num;
@@ -340,70 +409,89 @@ export class KioskService implements OnModuleInit {
     return (
       process.env.AI_SERVICE_URL ||
       process.env.BIOMETRIC_AI_SERVICE_URL ||
-      'http://localhost:8001'
-    ).replace(/\/+$/, '');
+      "http://localhost:8001"
+    ).replace(/\/+$/, "");
   }
 
   // --- 1. QUẢN LÝ PHIÊN QR & REALTIME SSE CHO PHÒNG KHÁM ---
 
-  registerSseClient(roomCode: string, terminalId: string | undefined, res: Response) {
+  registerSseClient(
+    roomCode: string,
+    terminalId: string | undefined,
+    res: Response,
+  ) {
     const code = roomCode.toUpperCase().trim();
-    const tid = terminalId?.trim() || `term_${code}_${Date.now()}`;
-
-    // 1. Lưu kết nối đích danh máy trạm
-    this.terminalClients.set(tid, res);
-
-    // 2. Lưu liên kết phòng khám -> máy trạm
-    const set = this.roomTerminals.get(code) || new Set<string>();
-    set.add(tid);
-    this.roomTerminals.set(code, set);
-
-    res.on('close', () => {
-      this.terminalClients.delete(tid);
-      const s = this.roomTerminals.get(code);
-      if (s) {
-        s.delete(tid);
-        if (s.size === 0) this.roomTerminals.delete(code);
+    const tid = terminalId?.trim() || `legacy_${code}_${crypto.randomUUID()}`;
+    const existing = this.terminalClients.get(tid);
+    if (existing && existing.roomCode !== code) {
+      res.end(); // A terminal connection cannot move to another room mid-stream.
+      return;
+    }
+    const entry = existing || { roomCode: code, clients: new Set<Response>() };
+    entry.clients.add(res);
+    this.terminalClients.set(tid, entry);
+    const terminals = this.roomTerminals.get(code) || new Set<string>();
+    terminals.add(tid);
+    this.roomTerminals.set(code, terminals);
+    res.on("close", () => {
+      entry.clients.delete(res);
+      // An old socket closing must never remove a newly reconnected socket.
+      if (entry.clients.size === 0 && this.terminalClients.get(tid) === entry) {
+        this.terminalClients.delete(tid);
+        const roomSet = this.roomTerminals.get(code);
+        roomSet?.delete(tid);
+        if (!roomSet?.size) this.roomTerminals.delete(code);
       }
     });
   }
 
-  /**
-   * Bắn sự kiện đích danh (Unicast) tới đúng một máy trạm vật lý duy nhất
-   */
   sendToTerminal(terminalId: string, eventType: string, payload: any): boolean {
-    const client = this.terminalClients.get(terminalId);
-    if (client) {
+    const entry = this.terminalClients.get(terminalId);
+    if (
+      !entry ||
+      (payload.roomCode &&
+        entry.roomCode !== payload.roomCode.toUpperCase().trim())
+    )
+      return false;
+    let sent = false;
+    for (const client of entry.clients) {
       try {
-        client.write(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`);
-        return true;
-      } catch (err) {
-        this.terminalClients.delete(terminalId);
+        if (client.writableEnded || client.destroyed) {
+          entry.clients.delete(client);
+          continue;
+        }
+        client.write(
+          `event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`,
+        );
+        sent = true;
+      } catch {
+        entry.clients.delete(client);
       }
     }
-    return false;
+    return sent;
   }
 
-  /**
-   * Phát sự kiện tới toàn bộ máy trạm của một phòng khám (dùng dự phòng hoặc khi khoá khẩn cấp)
-   */
+  /** Never broadcast a terminal-bound unlock if its SSE socket happens to be offline. */
+  emitToTarget(
+    roomCode: string,
+    terminalId: string | undefined,
+    eventType: string,
+    payload: any,
+  ) {
+    const data = {
+      ...payload,
+      roomCode,
+      terminalId: terminalId || undefined,
+      serverTime: Date.now(),
+    };
+    if (terminalId) this.sendToTerminal(terminalId, eventType, data);
+    else this.broadcastToRoom(roomCode, eventType, data); // legacy clients only; native checks target
+  }
+
   broadcastToRoom(roomCode: string, eventType: string, payload: any) {
     const code = roomCode.toUpperCase().trim();
-    const termSet = this.roomTerminals.get(code);
-    if (!termSet || termSet.size === 0) return;
-
-    const message = `event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`;
-    for (const tid of Array.from(termSet)) {
-      const client = this.terminalClients.get(tid);
-      if (client) {
-        try {
-          client.write(message);
-        } catch {
-          this.terminalClients.delete(tid);
-          termSet.delete(tid);
-        }
-      }
-    }
+    for (const tid of this.roomTerminals.get(code) || [])
+      this.sendToTerminal(tid, eventType, payload);
   }
 
   /**
@@ -411,15 +499,15 @@ export class KioskService implements OnModuleInit {
    */
   broadcastScheduleUpdated(roomCode?: string) {
     if (roomCode) {
-      this.broadcastToRoom(roomCode, 'SCHEDULE_UPDATED', {
-        type: 'SCHEDULE_UPDATED',
+      this.broadcastToRoom(roomCode, "SCHEDULE_UPDATED", {
+        type: "SCHEDULE_UPDATED",
         roomCode,
         timestamp: new Date().toISOString(),
       });
     } else {
       for (const rCode of this.roomTerminals.keys()) {
-        this.broadcastToRoom(rCode, 'SCHEDULE_UPDATED', {
-          type: 'SCHEDULE_UPDATED',
+        this.broadcastToRoom(rCode, "SCHEDULE_UPDATED", {
+          type: "SCHEDULE_UPDATED",
           roomCode: rCode,
           timestamp: new Date().toISOString(),
         });
@@ -432,13 +520,80 @@ export class KioskService implements OnModuleInit {
    */
   lockRoom(roomCode: string, reason?: string) {
     const code = roomCode.toUpperCase().trim();
-    this.activeRoomUnlocks.delete(code);
-    this.broadcastToRoom(code, 'LOCK_EVENT', {
-      type: 'LOCK_TRIGGERED',
+    for (const [key, unlock] of this.activeRoomUnlocks) {
+      if (unlock.roomCode === code) this.activeRoomUnlocks.delete(key);
+    }
+    for (const session of this.sessions.values()) {
+      if (session.roomCode === code && session.status === "WAITING") {
+        session.status = "EXPIRED";
+        session.consumed = true;
+      }
+    }
+    this.broadcastToRoom(code, "LOCK_EVENT", {
+      type: "LOCK_TRIGGERED",
       roomCode: code,
-      reason: reason || 'Khoá phòng khám theo yêu cầu',
+      reason: reason || "Khoá phòng khám theo yêu cầu",
       timestamp: new Date().toISOString(),
     });
+  }
+
+  async authorizeItOverride(
+    roomCode: string,
+    terminalId: string | undefined,
+    pin: string,
+    ip: string,
+    reason?: string,
+  ) {
+    const target = kioskTargetKey(roomCode, terminalId);
+    if (
+      !this.pinAttempts.take(`ip:${ip}`) ||
+      !this.pinAttempts.take(`target:${target}`)
+    ) {
+      throw new HttpException(
+        "Đã vượt số lần nhập PIN. Vui lòng chờ 10 phút hoặc liên hệ quản trị.",
+        429,
+      );
+    }
+    if (
+      !matchesMasterPin(String(pin || "").trim(), await this.getItMasterPin())
+    ) {
+      await this.audit.log({
+        action: "KIOSK_IT_PIN_REJECTED",
+        module: "KIOSK",
+        entityId: roomCode,
+        ip,
+      });
+      throw new UnauthorizedException(
+        "Mã PIN khẩn cấp IT không chính xác hoặc chưa được cấu hình.",
+      );
+    }
+    const result = await this.recordItOverrideUnlock(roomCode, terminalId);
+    this.pinAttempts.reset(`target:${target}`);
+    this.pinAttempts.reset(`ip:${ip}`);
+    await this.audit.log({
+      action: "KIOSK_IT_OVERRIDE",
+      module: "KIOSK",
+      entityId: roomCode,
+      ip,
+      description: `Mở khoá CNTT máy trạm ${terminalId || "legacy"}: ${(reason || "Hỗ trợ kỹ thuật").slice(0, 300)}`,
+    });
+    this.emitToTarget(
+      roomCode.toUpperCase().trim(),
+      terminalId,
+      "UNLOCK_EVENT",
+      {
+        type: "UNLOCK_SUCCESS",
+        doctor: result.itDoctor,
+        shiftEndMs: result.shiftEndMs,
+        method: "IT_EMERGENCY_PIN",
+      },
+    );
+    return {
+      success: true,
+      message: "Đã mở khoá khẩn cấp phòng khám thành công.",
+      ...result,
+      serverTime: Date.now(),
+    };
   }
 
   /**
@@ -453,41 +608,68 @@ export class KioskService implements OnModuleInit {
     const GRACE_BUFFER_MS = lateMinutes * 60 * 1000;
 
     let shiftEndMs = now + 4 * 3600 * 1000; // Mặc định an toàn 4 tiếng nếu ngoài giờ ca
-    let currentShiftName = 'Mở khoá Khẩn cấp (IT)';
+    let currentShiftName = "Mở khoá Khẩn cấp (IT)";
 
     try {
       // 1. Kiểm tra xem phòng có ca nào đang trực chính thức không
       const onDutyRes = await this.integrationDuty.onDuty({ room: code }, now);
       if (onDutyRes?.onDuty && onDutyRes.onDuty.length > 0) {
         const item = onDutyRes.onDuty[0];
-        const iv = shiftInterval(item.dutyDate, item.shift.startTime, item.shift.endTime, item.shift.crossesMidnight);
+        const iv = shiftInterval(
+          item.dutyDate,
+          item.shift.startTime,
+          item.shift.endTime,
+          item.shift.crossesMidnight,
+        );
         shiftEndMs = iv.end + GRACE_BUFFER_MS;
         currentShiftName = `${item.shift.name} (Mở IT)`;
       } else {
         // 2. Nếu không có ca chính thức lúc này, tìm ca sắp bắt đầu hoặc ca kế tiếp trong ngày
-        const candidateDates = candidateDutyDates(now);
+        const candidateDates = [
+          ...candidateDutyDates(now),
+          addDays(bangkokToday(now), 1),
+        ];
         const allRosterRows = await this.loadActiveRoster(code, candidateDates);
+        allRosterRows.sort(
+          (a, b) =>
+            shiftInterval(a.dutyDate, a.startTime, a.endTime, a.crossesMidnight)
+              .start -
+            shiftInterval(b.dutyDate, b.startTime, b.endTime, b.crossesMidnight)
+              .start,
+        );
         for (const row of allRosterRows) {
-          const iv = shiftInterval(row.dutyDate, row.startTime, row.endTime, row.crossesMidnight);
-          // Ca đang trong thời gian ân hạn hoặc sắp bắt đầu
-          if (now < iv.end + GRACE_BUFFER_MS) {
+          const iv = shiftInterval(
+            row.dutyDate,
+            row.startTime,
+            row.endTime,
+            row.crossesMidnight,
+          );
+          if (now >= iv.start && now < iv.end + GRACE_BUFFER_MS) {
             shiftEndMs = iv.end + GRACE_BUFFER_MS;
             currentShiftName = `${row.shiftName} (Mở IT)`;
+            break;
+          }
+          if (now < iv.start) {
+            // Outside a shift, IT maintenance must end before the next doctor starts.
+            shiftEndMs = Math.min(shiftEndMs, iv.start);
             break;
           }
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi tra cứu ca khi mở IT override:', e?.message || e);
+      console.warn(
+        "[KioskService] Lỗi tra cứu ca khi mở IT override:",
+        e?.message || e,
+      );
     }
 
     const itDoctor = {
-      fullName: 'Kỹ thuật viên IT',
-      title: 'IT Support',
+      fullName: "Kỹ thuật viên IT",
+      title: "IT Support",
       shiftName: currentShiftName,
     };
 
-    this.activeRoomUnlocks.set(code, {
+    this.activeRoomUnlocks.set(kioskTargetKey(code, terminalId), {
       roomCode: code,
       doctor: itDoctor,
       shift: { shiftName: currentShiftName },
@@ -504,10 +686,10 @@ export class KioskService implements OnModuleInit {
     terminalId?: string,
     clientOrigin?: string,
     hostHeader?: string,
-    protocol: string = 'http',
+    protocol: string = "http",
   ) {
     const code = roomCode.toUpperCase().trim();
-    const tid = terminalId?.trim() || '';
+    const tid = terminalId?.trim() || "";
 
     // 1. Kiểm tra phòng khám trong database bằng select tiêu chuẩn (không dùng relational query)
     const matchedRooms = await this.db.db
@@ -518,12 +700,12 @@ export class KioskService implements OnModuleInit {
       })
       .from(dutyRooms)
       .where(
-        or(
-          eq(dutyRooms.code, code),
-          eq(dutyRooms.code, roomCode.trim()),
-          sql`lower(${dutyRooms.code}) = lower(${code})`,
-          sql`lower(${dutyRooms.name}) = lower(${code})`,
-          ilike(dutyRooms.name, `%${code}%`),
+        and(
+          eq(dutyRooms.active, true),
+          or(
+            sql`lower(${dutyRooms.code}) = lower(${code})`,
+            sql`lower(${dutyRooms.name}) = lower(${code})`,
+          ),
         ),
       )
       .limit(1);
@@ -531,14 +713,17 @@ export class KioskService implements OnModuleInit {
     const room = matchedRooms[0] || {
       id: 0,
       code: code,
-      name: `Phòng khám số ${code.replace(/^[^\d]*/, '') || code}`,
+      name: `Phòng khám số ${code.replace(/^[^\d]*/, "") || code}`,
     };
 
     // 2. Tra cứu ca trực hiện tại của phòng từ IntegrationDutyService (chuẩn theo lịch trực bệnh viện)
     let currentScheduled = null;
     const now = Date.now();
     try {
-      const onDutyRes = await this.integrationDuty.onDuty({ room: room.code }, now);
+      const onDutyRes = await this.integrationDuty.onDuty(
+        { room: room.code },
+        now,
+      );
       if (onDutyRes?.onDuty && onDutyRes.onDuty.length > 0) {
         const item = onDutyRes.onDuty[0];
         currentScheduled = {
@@ -556,8 +741,21 @@ export class KioskService implements OnModuleInit {
       } else {
         // Nếu hiện tại không có ca nào đang trực chính thức, kiểm tra xem có ca nào sắp bắt đầu (trong 60p)
         // hoặc vừa kết thúc (trong 30p giao ca) hay ca kế tiếp trong ngày
-        const candidateDates = candidateDutyDates(now);
-        const allRosterRows = await this.loadActiveRoster(room.code, candidateDates);
+        const candidateDates = [
+          ...candidateDutyDates(now),
+          addDays(bangkokToday(now), 1),
+        ];
+        const allRosterRows = await this.loadActiveRoster(
+          room.code,
+          candidateDates,
+        );
+        allRosterRows.sort(
+          (a, b) =>
+            shiftInterval(a.dutyDate, a.startTime, a.endTime, a.crossesMidnight)
+              .start -
+            shiftInterval(b.dutyDate, b.startTime, b.endTime, b.crossesMidnight)
+              .start,
+        );
 
         const earlyMinutes = await this.getEarlyCheckinMinutes();
         const lateMinutes = await this.getLateCheckoutMinutes();
@@ -568,7 +766,12 @@ export class KioskService implements OnModuleInit {
         let recentRow: any = null;
 
         for (const row of allRosterRows) {
-          const iv = shiftInterval(row.dutyDate, row.startTime, row.endTime, row.crossesMidnight);
+          const iv = shiftInterval(
+            row.dutyDate,
+            row.startTime,
+            row.endTime,
+            row.crossesMidnight,
+          );
 
           // Trường hợp 1: Chuẩn bị nhận ca (đến sớm trong vòng 60 phút)
           if (now >= iv.start - EARLY_BUFFER_MS && now < iv.start) {
@@ -589,7 +792,7 @@ export class KioskService implements OnModuleInit {
           }
         }
 
-        const selected = upcomingRow || recentRow;
+        const selected = recentRow || upcomingRow;
         if (selected) {
           currentScheduled = {
             dutyDate: selected.row.dutyDate,
@@ -609,51 +812,100 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (e: any) {
-      console.warn('[KioskService] Lỗi tra cứu lịch trực:', e?.message || e);
+      console.warn("[KioskService] Lỗi tra cứu lịch trực:", e?.message || e);
     }
 
     const qrExpiresSec = await this.getQrExpiresSeconds();
     const faceVerifyBufferSec = await this.getFaceVerifyBufferSeconds();
 
     // 3. Kiểm tra trạng thái mở khoá ca trực của phòng khám
-    const activeUnlock = this.activeRoomUnlocks.get(code);
+    const targetKey = kioskTargetKey(code, tid);
+    const activeUnlock = this.activeRoomUnlocks.get(targetKey);
     let isUnlocked = false;
     let unlockedDoctor = null;
     let shiftEndMs: number | null = null;
 
     if (activeUnlock) {
-      if (now > activeUnlock.shiftEndMs) {
+      if (now >= activeUnlock.shiftEndMs) {
         // Đã quá hạn ca trực + ân hạn -> Tự động xoá và khoá lại
-        this.activeRoomUnlocks.delete(code);
-        this.broadcastToRoom(code, 'LOCK_EVENT', {
-          type: 'AUTO_LOCK_SHIFT_EXPIRED',
+        this.activeRoomUnlocks.delete(targetKey);
+        this.emitToTarget(code, tid, "LOCK_EVENT", {
+          type: "AUTO_LOCK_SHIFT_EXPIRED",
           roomCode: code,
-          reason: 'Ca trực đã kết thúc và quá thời gian ân hạn.',
+          reason: "Ca trực đã kết thúc và quá thời gian ân hạn.",
           timestamp: new Date().toISOString(),
         });
       } else {
-        isUnlocked = true;
-        unlockedDoctor = activeUnlock.doctor;
-        shiftEndMs = activeUnlock.shiftEndMs;
+        // IT lease has its own bounded deadline. Biometric leases must still exist in the published roster.
+        if (activeUnlock.doctor?.userId) {
+          const rows = await this.loadActiveRoster(room.code, [
+            ...candidateDutyDates(now),
+            addDays(bangkokToday(now), 1),
+          ]);
+          const row = rows.find(
+            (r) =>
+              r.userId === activeUnlock.doctor.userId &&
+              r.dutyDate === activeUnlock.shift.dutyDate &&
+              r.shiftCode === activeUnlock.shift.shiftCode,
+          );
+          const grace = await this.getLateCheckoutMinutes();
+          const early = await this.getEarlyCheckinMinutes();
+          const interval =
+            row &&
+            shiftInterval(
+              row.dutyDate,
+              row.startTime,
+              row.endTime,
+              row.crossesMidnight,
+            );
+          if (
+            !interval ||
+            now < interval.start - early * 60_000 ||
+            now >= interval.end + grace * 60_000
+          ) {
+            this.activeRoomUnlocks.delete(targetKey);
+            this.emitToTarget(code, tid, "LOCK_EVENT", {
+              type: "ROSTER_REVOKED",
+              reason: "Lịch trực đã thay đổi.",
+            });
+          } else {
+            activeUnlock.shiftEndMs = interval.end + grace * 60_000;
+          }
+        }
+        if (this.activeRoomUnlocks.get(targetKey) === activeUnlock) {
+          isUnlocked = true;
+          unlockedDoctor = activeUnlock.doctor;
+          shiftEndMs = activeUnlock.shiftEndMs;
+        }
       }
     }
 
     // 4. Tạo hoặc lấy phiên QR còn hạn của đúng máy trạm (terminalId) này
-    let activeSession = Array.from(this.sessions.values()).find(
-      (s) =>
-        s.roomCode === code &&
-        (!tid || s.terminalId === tid) &&
-        s.status === 'WAITING' &&
-        s.expiresAt > Date.now(),
+    const candidates = Array.from(this.sessions.values()).filter(
+      (session) =>
+        sameKioskTarget(session, { roomCode: code, terminalId: tid }) &&
+        session.status === "WAITING" &&
+        !session.consumed &&
+        session.expiresAt > Date.now(),
     );
-
-    if (!activeSession) {
-      activeSession = this.createQrSession(code, room.name, tid, clientOrigin, hostHeader, protocol, qrExpiresSec);
+    // A polling/reconnecting workstation must keep the opaque overlay for an already-scanned session.
+    let activeSession =
+      candidates.find((session) => !!session.scannedAt) || candidates[0];
+    if (!activeSession && !isUnlocked && matchedRooms.length > 0) {
+      activeSession = this.createQrSession(
+        code,
+        room.name,
+        tid,
+        clientOrigin,
+        hostHeader,
+        protocol,
+        qrExpiresSec,
+      );
     }
-
-    const remainingSec = Math.max(0, Math.round((activeSession.expiresAt - Date.now()) / 1000));
-
     return {
+      protocolVersion: 2,
+      terminalId: tid,
+      roomExists: matchedRooms.length > 0,
       room: { code: room.code, name: room.name },
       isUnlocked,
       unlocked: isUnlocked,
@@ -661,15 +913,56 @@ export class KioskService implements OnModuleInit {
       shiftEndMs,
       currentScheduled,
       serverTime: Date.now(),
-      qrSession: {
-        sessionId: activeSession.sessionId,
-        qrUrl: activeSession.qrUrl,
-        expiresInSeconds: remainingSec,
-        totalExpiresSeconds: qrExpiresSec,
-        faceVerifyBufferSeconds: faceVerifyBufferSec,
-        challengeSequence: activeSession.challengeSequence,
-      },
+      qrSession:
+        !isUnlocked && activeSession
+          ? {
+              sessionId: activeSession.sessionId,
+              qrUrl: activeSession.qrUrl,
+              scannedAt: activeSession.scannedAt || null,
+              expiresAt: activeSession.expiresAt,
+              status: activeSession.scannedAt ? "SCANNED" : "WAITING",
+              expiresInSeconds: Math.max(
+                0,
+                Math.ceil((activeSession.expiresAt - Date.now()) / 1000),
+              ),
+              totalExpiresSeconds: qrExpiresSec,
+              faceVerifyBufferSeconds:
+                activeSession.faceVerifyBufferSeconds || faceVerifyBufferSec,
+              challengeSequence: activeSession.challengeSequence,
+            }
+          : null,
     };
+  }
+
+  async refreshKioskSession(
+    roomCode: string,
+    terminalId?: string,
+    clientOrigin?: string,
+    hostHeader?: string,
+    protocol = "http",
+  ) {
+    const target = { roomCode, terminalId };
+    const sessions = Array.from(this.sessions.values()).filter(
+      (s) => sameKioskTarget(s, target) && s.status === "WAITING",
+    );
+    const scanned = sessions.find(
+      (s) => s.scannedAt && !s.consumed && s.expiresAt > Date.now(),
+    );
+    if (!scanned) {
+      for (const s of sessions) {
+        s.status = "EXPIRED";
+        s.consumed = true;
+      }
+    }
+    const status = await this.getKioskStatus(
+      roomCode,
+      terminalId,
+      clientOrigin,
+      hostHeader,
+      protocol,
+    );
+    // Preserve existing web refresh response fields as well as the v2 status snapshot.
+    return { ...status, ...status.qrSession, success: true };
   }
 
   createQrSession(
@@ -678,28 +971,32 @@ export class KioskService implements OnModuleInit {
     terminalId?: string,
     clientOrigin?: string,
     hostHeader?: string,
-    protocol: string = 'http',
-    expiresInSeconds: number = 90,
+    protocol: string = "http",
+    expiresInSeconds: number = 15,
   ): KioskSession {
     const code = roomCode.toUpperCase().trim();
-    const tid = terminalId?.trim() || '';
+    const tid = terminalId?.trim() || "";
     const sessionId = crypto.randomUUID();
 
     // Xác định URL cơ sở công khai (Ưu tiên SCAN_BASE_URL cấu hình HTTPS nếu có)
-    let baseUrl = '';
-    const configuredScanBase = process.env.SCAN_BASE_URL || process.env.NEXT_PUBLIC_SCAN_BASE_URL;
-    if (configuredScanBase && configuredScanBase.startsWith('http')) {
-      baseUrl = configuredScanBase.replace(/\/+$/, '');
-    } else if (clientOrigin && clientOrigin.startsWith('http')) {
-      baseUrl = clientOrigin.replace(/\/+$/, '');
+    let baseUrl = "";
+    const configuredScanBase =
+      process.env.SCAN_BASE_URL || process.env.NEXT_PUBLIC_SCAN_BASE_URL;
+    if (configuredScanBase && configuredScanBase.startsWith("http")) {
+      baseUrl = configuredScanBase.replace(/\/+$/, "");
+    } else if (clientOrigin && clientOrigin.startsWith("http")) {
+      baseUrl = clientOrigin.replace(/\/+$/, "");
     } else {
-      let host = hostHeader || process.env.PUBLIC_URL || 'localhost:3000';
-      if (host.includes('api:') || host === 'api' || host.endsWith(':4000')) {
-        const publicUrl = process.env.PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL;
+      let host = hostHeader || process.env.PUBLIC_URL || "localhost:3000";
+      if (host.includes("api:") || host === "api" || host.endsWith(":4000")) {
+        const publicUrl =
+          process.env.PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL;
         if (publicUrl) {
-          baseUrl = publicUrl.replace(/\/+$/, '');
+          baseUrl = publicUrl.replace(/\/+$/, "");
         } else {
-          host = host.replace(/api:4000/g, 'localhost:3000').replace(/:4000$/, ':3000');
+          host = host
+            .replace(/api:4000/g, "localhost:3000")
+            .replace(/:4000$/, ":3000");
           baseUrl = `${protocol}://${host}`;
         }
       } else {
@@ -709,21 +1006,25 @@ export class KioskService implements OnModuleInit {
 
     const qrUrl = `${baseUrl}/scan/${sessionId}`;
 
-    const challengeSequence = ['PASSIVE_LIVENESS'];
-    const flashColorSequence = ['#0284c7', '#16a34a', '#dc2626'];
-    const ttlSeconds = Math.max(15, Math.min(600, expiresInSeconds || 30));
+    const challengeSequence = ["PASSIVE_LIVENESS"];
+    const flashColorSequence = ["#0284c7", "#16a34a", "#dc2626"];
+    const ttlSeconds = Math.max(
+      10,
+      Math.min(600, Math.floor(expiresInSeconds || 15)),
+    );
 
+    const createdAt = Date.now();
     const session: KioskSession = {
       sessionId,
       roomCode: code,
       roomName,
       terminalId: tid,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + ttlSeconds * 1000,
+      createdAt,
+      expiresAt: createdAt + ttlSeconds * 1000,
       qrUrl,
       challengeSequence,
       flashColorSequence,
-      status: 'WAITING',
+      status: "WAITING",
       consumed: false,
     };
 
@@ -731,15 +1032,15 @@ export class KioskService implements OnModuleInit {
     // Khi màn hình Kiosk sinh mã QR mới, TẤT CẢ các mã QR cũ chưa được quét phải bị HỦY NGAY LẬP TỨC!
     const now = Date.now();
     for (const [sId, s] of this.sessions.entries()) {
-      const isTarget = (tid && s.terminalId === tid) || s.roomCode === code;
-      if (isTarget && s.status === 'WAITING' && sId !== sessionId) {
+      const isTarget = sameKioskTarget(s, { roomCode: code, terminalId: tid });
+      if (isTarget && s.status === "WAITING" && sId !== sessionId) {
         // Nếu phiên cũ đã được quét thật sự tại màn hình và đang trong thời gian đệm xác thực:
         // Bảo lưu tuyệt đối phiên cho người đang đứng trước màn hình xác thực
         if (s.scannedAt && now <= s.expiresAt) {
           continue;
         }
         // Tất cả phiên cũ chưa được quét hoặc đã quá hạn -> HỦY BỎ VÀ ĐÁNH DẤU HẾT HẠN NGAY!
-        s.status = 'EXPIRED';
+        s.status = "EXPIRED";
         s.consumed = true;
         this.sessions.delete(sId);
       }
@@ -757,144 +1058,78 @@ export class KioskService implements OnModuleInit {
       userAgent?: string;
       clientEnv?: string;
     },
-  ): Promise<{ session: KioskSession | null; error?: string; faceVerifyBufferSeconds?: number }> {
+  ): Promise<{
+    session: KioskSession | null;
+    error?: string;
+    faceVerifyBufferSeconds?: number;
+  }> {
+    // Resolve config before entering the synchronous claim critical section. Recheck expiry afterwards.
+    const bufferSec = await this.getFaceVerifyBufferSeconds();
     const s = this.sessions.get(sessionId);
-    if (!s) {
-      return {
-        session: null,
-        error: 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng nhìn lên màn hình phòng khám để quét mã mới.',
-      };
-    }
-    if (s.status === 'VERIFIED') return { session: s };
-    if (s.status === 'EXPIRED' || s.consumed) {
-      return {
-        session: null,
-        error: 'Mã QR này đã hết hạn hoặc đã được sử dụng. Vui lòng nhìn lên màn hình phòng khám để quét mã mới.',
-      };
-    }
-
-    const now = Date.now();
-
-    // 1. KIỂM TRA HẾT HẠN NGAY TỨC THÌ:
-    // Nếu mã QR chưa từng được quét và thời gian hiện tại đã vượt quá hạn hiển thị ban đầu -> HẾT HẠN TỨC THÌ!
-    if (!s.scannedAt && now > s.expiresAt) {
-      s.status = 'EXPIRED';
-      s.consumed = true;
-      this.sessions.delete(sessionId);
-      return {
-        session: null,
-        error: 'Mã QR này đã hết hạn trên màn hình phòng khám. Vui lòng nhìn lên màn hình máy tính để quét mã mới.',
-      };
-    }
-
-    // Nếu đã quét trước đó nhưng đã quá hạn đệm cho phép -> HẾT HẠN!
-    if (now > s.expiresAt) {
-      s.status = 'EXPIRED';
-      s.consumed = true;
-      this.sessions.delete(sessionId);
-      return {
-        session: null,
-        error: 'Phiên xác thực đã quá thời gian cho phép. Vui lòng quét lại mã mới trên màn hình phòng khám.',
-      };
-    }
-
-    // 2. CHỐNG GIAN LẬN CHỤP ẢNH MÃ QR GỬI ĐI (MÃ ĐÃ BỊ THAY THẾ TRÊN MÀN HÌNH):
-    // Nếu trên cùng máy trạm hoặc phòng khám này ĐÃ CÓ MÃ QR MỚI HƠN được sinh ra (mã này đã biến mất khỏi màn hình PC):
-    // Bất kỳ ai quét mã này (từ ảnh chụp gửi đi) phải bị CHẶN ĐỨNG NGAY LẬP TỨC!
-    if (!s.scannedAt) {
-      for (const [otherId, otherSession] of this.sessions.entries()) {
-        const isSameTarget =
-          (s.terminalId && otherSession.terminalId === s.terminalId) || otherSession.roomCode === s.roomCode;
-        if (isSameTarget && otherId !== sessionId && otherSession.createdAt > s.createdAt) {
-          s.status = 'EXPIRED';
-          s.consumed = true;
-          this.sessions.delete(sessionId);
-          return {
-            session: null,
-            error:
-              'Mã QR này đã cũ và đã được thay thế bằng mã mới trên màn hình phòng khám. Vui lòng nhìn trực tiếp vào màn hình máy tính để quét mã đang hiển thị.',
-          };
-        }
-      }
-    }
-
     const token = meta?.claimToken?.trim();
-    const userAgent = meta?.userAgent || '';
-    const clientEnv = meta?.clientEnv || '';
-
-    // 1. PHÁT HIỆN TRÌNH DUYỆT NHÚNG / APP QUÉT QR TRÊN CẢ ANDROID & IOS (UNIVERSAL IN-APP & SCANNER APP DETECTOR):
-    // - Trên Android: các app quét mã (Lens, Barcode Scanner, v.v.) mở qua Intent hoặc nhúng WebView.
-    // - Trên iOS: các app quét mã từ App Store hoặc MXH mở qua WKWebView (thiếu Version/xx Safari, hoặc có webkit messageHandlers)
-    //   hoặc có user-agent đặc trưng của app bên thứ 3.
-    // Bác sĩ quét trực tiếp tại màn hình bằng ứng dụng Camera mặc định của iOS / Android sẽ luôn mở trực tiếp
-    // bằng Safari gốc hoặc Chrome gốc (có referrer rỗng và user-agent trình duyệt chuẩn).
-    const isBlockedApp =
-      clientEnv === 'in-app-webview' ||
-      clientEnv === 'forwarded-photo' ||
-      clientEnv === 'scanner-app' ||
-      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(userAgent) ||
-      (/Version\/4\.0.*Chrome/i.test(userAgent) && /Android/i.test(userAgent)) ||
-      (/\bwv\b/i.test(userAgent)) ||
-      (/iPhone|iPad|iPod/i.test(userAgent) && !/Version\/[\d.]+.*Safari/i.test(userAgent) && /Mobile\//i.test(userAgent));
-
-    if (isBlockedApp) {
-      s.status = 'EXPIRED';
-      s.consumed = true;
-      this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN MÃ QR MỞ QUA APP BÊN THỨ 3 / ẢNH CHỤP CHUYỂN TIẾP (iOS/Android): Phiên ${sessionId}. ĐÃ VÔ HIỆU HÓA LẬP TỨC!`,
+    const reject = (error: string, expire = false) => {
+      if (s && expire && s.status !== "VERIFIED") {
+        s.status = "EXPIRED";
+        s.consumed = true;
+      }
+      return { session: null, error };
+    };
+    if (
+      !s ||
+      s.status === "EXPIRED" ||
+      (s.consumed && s.status !== "VERIFIED") ||
+      Date.now() >= s.expiresAt
+    ) {
+      return reject(
+        "Phiên QR đã hết hạn. Vui lòng quét mã mới trên màn hình phòng khám.",
+        true,
       );
-      return {
-        session: null,
-        error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc qua ứng dụng tin nhắn/mạng xã hội. Để đảm bảo an ninh điểm danh, Bác sĩ vui lòng có mặt trực tiếp tại phòng khám và dùng ứng dụng Máy ảnh (Camera) của điện thoại để quét mã QR trên màn hình máy tính.',
-      };
     }
-
-    // 2. CHỐNG CHUYỂN TIẾP ĐA THIẾT BỊ (MULTI-DEVICE CLAIM TOKEN):
-    if (s.claimedBy && token && s.claimedBy !== token) {
-      // HỦY DIỆT MÃ NGAY LẬP TỨC!
-      s.status = 'EXPIRED';
-      s.consumed = true;
-      this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN MÃ QR BỊ CHUYỂN TIẾP: Phiên ${sessionId} bị thiết bị thứ hai (${token}) mở sau khi thiết bị (${s.claimedBy}) đã quét. ĐÃ HỦY MÃ LẬP TỨC!`,
+    if (isBlockedKioskClient(meta?.userAgent, meta?.clientEnv)) {
+      return reject(
+        "Vui lòng dùng ứng dụng Camera mặc định để quét trực tiếp QR tại phòng khám.",
+        true,
       );
-      return {
-        session: null,
-        error:
-          'CẢNH BÁO AN NINH: Phát hiện mã QR này đã bị chuyển tiếp sang thiết bị khác. Mã đã bị vô hiệu hóa ngay lập tức! Bác sĩ vui lòng có mặt trực tiếp tại phòng khám để quét mã.',
-      };
     }
-
-    // 3. Khóa mã QR với thiết bị đầu tiên mở nó
-    if (!s.claimedBy && token) {
+    if (!token || token.length < 16 || token.length > 256) {
+      return reject(
+        "Không xác định được thiết bị quét. Vui lòng mở lại bằng trình duyệt hệ thống.",
+      );
+    }
+    if (s.claimedBy && s.claimedBy !== token) {
+      return reject(
+        "Mã QR đã được tiếp nhận trên thiết bị khác. Vui lòng quét mã mới tại phòng khám.",
+        true,
+      );
+    }
+    if (s.status === "VERIFIED")
+      return { session: s, faceVerifyBufferSeconds: s.faceVerifyBufferSeconds };
+    if (!s.scannedAt) {
       s.claimedBy = token;
       s.claimedIp = meta?.clientIp;
       s.claimedUserAgent = meta?.userAgent;
-    }
-
-    if (!s.scannedAt) {
       s.scannedAt = Date.now();
-    }
-    const bufferSec = await this.getFaceVerifyBufferSeconds();
-    s.expiresAt = Math.max(s.expiresAt, Date.now() + bufferSec * 1000);
-
-    // Bắn sự kiện báo máy trạm Kiosk PC biết rằng Bác sĩ đã quét mã QR
-    if (s.terminalId) {
-      this.sendToTerminal(s.terminalId, 'SESSION_SCANNED', {
+      s.faceVerifyBufferSeconds = bufferSec;
+      s.expiresAt = s.scannedAt + bufferSec * 1000; // Fixed deadline. Reloading never extends the buffer.
+      this.emitToTarget(s.roomCode, s.terminalId, "SESSION_SCANNED", {
         sessionId: s.sessionId,
-        roomCode: s.roomCode,
+        scannedAt: s.scannedAt,
+        expiresAt: s.expiresAt,
         faceVerifyBufferSeconds: bufferSec,
       });
     }
-    return { session: s, faceVerifyBufferSeconds: bufferSec };
+    return {
+      session: s,
+      faceVerifyBufferSeconds: s.faceVerifyBufferSeconds || bufferSec,
+    };
   }
 
   getSession(sessionId: string): KioskSession | null {
     const s = this.sessions.get(sessionId);
     if (!s) return null;
-    if (s.status === 'VERIFIED') return s;
-    if (Date.now() > s.expiresAt) {
-      s.status = 'EXPIRED';
+    if (s.status === "VERIFIED") return s;
+    if (Date.now() >= s.expiresAt) {
+      s.status = "EXPIRED";
     }
     return s;
   }
@@ -906,6 +1141,8 @@ export class KioskService implements OnModuleInit {
     const code = roomCode.toUpperCase().trim();
     return this.db.db
       .select({
+        slotId: dutySlots.id,
+        roomId: dutyRooms.id,
         dutyDate: dutySlots.dutyDate,
         roomCode: dutyRooms.code,
         roomName: dutyRooms.name,
@@ -929,16 +1166,22 @@ export class KioskService implements OnModuleInit {
       .where(
         and(
           inArray(dutySlots.dutyDate, dates),
-          inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
+          inArray(dutyPeriods.status, ["CONG_BO", "DA_CHOT"]),
           or(
             eq(dutyRooms.code, code),
             eq(dutyRooms.code, roomCode.trim()),
             sql`lower(${dutyRooms.code}) = lower(${code})`,
             sql`lower(${dutyRooms.name}) = lower(${code})`,
-            ilike(dutyRooms.name, `%${code}%`),
           ),
           eq(dutyRooms.active, true),
           eq(users.active, true),
+          sql`not exists (
+            select 1 from ${dutyAbsences}
+            where ${dutyAbsences.userId} = ${users.id}
+              and ${dutyAbsences.endDate} >= ${dutySlots.dutyDate}
+              and ${dutyAbsences.startDate} <= ${dutySlots.dutyDate} +
+                case when ${dutyShiftTypes.crossesMidnight} or ${dutyShiftTypes.endTime} <= ${dutyShiftTypes.startTime} then 1 else 0 end
+          )`,
         ),
       )
       .orderBy(asc(dutyShiftTypes.startTime));
@@ -951,13 +1194,17 @@ export class KioskService implements OnModuleInit {
   // --- 2. GỌI MÁY CHỦ AI (VPS 2) & SO KHỚP SINH TRẮC HỌC ---
 
   async extractEmbeddingFromAi(imageBase64: string): Promise<number[]> {
-    let errorDetail = '';
+    let errorDetail = "";
     try {
-      const resp = await fetch(`${this.aiServiceUrl}/api/ai/extract-embedding`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: imageBase64 }),
-      });
+      const resp = await fetch(
+        `${this.aiServiceUrl}/api/ai/extract-embedding`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(20_000),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_base64: imageBase64 }),
+        },
+      );
       if (resp.ok) {
         const data: any = await resp.json();
         if (data.success && Array.isArray(data.embedding)) {
@@ -970,19 +1217,28 @@ export class KioskService implements OnModuleInit {
         }
       }
     } catch (err: any) {
-      console.warn(`[KioskService] Không gọi được AI Engine (${this.aiServiceUrl}):`, err?.message);
+      console.warn(
+        `[KioskService] Không gọi được AI Engine (${this.aiServiceUrl}):`,
+        err?.message,
+      );
     }
     if (errorDetail) {
       throw new BadRequestException(errorDetail);
     }
-    throw new BadRequestException('Máy chủ AI không thể trích xuất vector khuôn mặt. Vui lòng thử lại.');
+    throw new BadRequestException(
+      "Máy chủ AI không thể trích xuất vector khuôn mặt. Vui lòng thử lại.",
+    );
   }
 
-  async verifyLivenessWithAi(imageBase64: string, challenges: string[]): Promise<{ isLive: boolean; reason?: string }> {
+  async verifyLivenessWithAi(
+    imageBase64: string,
+    challenges: string[],
+  ): Promise<{ isLive: boolean; reason?: string }> {
     try {
       const resp = await fetch(`${this.aiServiceUrl}/api/ai/liveness-pad`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        signal: AbortSignal.timeout(20_000),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image_base64: imageBase64,
           challenges_passed: challenges,
@@ -993,10 +1249,18 @@ export class KioskService implements OnModuleInit {
         return { isLive: !!data.is_live, reason: data.reason };
       }
       const errJson: any = await resp.json().catch(() => null);
-      return { isLive: false, reason: errJson?.detail || 'Không thể thẩm định người thật' };
+      return {
+        isLive: false,
+        reason: errJson?.detail || "Không thể thẩm định người thật",
+      };
     } catch (err: any) {
-      console.warn(`[KioskService] Lỗi gọi Liveness AI (${this.aiServiceUrl}):`, err?.message);
-      throw new BadRequestException(`Không thể kết nối đến máy chủ AI thẩm định người thật (${this.aiServiceUrl}). Vui lòng kiểm tra lại dịch vụ.`);
+      console.warn(
+        `[KioskService] Lỗi gọi Liveness AI (${this.aiServiceUrl}):`,
+        err?.message,
+      );
+      throw new BadRequestException(
+        `Không thể kết nối đến máy chủ AI thẩm định người thật (${this.aiServiceUrl}). Vui lòng kiểm tra lại dịch vụ.`,
+      );
     }
   }
 
@@ -1006,14 +1270,18 @@ export class KioskService implements OnModuleInit {
   ): Promise<{ isLive: boolean; reason?: string; embedding: number[] }> {
     // 1. Thử gọi endpoint tối ưu gộp 1 lượt: /api/ai/verify-and-extract
     try {
-      const resp = await fetch(`${this.aiServiceUrl}/api/ai/verify-and-extract`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_base64: imageBase64,
-          challenges_passed: challenges,
-        }),
-      });
+      const resp = await fetch(
+        `${this.aiServiceUrl}/api/ai/verify-and-extract`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(20_000),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image_base64: imageBase64,
+            challenges_passed: challenges,
+          }),
+        },
+      );
 
       if (resp.ok) {
         const data: any = await resp.json();
@@ -1026,7 +1294,7 @@ export class KioskService implements OnModuleInit {
         if (data.is_live === false) {
           return {
             isLive: false,
-            reason: data.reason || 'Không vượt qua bài kiểm tra người thật',
+            reason: data.reason || "Không vượt qua bài kiểm tra người thật",
             embedding: [],
           };
         }
@@ -1036,7 +1304,9 @@ export class KioskService implements OnModuleInit {
       }
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
-      console.warn(`[KioskService] Endpoint verify-and-extract không khả dụng (${err?.message}), fallback về 2 luồng song song.`);
+      console.warn(
+        `[KioskService] Endpoint verify-and-extract không khả dụng (${err?.message}), fallback về 2 luồng song song.`,
+      );
     }
 
     // 2. Fallback: chạy song song (Promise.all) thay vì tuần tự
@@ -1063,16 +1333,35 @@ export class KioskService implements OnModuleInit {
     clientEnv?: string;
     userAgent?: string;
   }) {
-    const { sessionId, snapshotBase64, completedChallenges, deviceInfo, claimToken } = params;
+    const {
+      sessionId,
+      snapshotBase64,
+      completedChallenges,
+      deviceInfo,
+      claimToken,
+    } = params;
 
     const session = this.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.');
+      throw new BadRequestException(
+        "Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.",
+      );
+    }
+
+    if (
+      !session.scannedAt ||
+      !session.claimedBy ||
+      !claimToken ||
+      session.claimedBy !== claimToken.trim()
+    ) {
+      throw new ForbiddenException(
+        "Thiết bị xác thực không trùng khớp với thiết bị đã quét QR.",
+      );
     }
 
     // NẾU PHIÊN NÀY ĐÃ ĐƯỢC XÁC THỰC THÀNH CÔNG RỒI:
     // Trả về thành công ngay lập tức! (Tránh lỗi khi điện thoại gửi thêm frame hoặc người dùng nhấn quét lại/reconnect)
-    if (session.status === 'VERIFIED') {
+    if (session.status === "VERIFIED") {
       return {
         success: true,
         message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
@@ -1081,48 +1370,56 @@ export class KioskService implements OnModuleInit {
       };
     }
 
-    if (session.status !== 'WAITING') {
-      throw new BadRequestException('Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.');
+    if (session.status !== "WAITING") {
+      throw new BadRequestException(
+        "Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.",
+      );
     }
 
     if (session.consumed) {
-      throw new BadRequestException('Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!');
+      throw new BadRequestException(
+        "Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!",
+      );
     }
 
-    if (Date.now() > session.expiresAt) {
-      session.status = 'EXPIRED';
+    if (Date.now() >= session.expiresAt) {
+      session.status = "EXPIRED";
       session.consumed = true;
       this.sessions.delete(sessionId);
-      throw new BadRequestException('Phiên quét QR đã quá thời gian cho phép. Vui lòng quét lại trên màn hình phòng khám.');
+      throw new BadRequestException(
+        "Phiên quét QR đã quá thời gian cho phép. Vui lòng quét lại trên màn hình phòng khám.",
+      );
     }
 
     // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp / App quét mã trên iOS và Android
-    const isBlockedApp =
-      params.clientEnv === 'in-app-webview' ||
-      params.clientEnv === 'forwarded-photo' ||
-      params.clientEnv === 'scanner-app' ||
-      /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(params.userAgent || '') ||
-      (/Version\/4\.0.*Chrome/i.test(params.userAgent || '') && /Android/i.test(params.userAgent || '')) ||
-      (/\bwv\b/i.test(params.userAgent || '')) ||
-      (/iPhone|iPad|iPod/i.test(params.userAgent || '') && !/Version\/[\d.]+.*Safari/i.test(params.userAgent || '') && /Mobile\//i.test(params.userAgent || ''));
+    const isBlockedApp = isBlockedKioskClient(
+      params.userAgent,
+      params.clientEnv,
+    );
 
     if (isBlockedApp) {
-      session.status = 'EXPIRED';
+      session.status = "EXPIRED";
       session.consumed = true;
       throw new ForbiddenException(
-        'CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng quét mã/tin nhắn. Hệ thống từ chối mở máy trạm!',
+        "CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng quét mã/tin nhắn. Hệ thống từ chối mở máy trạm!",
       );
     }
 
     // 2. Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link sang máy khác)
     const reqClaimToken = claimToken?.trim();
-    if (session.claimedBy && reqClaimToken && session.claimedBy !== reqClaimToken) {
-      session.status = 'EXPIRED';
+    if (
+      session.claimedBy &&
+      reqClaimToken &&
+      session.claimedBy !== reqClaimToken
+    ) {
+      session.status = "EXPIRED";
       session.consumed = true;
       this.logger.warn(
         `[KioskSecurity] PHÁT HIỆN GIAN LẬN: Thiết bị gửi ảnh (${reqClaimToken}) không khớp với thiết bị quét mã QR gốc (${session.claimedBy}). Đã hủy phiên ${sessionId}!`,
       );
-      throw new ForbiddenException('CẢNH BÁO AN NINH: Thiết bị xác thực khuôn mặt không trùng khớp với thiết bị quét mã QR gốc. Nghi vấn chuyển tiếp mã từ xa!');
+      throw new ForbiddenException(
+        "CẢNH BÁO AN NINH: Thiết bị xác thực khuôn mặt không trùng khớp với thiết bị quét mã QR gốc. Nghi vấn chuyển tiếp mã từ xa!",
+      );
     }
 
     // Mutex chống xử lý trùng lặp nhiều frame cùng lúc
@@ -1130,22 +1427,27 @@ export class KioskService implements OnModuleInit {
       return {
         success: false,
         isProcessing: true,
-        message: 'Đang xử lý nhận diện khuôn mặt, vui lòng giữ nguyên máy...',
+        message: "Đang xử lý nhận diện khuôn mặt, vui lòng giữ nguyên máy...",
       };
     }
     session.isVerifying = true;
 
     try {
       // 1. Gọi AI Engine kiểm tra người thật ISO 30107 PAD & trích xuất vector embedding (Gộp 1 lượt siêu tốc)
-      const challenges = completedChallenges || ['PASSIVE_LIVENESS'];
-      const aiResult = await this.verifyAndExtractAi(snapshotBase64, challenges);
+      const challenges = completedChallenges || ["PASSIVE_LIVENESS"];
+      const aiResult = await this.verifyAndExtractAi(
+        snapshotBase64,
+        challenges,
+      );
 
       if (!aiResult.isLive) {
         session.failCount = (session.failCount || 0) + 1;
         if (session.failCount >= 5) {
           session.consumed = true;
         }
-        throw new BadRequestException(`AI từ chối: Phát hiện hình ảnh giả mạo (${aiResult.reason}).`);
+        throw new BadRequestException(
+          `AI từ chối: Phát hiện hình ảnh giả mạo (${aiResult.reason}).`,
+        );
       }
 
       const probeVector = aiResult.embedding;
@@ -1165,7 +1467,9 @@ export class KioskService implements OnModuleInit {
         .where(eq(users.active, true));
 
       if (allBiometrics.length === 0) {
-        throw new BadRequestException('Hệ thống chưa có hồ sơ khuôn mặt nào được đăng ký. Vui lòng liên hệ KHTH/IT.');
+        throw new BadRequestException(
+          "Hệ thống chưa có hồ sơ khuôn mặt nào được đăng ký. Vui lòng liên hệ KHTH/IT.",
+        );
       }
 
       // So khớp Cosine Similarity
@@ -1176,14 +1480,17 @@ export class KioskService implements OnModuleInit {
         const enrolledVector = this.decryptDescriptor(bio.faceDescriptor);
         if (!enrolledVector) continue;
 
-        const cosine = this.calculateCosineSimilarity(probeVector, enrolledVector);
+        const cosine = this.calculateCosineSimilarity(
+          probeVector,
+          enrolledVector,
+        );
         if (cosine > maxCosine) {
           maxCosine = cosine;
           bestMatch = bio;
         }
       }
 
-      if (!bestMatch || maxCosine < 0.50) {
+      if (!bestMatch || maxCosine < 0.5) {
         session.failCount = (session.failCount || 0) + 1;
         if (session.failCount >= 8) {
           session.consumed = true;
@@ -1195,9 +1502,17 @@ export class KioskService implements OnModuleInit {
 
       // 3. KIỂM TRA LỊCH TRỰC CỦA BÁC SĨ TẠI PHÒNG KHÁM
       const now = Date.now();
-      const candidateDates = candidateDutyDates(now);
-      const allRosterRows = await this.loadActiveRoster(session.roomCode, candidateDates);
-      const doctorSlots = allRosterRows.filter((s) => s.userId === bestMatch.userId);
+      const candidateDates = [
+        ...candidateDutyDates(now),
+        addDays(bangkokToday(now), 1),
+      ];
+      const allRosterRows = await this.loadActiveRoster(
+        session.roomCode,
+        candidateDates,
+      );
+      const doctorSlots = allRosterRows.filter(
+        (s) => s.userId === bestMatch.userId,
+      );
 
       if (doctorSlots.length === 0) {
         throw new ForbiddenException(
@@ -1215,10 +1530,18 @@ export class KioskService implements OnModuleInit {
       let minDiff = Infinity;
 
       for (const slot of doctorSlots) {
-        const iv = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
+        const iv = shiftInterval(
+          slot.dutyDate,
+          slot.startTime,
+          slot.endTime,
+          slot.crossesMidnight,
+        );
 
         // Nếu thời điểm hiện tại nằm trong khung giờ: từ (giờ bắt đầu - earlyMinutes) đến (giờ kết thúc + lateMinutes)
-        if (now >= iv.start - EARLY_CHECKIN_MS && now <= iv.end + LATE_CHECKOUT_MS) {
+        if (
+          now >= iv.start - EARLY_CHECKIN_MS &&
+          now <= iv.end + LATE_CHECKOUT_MS
+        ) {
           matchedSlot = { slot, iv };
           break;
         }
@@ -1250,33 +1573,55 @@ export class KioskService implements OnModuleInit {
 
       const currentShift = matchedSlot.slot;
 
+      if (
+        session.status !== "WAITING" ||
+        session.consumed ||
+        Date.now() >= session.expiresAt
+      ) {
+        throw new ForbiddenException(
+          "Phiên xác thực đã hết hạn hoặc bị huỷ trong lúc AI xử lý. Vui lòng quét QR mới.",
+        );
+      }
+
       // 4. Ghi nhận điểm danh vào bảng duty_attendance trong CSDL Postgres
       const attendanceId = crypto.randomUUID();
       await this.db.db.insert(dutyAttendance).values({
         id: attendanceId,
+        slotId: currentShift.slotId,
+        roomId: currentShift.roomId,
         roomCode: session.roomCode,
         roomName: session.roomName,
         userId: bestMatch.userId,
         username: bestMatch.username,
         fullName: bestMatch.fullName,
         title: bestMatch.title,
-        shiftCode: currentShift.shiftCode || 'CA_TRUC',
-        shiftName: currentShift.shiftName || 'Ca làm việc',
-        status: 'ON_TIME',
+        shiftCode: currentShift.shiftCode || "CA_TRUC",
+        shiftName: currentShift.shiftName || "Ca làm việc",
+        status: "ON_TIME",
         confidenceScore: maxCosine,
-        method: 'AI_FACIAL_BIOMETRICS',
-        deviceInfo: deviceInfo || 'Mobile Web Camera',
+        method: "AI_FACIAL_BIOMETRICS",
+        deviceInfo: deviceInfo || "Mobile Web Camera",
       });
 
+      if (
+        session.status !== "WAITING" ||
+        session.consumed ||
+        Date.now() >= session.expiresAt
+      ) {
+        throw new ForbiddenException(
+          "Phiên đã hết hạn trong lúc ghi nhận. Máy trạm vẫn khoá, vui lòng quét lại QR.",
+        );
+      }
+
       // 5. Cập nhật phiên & BẮN SỰ KIỆN SSE MỞ KHOÁ ĐÍCH DANH DUY NHẤT MÁY TRẠM PHÒNG KHÁM (UNICAST)
-      session.status = 'VERIFIED';
+      session.status = "VERIFIED";
       session.consumed = true;
       session.verifiedDoctor = {
         userId: bestMatch.userId,
         username: bestMatch.username,
         fullName: bestMatch.fullName,
         title: bestMatch.title,
-        shiftName: currentShift.shiftName || 'Ca làm việc',
+        shiftName: currentShift.shiftName || "Ca làm việc",
       };
 
       // Tính toán mốc thời gian hết ca + thời gian ân hạn sau ca trực
@@ -1284,18 +1629,21 @@ export class KioskService implements OnModuleInit {
       const shiftEndMs = iv.end + lateMinutes * 60 * 1000;
 
       // Lưu vào danh sách phòng khám đang mở khoá để tự động khoá khi hết ca
-      this.activeRoomUnlocks.set(session.roomCode, {
-        roomCode: session.roomCode,
-        doctor: session.verifiedDoctor,
-        shift: currentShift,
-        unlockedAt: now,
-        shiftEndMs,
-        terminalId: session.terminalId,
-        attendanceId,
-      });
+      this.activeRoomUnlocks.set(
+        kioskTargetKey(session.roomCode, session.terminalId),
+        {
+          roomCode: session.roomCode,
+          doctor: session.verifiedDoctor,
+          shift: currentShift,
+          unlockedAt: now,
+          shiftEndMs,
+          terminalId: session.terminalId,
+          attendanceId,
+        },
+      );
 
       const unlockPayload = {
-        type: 'UNLOCK_SUCCESS',
+        type: "UNLOCK_SUCCESS",
         doctor: session.verifiedDoctor,
         roomCode: session.roomCode,
         terminalId: session.terminalId,
@@ -1304,15 +1652,20 @@ export class KioskService implements OnModuleInit {
         lateCheckoutMinutes: lateMinutes,
       };
 
-      // Bắn đích danh máy tính phòng khám đã sinh mã QR này (Unicast)
-      let unlocked = false;
-      if (session.terminalId) {
-        unlocked = this.sendToTerminal(session.terminalId, 'UNLOCK_EVENT', unlockPayload);
-      }
-      // Dự phòng broadcast nếu máy trạm chưa kịp gán terminalId
-      if (!unlocked) {
-        this.broadcastToRoom(session.roomCode, 'UNLOCK_EVENT', unlockPayload);
-      }
+      this.emitToTarget(
+        session.roomCode,
+        session.terminalId,
+        "UNLOCK_EVENT",
+        unlockPayload,
+      );
+      void this.audit.log({
+        action: "KIOSK_BIOMETRIC_UNLOCK",
+        module: "KIOSK",
+        entity: "duty_attendance",
+        entityId: attendanceId,
+        userId: bestMatch.userId,
+        description: `Xác thực ca ${currentShift.shiftCode} tại ${session.roomCode}; máy trạm ${session.terminalId}`,
+      });
 
       return {
         success: true,
@@ -1342,20 +1695,23 @@ export class KioskService implements OnModuleInit {
       .limit(1);
 
     const user = usersList[0];
-    if (!user) throw new NotFoundException(`Không tìm thấy người dùng với ID ${userId}`);
+    if (!user)
+      throw new NotFoundException(`Không tìm thấy người dùng với ID ${userId}`);
 
     // LỚP 1: KIỂM TRA PHÂN QUYỀN ĐĂNG KÝ / CẬP NHẬT
     const isAdmin =
       currentUser?.isSuperAdmin ||
-      currentUser?.roles?.includes('SUPER_ADMIN') ||
-      currentUser?.roles?.includes('ADMIN') ||
-      currentUser?.permissions?.includes('user.manage') ||
-      currentUser?.permissions?.includes('kiosk.admin');
+      currentUser?.roles?.includes("SUPER_ADMIN") ||
+      currentUser?.roles?.includes("ADMIN") ||
+      currentUser?.permissions?.includes("user.manage") ||
+      currentUser?.permissions?.includes("kiosk.admin");
 
     const isSelf = currentUser ? currentUser.id === userId : false;
 
     if (!isAdmin && !isSelf) {
-      throw new ForbiddenException('Bạn không có quyền đăng ký hoặc thay đổi sinh trắc học cho nhân sự khác!');
+      throw new ForbiddenException(
+        "Bạn không có quyền đăng ký hoặc thay đổi sinh trắc học cho nhân sự khác!",
+      );
     }
 
     const [existingBio] = await this.db.db
@@ -1376,14 +1732,14 @@ export class KioskService implements OnModuleInit {
         const allowSelfUpdate = await this.getAllowSelfUpdate();
         if (!allowSelfUpdate) {
           throw new ForbiddenException(
-            'Hồ sơ khuôn mặt của bạn đã được khoá an ninh điểm danh. Để phòng ngừa gian lận ca trực, việc cấp đổi khuôn mặt chỉ được thực hiện tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT!',
+            "Hồ sơ khuôn mặt của bạn đã được khoá an ninh điểm danh. Để phòng ngừa gian lận ca trực, việc cấp đổi khuôn mặt chỉ được thực hiện tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT!",
           );
         }
       } else {
         const allowSelfEnroll = await this.getAllowSelfEnroll();
         if (!allowSelfEnroll) {
           throw new ForbiddenException(
-            'Quy định bệnh viện yêu cầu đăng ký sinh trắc học trực tiếp tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT. Vui lòng liên hệ quản trị viên!',
+            "Quy định bệnh viện yêu cầu đăng ký sinh trắc học trực tiếp tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT. Vui lòng liên hệ quản trị viên!",
           );
         }
       }
@@ -1405,14 +1761,14 @@ export class KioskService implements OnModuleInit {
             and(
               eq(dutyAssignments.userId, userId),
               inArray(dutySlots.dutyDate, candidateDates),
-              inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
+              inArray(dutyPeriods.status, ["CONG_BO", "DA_CHOT"]),
             ),
           )
           .limit(1);
 
         if (activeDuty.length > 0) {
           throw new ForbiddenException(
-            `Bác sĩ ${user.title || ''} ${user.fullName} đang có lịch trực trong ngày. Để bảo đảm tính minh bạch, hệ thống tạm khoá tự đổi dữ liệu sinh trắc học khi đang trong ca trực!`,
+            `Bác sĩ ${user.title || ""} ${user.fullName} đang có lịch trực trong ngày. Để bảo đảm tính minh bạch, hệ thống tạm khoá tự đổi dữ liệu sinh trắc học khi đang trong ca trực!`,
           );
         }
       }
@@ -1443,22 +1799,22 @@ export class KioskService implements OnModuleInit {
       const sim = this.calculateCosineSimilarity(descriptor, otherVector);
       if (sim >= duplicateThreshold) {
         throw new BadRequestException(
-          `CẢNH BÁO AN NINH: Khuôn mặt đăng ký trùng khớp (${(sim * 100).toFixed(1)}%) với nhân sự khác trong bệnh viện: ${bio.title ? `${bio.title} ` : ''}${bio.fullName} (@${bio.username}${bio.departmentName ? ` - ${bio.departmentName}` : ''})! Quy định bệnh viện nghiêm cấm đăng ký khuôn mặt của người khác để phòng ngừa gian lận điểm danh.`,
+          `CẢNH BÁO AN NINH: Khuôn mặt đăng ký trùng khớp (${(sim * 100).toFixed(1)}%) với nhân sự khác trong bệnh viện: ${bio.title ? `${bio.title} ` : ""}${bio.fullName} (@${bio.username}${bio.departmentName ? ` - ${bio.departmentName}` : ""})! Quy định bệnh viện nghiêm cấm đăng ký khuôn mặt của người khác để phòng ngừa gian lận điểm danh.`,
         );
       }
     }
 
     // 2. Lưu ảnh đại diện vào thư mục uploads/faces/
     let b64 = imageBase64;
-    if (b64.includes(',')) b64 = b64.split(',')[1];
+    if (b64.includes(",")) b64 = b64.split(",")[1];
     const filename = `user_${userId}_avatar.jpg`;
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
     const filePath = path.join(this.uploadDir, filename);
-    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+    fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
 
-    const avatarDataUrl = imageBase64.startsWith('data:image')
+    const avatarDataUrl = imageBase64.startsWith("data:image")
       ? imageBase64
       : `data:image/jpeg;base64,${b64}`;
 
@@ -1491,13 +1847,21 @@ export class KioskService implements OnModuleInit {
       userId: currentUser?.id ?? userId,
       username: currentUser?.username ?? user.username,
       fullName: currentUser?.fullName ?? user.fullName,
-      action: isNew ? 'BIOMETRIC_ENROLL' : 'BIOMETRIC_UPDATE',
-      module: 'KIOSK',
-      entity: 'user_biometrics',
+      action: isNew ? "BIOMETRIC_ENROLL" : "BIOMETRIC_UPDATE",
+      module: "KIOSK",
+      entity: "user_biometrics",
       entityId: String(userId),
-      description: `${currentUser?.fullName || 'Người dùng'} đã ${isNew ? 'đăng ký mới' : 'cập nhật'} sinh trắc học khuôn mặt cho ${user.title || ''} ${user.fullName} (@${user.username})`,
-      beforeData: isEnrolled ? { avatarPath: existingBio?.avatarPath, enrolledAt: existingBio?.enrolledAt } : null,
-      afterData: { avatarPath: `/uploads/faces/${filename}`, updatedAt: new Date().toISOString() },
+      description: `${currentUser?.fullName || "Người dùng"} đã ${isNew ? "đăng ký mới" : "cập nhật"} sinh trắc học khuôn mặt cho ${user.title || ""} ${user.fullName} (@${user.username})`,
+      beforeData: isEnrolled
+        ? {
+            avatarPath: existingBio?.avatarPath,
+            enrolledAt: existingBio?.enrolledAt,
+          }
+        : null,
+      afterData: {
+        avatarPath: `/uploads/faces/${filename}`,
+        updatedAt: new Date().toISOString(),
+      },
       ip: clientMeta?.ip,
       userAgent: clientMeta?.userAgent,
       departmentId: currentUser?.departmentId ?? user.departmentId,
@@ -1505,7 +1869,7 @@ export class KioskService implements OnModuleInit {
 
     return {
       success: true,
-      message: `Đã lưu hồ sơ sinh trắc học thành công cho ${user.title ? `${user.title} ` : ''}${user.fullName}`,
+      message: `Đã lưu hồ sơ sinh trắc học thành công cho ${user.title ? `${user.title} ` : ""}${user.fullName}`,
       avatarPath: `/uploads/faces/${filename}`,
     };
   }
@@ -1528,10 +1892,10 @@ export class KioskService implements OnModuleInit {
 
     const isAdmin = Boolean(
       requestingUser?.isSuperAdmin ||
-      requestingUser?.roles?.includes('SUPER_ADMIN') ||
-      requestingUser?.roles?.includes('ADMIN') ||
-      requestingUser?.permissions?.includes('user.manage') ||
-      requestingUser?.permissions?.includes('kiosk.admin')
+      requestingUser?.roles?.includes("SUPER_ADMIN") ||
+      requestingUser?.roles?.includes("ADMIN") ||
+      requestingUser?.permissions?.includes("user.manage") ||
+      requestingUser?.permissions?.includes("kiosk.admin"),
     );
 
     const bio = list[0];
@@ -1569,7 +1933,7 @@ export class KioskService implements OnModuleInit {
       if (!bio?.avatarData) return false;
 
       let b64 = bio.avatarData;
-      if (b64.includes(',')) b64 = b64.split(',')[1];
+      if (b64.includes(",")) b64 = b64.split(",")[1];
       if (!b64) return false;
 
       if (!fs.existsSync(this.uploadDir)) {
@@ -1577,11 +1941,15 @@ export class KioskService implements OnModuleInit {
       }
 
       const filePath = path.join(this.uploadDir, `user_${userId}_avatar.jpg`);
-      fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
-      this.logger.log(`Đã tự động khôi phục ảnh chân dung ra đĩa cho bác sĩ userId=${userId}`);
+      fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
+      this.logger.log(
+        `Đã tự động khôi phục ảnh chân dung ra đĩa cho bác sĩ userId=${userId}`,
+      );
       return true;
     } catch (err) {
-      this.logger.warn(`Lỗi phục hồi ảnh sinh trắc học từ CSDL cho userId=${userId}: ${err}`);
+      this.logger.warn(
+        `Lỗi phục hồi ảnh sinh trắc học từ CSDL cho userId=${userId}: ${err}`,
+      );
       return false;
     }
   }
@@ -1590,23 +1958,27 @@ export class KioskService implements OnModuleInit {
 
   private encryptDescriptor(descriptor: number[]): string {
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.encryptionKey, iv);
     const text = JSON.stringify(descriptor);
-    let enc = cipher.update(text, 'utf8', 'hex');
-    enc += cipher.final('hex');
+    let enc = cipher.update(text, "utf8", "hex");
+    enc += cipher.final("hex");
     const tag = cipher.getAuthTag();
-    return `${iv.toString('hex')}:${tag.toString('hex')}:${enc}`;
+    return `${iv.toString("hex")}:${tag.toString("hex")}:${enc}`;
   }
 
   private decryptDescriptor(encryptedStr: string): number[] | null {
     try {
-      const parts = encryptedStr.split(':');
+      const parts = encryptedStr.split(":");
       if (parts.length !== 3) return null;
       const [ivHex, tagHex, dataHex] = parts;
-      const decipher = crypto.createDecipheriv('aes-256-gcm', this.encryptionKey, Buffer.from(ivHex, 'hex'));
-      decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-      let dec = decipher.update(dataHex, 'hex', 'utf8');
-      dec += decipher.final('utf8');
+      const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        this.encryptionKey,
+        Buffer.from(ivHex, "hex"),
+      );
+      decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+      let dec = decipher.update(dataHex, "hex", "utf8");
+      dec += decipher.final("utf8");
       return JSON.parse(dec);
     } catch {
       return null;
@@ -1615,7 +1987,9 @@ export class KioskService implements OnModuleInit {
 
   private calculateCosineSimilarity(v1: number[], v2: number[]): number {
     if (v1.length !== v2.length) return 0;
-    let dot = 0, n1 = 0, n2 = 0;
+    let dot = 0,
+      n1 = 0,
+      n2 = 0;
     for (let i = 0; i < v1.length; i++) {
       dot += v1[i] * v2[i];
       n1 += v1[i] * v1[i];

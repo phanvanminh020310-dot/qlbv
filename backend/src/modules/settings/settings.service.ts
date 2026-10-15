@@ -221,11 +221,11 @@ export function defaultSettings(): SettingItem[] {
     // Kiosk phòng khám & Điểm danh
     {
       key: 'kiosk.itMasterPin',
-      value: '999888',
+      value: '',
       group: 'kiosk',
       label: 'Mã PIN IT mở khoá Kiosk khẩn cấp',
-      description: 'Mã PIN khẩn cấp mở khoá tại chỗ màn hình Kiosk phòng khám khi có sự cố kỹ thuật hoặc mất mạng',
-      valueType: 'string',
+      description: 'Đặt mã riêng của bệnh viện trước khi triển khai. Xác minh trực tuyến, giới hạn 5 lần nhập/10 phút; khi mất mạng dùng bộ gỡ có quyền Administrator.',
+      valueType: 'password',
       isPublic: false,
     },
     {

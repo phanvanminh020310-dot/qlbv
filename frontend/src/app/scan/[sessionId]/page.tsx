@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import React, { useState, useEffect, useRef } from "react";
+import { useParams } from "next/navigation";
 import {
   Camera,
   CheckCircle2,
@@ -12,26 +12,39 @@ import {
   Sparkles,
   SwitchCamera,
   ScanFace,
-} from 'lucide-react';
+} from "lucide-react";
 
+// One stable claim even when Safari/private-mode storage is unavailable.
+let memoryDeviceClaimToken = "";
 function getDeviceClaimToken(): string {
-  if (typeof window === 'undefined') return '';
-  const KEY = 'qlbv_kiosk_device_claim_token';
+  if (typeof window === "undefined") return "";
+  if (memoryDeviceClaimToken) return memoryDeviceClaimToken;
+  const key = "qlbv_kiosk_device_claim_token";
   try {
-    let token = localStorage.getItem(KEY);
-    if (!token || token.length < 16) {
-      token = 'dev_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
-      localStorage.setItem(KEY, token);
-    }
-    return token;
+    const stored = localStorage.getItem(key);
+    if (stored && stored.length >= 16 && stored.length <= 256)
+      memoryDeviceClaimToken = stored;
   } catch {
-    return 'dev_fallback_' + Date.now();
+    /* Use the in-memory token for this page, not a new token on every frame. */
   }
+  if (!memoryDeviceClaimToken) {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    memoryDeviceClaimToken =
+      "dev_" +
+      Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    try {
+      localStorage.setItem(key, memoryDeviceClaimToken);
+    } catch {
+      /* Storage is optional for a single capture. */
+    }
+  }
+  return memoryDeviceClaimToken;
 }
 
 export default function MobileScanPage() {
   const routeParams = useParams();
-  const rawSessionId = (routeParams?.sessionId as string) || '';
+  const rawSessionId = (routeParams?.sessionId as string) || "";
   const sessionId = decodeURIComponent(rawSessionId);
 
   const [sessionData, setSessionData] = useState<any>(null);
@@ -40,15 +53,19 @@ export default function MobileScanPage() {
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
 
   // Fallback chụp ảnh trực tiếp nếu trình duyệt chặn hoàn toàn WebRTC
   const [isHttpCaptureMode, setIsHttpCaptureMode] = useState(false);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
 
   // Trạng thái quét khuôn mặt
-  const [currentStep, setCurrentStep] = useState<'scanning' | 'verifying' | 'success' | 'failed'>('scanning');
-  const [statusText, setStatusText] = useState<string>('Đang mở camera trước...');
+  const [currentStep, setCurrentStep] = useState<
+    "scanning" | "verifying" | "success" | "failed"
+  >("scanning");
+  const [statusText, setStatusText] = useState<string>(
+    "Đang mở camera trước...",
+  );
   const [resultData, setResultData] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -60,48 +77,61 @@ export default function MobileScanPage() {
 
   // 1. Kiểm tra an ninh môi trường quét & Tải thông tin phiên quét từ sessionId
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
     const runInit = async () => {
       try {
-        const ua = navigator.userAgent || '';
-        const ref = document.referrer || '';
+        const ua = navigator.userAgent || "";
+        const ref = document.referrer || "";
 
         // A. Kiểm tra Referrer (Google Lens, app quét mã QR, các app chia sẻ link trên Android & iOS):
         const isReferrerFromApp =
-          ref.startsWith('android-app://') ||
-          /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(ref);
+          ref.startsWith("android-app://") ||
+          /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(
+            ref,
+          );
 
         // B. Kiểm tra Trình duyệt nhúng trên iOS (WKWebView / In-App Browser của app bên thứ 3):
         // Trên iOS Safari gốc, window.webkit.messageHandlers không bao giờ tồn tại.
         // Nếu có window.webkit?.messageHandlers -> 100% là app bên thứ 3 nhúng webview (App quét QR, mạng xã hội).
         const isIos = /iPhone|iPad|iPod/i.test(ua);
-        const hasIosHandlers = typeof (window as any).webkit !== 'undefined' && Boolean((window as any).webkit?.messageHandlers);
-        const isIosWkWebView = isIos && (!/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua));
+        const hasIosHandlers =
+          typeof (window as any).webkit !== "undefined" &&
+          Boolean((window as any).webkit?.messageHandlers);
+        const isIosWkWebView =
+          isIos && !/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua);
 
         // C. Kiểm tra WebView trên Android:
-        const isAndroidWebView = /Android/i.test(ua) && ((/Version\/4\.0.*Chrome/i.test(ua)) || /\bwv\b/i.test(ua));
+        const isAndroidWebView =
+          /Android/i.test(ua) &&
+          (/Version\/4\.0.*Chrome/i.test(ua) || /\bwv\b/i.test(ua));
 
         // D. Danh sách app tin nhắn / mạng xã hội / scanner app đã biết:
         const isKnownApp =
-          /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|line|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(ua);
+          /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|\bline\b|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(
+            ua,
+          );
 
-        const isBlocked = isReferrerFromApp || (isIos && (hasIosHandlers || isIosWkWebView)) || isAndroidWebView || isKnownApp;
+        const isBlocked =
+          isReferrerFromApp ||
+          (isIos && (hasIosHandlers || isIosWkWebView)) ||
+          isAndroidWebView ||
+          isKnownApp;
 
         if (isBlocked) {
           const claimToken = getDeviceClaimToken();
           fetch(`/api/kiosk/session/${sessionId}`, {
             headers: {
-              'x-device-claim-token': claimToken,
-              'x-client-env': 'scanner-app',
+              "x-device-claim-token": claimToken,
+              "x-client-env": "scanner-app",
             },
           }).catch(() => {});
 
           let customMsg =
-            'CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.';
+            "CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.";
           if (isIos) {
             customMsg =
-              'CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.';
+              "CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.";
           }
 
           setSessionError(customMsg);
@@ -111,26 +141,31 @@ export default function MobileScanPage() {
 
         const claimToken = getDeviceClaimToken();
         const headers: Record<string, string> = {
-          'x-device-claim-token': claimToken,
+          "x-device-claim-token": claimToken,
         };
 
-        const resp = await fetch(`/api/kiosk/session/${sessionId}`, { headers });
+        const resp = await fetch(`/api/kiosk/session/${sessionId}`, {
+          headers,
+        });
         if (!resp.ok) {
           const errJson = await resp.json().catch(() => null);
-          throw new Error(errJson?.message || 'Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.');
+          throw new Error(
+            errJson?.message ||
+              "Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.",
+          );
         }
         const raw = await resp.json();
         const data = raw?.data ?? raw;
         setSessionData(data);
 
         // Nếu phiên đã mở khoá thành công trước đó (do request chạy ngầm xong hoặc quét lại)
-        if (data?.status === 'VERIFIED') {
+        if (data?.status === "VERIFIED") {
           setResultData({ success: true, doctor: data.verifiedDoctor });
-          setCurrentStep('success');
+          setCurrentStep("success");
           return;
         }
       } catch (err: any) {
-        setSessionError(err.message || 'Lỗi nạp phiên.');
+        setSessionError(err.message || "Lỗi nạp phiên.");
       } finally {
         setLoadingSession(false);
       }
@@ -146,7 +181,7 @@ export default function MobileScanPage() {
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          const canvas = document.createElement('canvas');
+          const canvas = document.createElement("canvas");
           const maxDim = 800;
           let w = img.width;
           let h = img.height;
@@ -159,10 +194,10 @@ export default function MobileScanPage() {
           }
           canvas.width = w;
           canvas.height = h;
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext("2d");
           if (!ctx) return resolve(e.target?.result as string);
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
         };
         img.onerror = reject;
         img.src = e.target?.result as string;
@@ -173,12 +208,12 @@ export default function MobileScanPage() {
   };
 
   const handleSwitchToHttps = () => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
     const curPort = window.location.port;
-    let targetPort = '';
-    if (curPort === '3000') {
-      targetPort = ':3443';
-    } else if (curPort && curPort !== '80' && curPort !== '443') {
+    let targetPort = "";
+    if (curPort === "3000") {
+      targetPort = ":3443";
+    } else if (curPort && curPort !== "80" && curPort !== "443") {
       targetPort = `:${curPort}`;
     }
     const httpsUrl = `https://${window.location.hostname}${targetPort}${window.location.pathname}${window.location.search}`;
@@ -186,18 +221,20 @@ export default function MobileScanPage() {
   };
 
   // 2. Khởi tạo Camera (Ưu tiên 100% camera trước và tự động sửa nếu điện thoại chọn nhầm camera sau)
-  const startCamera = async (forceMode?: 'user' | 'environment') => {
+  const startCamera = async (forceMode?: "user" | "environment") => {
     if (isStartingRef.current) return;
     isStartingRef.current = true;
     setCameraError(null);
 
     // Kiểm tra Secure Context (HTTPS / localhost)
-    if (typeof window !== 'undefined' && window.isSecureContext === false) {
-      console.warn('Đang truy cập qua HTTP không bảo mật: Trình duyệt di động chặn WebRTC Live Stream.');
+    if (typeof window !== "undefined" && window.isSecureContext === false) {
+      console.warn(
+        "Đang truy cập qua HTTP không bảo mật: Trình duyệt di động chặn WebRTC Live Stream.",
+      );
       setIsHttpCaptureMode(true);
       setCameraActive(true);
-      setCurrentStep('scanning');
-      setStatusText('Chạm vào màn hình để mở Camera chụp ảnh');
+      setCurrentStep("scanning");
+      setStatusText("Chạm vào màn hình để mở Camera chụp ảnh");
       isStartingRef.current = false;
       return;
     }
@@ -215,18 +252,18 @@ export default function MobileScanPage() {
       if (navigator?.mediaDevices?.enumerateDevices) {
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+          const videoInputs = devices.filter((d) => d.kind === "videoinput");
 
-          if (targetMode === 'user') {
+          if (targetMode === "user") {
             const front = videoInputs.find((d) =>
-              /front|user|facetime|trước|selfie/i.test(d.label)
+              /front|user|facetime|trước|selfie/i.test(d.label),
             );
             if (front) {
               selectedDeviceId = front.deviceId;
             }
           } else {
             const back = videoInputs.find((d) =>
-              /back|rear|environment|sau/i.test(d.label)
+              /back|rear|environment|sau/i.test(d.label),
             );
             if (back) {
               selectedDeviceId = back.deviceId;
@@ -244,7 +281,10 @@ export default function MobileScanPage() {
               height: { ideal: 480 },
             }
           : {
-              facingMode: targetMode === 'user' ? { ideal: 'user' } : { ideal: 'environment' },
+              facingMode:
+                targetMode === "user"
+                  ? { ideal: "user" }
+                  : { ideal: "environment" },
               width: { ideal: 640 },
               height: { ideal: 480 },
             },
@@ -268,21 +308,25 @@ export default function MobileScanPage() {
       }
 
       if (!stream) {
-        throw new Error('NO_STREAM');
+        throw new Error("NO_STREAM");
       }
 
       // Kiểm tra nếu thiết bị tự mở nhầm camera sau khi đang cần camera trước:
       // Tự động phát hiện và tráo đổi ngay lập tức sang camera trước
-      if (targetMode === 'user') {
+      if (targetMode === "user") {
         const tracks = stream.getVideoTracks();
         if (tracks.length > 0) {
           const trackLabel = tracks[0].label.toLowerCase();
           if (/back|rear|sau|environment/.test(trackLabel)) {
-            console.log('[Camera] Thiết bị tự chọn camera sau, đang tự động chuyển về camera trước...');
+            console.log(
+              "[Camera] Thiết bị tự chọn camera sau, đang tự động chuyển về camera trước...",
+            );
             try {
               const devices = await navigator.mediaDevices.enumerateDevices();
               const other = devices.find(
-                (d) => d.kind === 'videoinput' && d.deviceId !== tracks[0].getSettings()?.deviceId
+                (d) =>
+                  d.kind === "videoinput" &&
+                  d.deviceId !== tracks[0].getSettings()?.deviceId,
               );
               if (other) {
                 tracks[0].stop();
@@ -303,22 +347,25 @@ export default function MobileScanPage() {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute('playsinline', 'true');
-        videoRef.current.setAttribute('autoplay', 'true');
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("autoplay", "true");
         videoRef.current.muted = true;
         await videoRef.current.play().catch(() => {});
       }
 
       setCameraActive(true);
       setIsHttpCaptureMode(false);
-      setCurrentStep('scanning');
-      setStatusText('Nhìn thẳng camera để tự động điểm danh...');
+      setCurrentStep("scanning");
+      setStatusText("Nhìn thẳng camera để tự động điểm danh...");
     } catch (err: any) {
-      console.warn('Không thể mở Live Video Stream, kích hoạt chế độ chụp trực tiếp:', err);
+      console.warn(
+        "Không thể mở Live Video Stream, kích hoạt chế độ chụp trực tiếp:",
+        err,
+      );
       setIsHttpCaptureMode(true);
       setCameraActive(true);
-      setCurrentStep('scanning');
-      setStatusText('Chạm vào màn hình để mở Camera chụp ảnh');
+      setCurrentStep("scanning");
+      setStatusText("Chạm vào màn hình để mở Camera chụp ảnh");
     } finally {
       isStartingRef.current = false;
     }
@@ -341,17 +388,17 @@ export default function MobileScanPage() {
     try {
       const claimToken = getDeviceClaimToken();
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'x-device-claim-token': claimToken,
+        "Content-Type": "application/json",
+        "x-device-claim-token": claimToken,
       };
 
-      const resp = await fetch('/api/kiosk/verify-face', {
-        method: 'POST',
+      const resp = await fetch("/api/kiosk/verify-face", {
+        method: "POST",
         headers,
         body: JSON.stringify({
           sessionId,
           imageBase64,
-          completedChallenges: ['PASSIVE_LIVENESS'],
+          completedChallenges: ["PASSIVE_LIVENESS"],
           claimToken,
         }),
       });
@@ -361,39 +408,42 @@ export default function MobileScanPage() {
 
       if (resp.ok && data?.success !== false && !data?.isProcessing) {
         setResultData(data);
-        setCurrentStep('success');
+        setCurrentStep("success");
 
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop());
         }
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
           navigator.vibrate([100, 50, 100]);
         }
         return true;
       }
 
       if (data?.isProcessing) {
-        setStatusText(data.message || 'Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy');
+        setStatusText(
+          data.message ||
+            "Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy",
+        );
         return false;
       }
 
-      const msg = String(data?.message || '');
+      const msg = String(data?.message || "");
       // Nếu chưa phát hiện rõ mặt hoặc server đang xử lý, báo nhẹ và tiếp tục quét frame tiếp theo
       if (
-        msg.includes('Không phát hiện') ||
-        msg.includes('khuôn mặt') ||
-        msg.includes('mờ') ||
-        msg.includes('chưa rõ') ||
-        msg.includes('xử lý') ||
-        msg.includes('giữ nguyên máy')
+        msg.includes("Không phát hiện") ||
+        msg.includes("khuôn mặt") ||
+        msg.includes("mờ") ||
+        msg.includes("chưa rõ") ||
+        msg.includes("xử lý") ||
+        msg.includes("giữ nguyên máy")
       ) {
-        setStatusText('Đang quét... Vui lòng nhìn thẳng vào camera');
+        setStatusText("Đang quét... Vui lòng nhìn thẳng vào camera");
         return false;
       }
 
       // Nếu lỗi ca trực hoặc lỗi nghiêm trọng
-      setErrorMessage(msg || 'Xác thực khuôn mặt không thành công.');
-      setCurrentStep('failed');
+      setErrorMessage(msg || "Xác thực khuôn mặt không thành công.");
+      setCurrentStep("failed");
       return false;
     } catch {
       return false;
@@ -410,7 +460,8 @@ export default function MobileScanPage() {
   }, [cameraActive]);
 
   useEffect(() => {
-    if (!cameraActive || isHttpCaptureMode || currentStep !== 'scanning') return;
+    if (!cameraActive || isHttpCaptureMode || currentStep !== "scanning")
+      return;
 
     let isScanning = true;
     let analyzing = false;
@@ -427,21 +478,30 @@ export default function MobileScanPage() {
 
       const video = videoRef.current;
       // Chờ video sẵn sàng và có dữ liệu hình ảnh
-      if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      if (
+        video.readyState < 2 ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
         return;
       }
 
-      const canvas = canvasRef.current || document.createElement('canvas');
+      const canvas = canvasRef.current || document.createElement("canvas");
       canvas.width = 480;
       canvas.height = Math.round((480 * video.videoHeight) / video.videoWidth);
 
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       // Kiểm tra độ sáng khung hình (tránh chụp khi camera chưa kịp lấy sáng lúc mới bật)
-      const sample = ctx.getImageData(0, 0, Math.min(canvas.width, 80), Math.min(canvas.height, 80));
+      const sample = ctx.getImageData(
+        0,
+        0,
+        Math.min(canvas.width, 80),
+        Math.min(canvas.height, 80),
+      );
       let sum = 0;
       for (let i = 0; i < sample.data.length; i += 4) {
         sum += (sample.data[i] + sample.data[i + 1] + sample.data[i + 2]) / 3;
@@ -452,9 +512,9 @@ export default function MobileScanPage() {
       }
 
       analyzing = true;
-      setStatusText('Đang nhận diện sinh học khuôn mặt... Giữ nguyên máy');
+      setStatusText("Đang nhận diện sinh học khuôn mặt... Giữ nguyên máy");
 
-      const imageBase64 = canvas.toDataURL('image/jpeg', 0.85);
+      const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
       const ok = await submitVerification(imageBase64);
 
       if (ok) {
@@ -463,10 +523,10 @@ export default function MobileScanPage() {
       } else {
         failCount++;
         // Quét liên tục 80 chu kỳ (~36 giây) để bác sĩ lớn tuổi thao tác thong thả
-        if (failCount >= 80 && currentStep === 'scanning') {
+        if (failCount >= 80 && currentStep === "scanning") {
           isScanning = false;
-          setErrorMessage('Không nhận diện được Bác sĩ hoặc ca trực chưa tới.');
-          setCurrentStep('failed');
+          setErrorMessage("Không nhận diện được Bác sĩ hoặc ca trực chưa tới.");
+          setCurrentStep("failed");
         } else {
           analyzing = false;
         }
@@ -485,14 +545,14 @@ export default function MobileScanPage() {
     if (!file) return;
 
     try {
-      setCurrentStep('verifying');
-      setStatusText('Đang xử lý hình ảnh...');
+      setCurrentStep("verifying");
+      setStatusText("Đang xử lý hình ảnh...");
       const imageBase64 = await compressImage(file);
       setCapturedPreview(imageBase64);
       await submitVerification(imageBase64);
     } catch {
-      setErrorMessage('Không thể đọc ảnh từ Camera điện thoại.');
-      setCurrentStep('failed');
+      setErrorMessage("Không thể đọc ảnh từ Camera điện thoại.");
+      setCurrentStep("failed");
     }
   };
 
@@ -504,7 +564,7 @@ export default function MobileScanPage() {
 
   // Đổi camera trước / sau
   const toggleFacingMode = () => {
-    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    const nextMode = facingMode === "user" ? "environment" : "user";
     setFacingMode(nextMode);
     startCamera(nextMode);
   };
@@ -515,7 +575,9 @@ export default function MobileScanPage() {
         <div className="h-16 w-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mb-4">
           <AlertTriangle className="h-8 w-8" />
         </div>
-        <h2 className="text-lg font-bold text-white mb-2">Phiên không hợp lệ hoặc đã hết hạn</h2>
+        <h2 className="text-lg font-bold text-white mb-2">
+          Phiên không hợp lệ hoặc đã hết hạn
+        </h2>
         <p className="text-xs text-slate-400 max-w-sm mb-6">{sessionError}</p>
         <button
           type="button"
@@ -532,7 +594,9 @@ export default function MobileScanPage() {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
         <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-4" />
-        <p className="text-sm font-semibold">Đang nạp phiên điểm danh phòng khám...</p>
+        <p className="text-sm font-semibold">
+          Đang nạp phiên điểm danh phòng khám...
+        </p>
       </div>
     );
   }
@@ -574,14 +638,17 @@ export default function MobileScanPage() {
       {/* Main Body */}
       <main className="my-auto py-4">
         {/* CẢNH BÁO / HƯỚNG DẪN KHI CHẠY TRÊN HTTP */}
-        {isHttpCaptureMode && currentStep === 'scanning' && (
+        {isHttpCaptureMode && currentStep === "scanning" && (
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4 text-xs text-amber-200">
             <div className="flex items-start gap-2.5">
               <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-bold text-amber-300">Quét khuôn mặt tự động (Face ID)</p>
+                <p className="font-bold text-amber-300">
+                  Quét khuôn mặt tự động (Face ID)
+                </p>
                 <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                  Để điện thoại tự động mở camera trước nhận diện không cần bấm chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
+                  Để điện thoại tự động mở camera trước nhận diện không cần bấm
+                  chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
                 </p>
                 <button
                   type="button"
@@ -596,12 +663,12 @@ export default function MobileScanPage() {
         )}
 
         {/* KHUNG QUÉT CAMERA */}
-        {(currentStep === 'scanning' || currentStep === 'verifying') && (
+        {(currentStep === "scanning" || currentStep === "verifying") && (
           <div className="space-y-4">
             <div
               onClick={isHttpCaptureMode ? triggerNativeCamera : undefined}
               className={`relative aspect-square w-full rounded-3xl overflow-hidden bg-black border-2 border-teal-500/60 shadow-2xl ${
-                isHttpCaptureMode ? 'cursor-pointer' : ''
+                isHttpCaptureMode ? "cursor-pointer" : ""
               }`}
             >
               {isHttpCaptureMode ? (
@@ -616,7 +683,9 @@ export default function MobileScanPage() {
                   ) : (
                     <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20 px-4">
                       <Camera className="h-12 w-12 text-teal-400 mb-2 animate-bounce" />
-                      <span className="text-sm font-bold text-teal-200">Chạm để mở Camera</span>
+                      <span className="text-sm font-bold text-teal-200">
+                        Chạm để mở Camera
+                      </span>
                       <span className="text-[11px] text-teal-300/80 mt-1.5 text-center font-medium">
                         Vui lòng chụp camera trước thẳng khuôn mặt
                       </span>
@@ -631,7 +700,7 @@ export default function MobileScanPage() {
                     playsInline
                     muted
                     autoPlay
-                    className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
+                    className={`w-full h-full object-cover ${facingMode === "user" ? "-scale-x-100" : ""}`}
                   />
                   {/* Vòng oval chỉ dẫn khuôn mặt sinh học */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -655,11 +724,15 @@ export default function MobileScanPage() {
               )}
 
               {/* Lớp phủ khi đang gửi AI xử lý */}
-              {currentStep === 'verifying' && (
+              {currentStep === "verifying" && (
                 <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4">
                   <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-3" />
-                  <p className="text-xs font-bold text-white">Đang phân tích ArcFace & CSDL...</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Đối chiếu ca trực tại {sessionData?.room?.name}</p>
+                  <p className="text-xs font-bold text-white">
+                    Đang phân tích ArcFace & CSDL...
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Đối chiếu ca trực tại {sessionData?.room?.name}
+                  </p>
                 </div>
               )}
             </div>
@@ -676,15 +749,21 @@ export default function MobileScanPage() {
                   <button
                     type="button"
                     onClick={triggerNativeCamera}
-                    disabled={currentStep === 'verifying'}
+                    disabled={currentStep === "verifying"}
                     className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
                   >
                     <Camera className="h-5 w-5" />
-                    <span>{capturedPreview ? 'Chụp lại ảnh khác' : 'Mở Camera chụp (Camera trước)'}</span>
+                    <span>
+                      {capturedPreview
+                        ? "Chụp lại ảnh khác"
+                        : "Mở Camera chụp (Camera trước)"}
+                    </span>
                   </button>
 
                   <p className="text-[10px] text-slate-400 text-center px-2 leading-relaxed">
-                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút lật camera trên màn hình máy ảnh sang camera trước để chụp ảnh chân dung trực tiếp.
+                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút
+                    lật camera trên màn hình máy ảnh sang camera trước để chụp
+                    ảnh chân dung trực tiếp.
                   </p>
                 </div>
               )}
@@ -693,7 +772,7 @@ export default function MobileScanPage() {
         )}
 
         {/* THÀNH CÔNG */}
-        {currentStep === 'success' && (
+        {currentStep === "success" && (
           <div className="text-center space-y-6">
             <div className="h-20 w-20 mx-auto rounded-3xl bg-emerald-500/10 border-2 border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-xl">
               <CheckCircle2 className="h-10 w-10 animate-in zoom-in-75 duration-300" />
@@ -705,44 +784,59 @@ export default function MobileScanPage() {
                 ĐIỂM DANH THÀNH CÔNG
               </div>
               <h2 className="text-xl font-bold text-white mt-2">
-                {resultData?.doctor?.title || 'BS'} {resultData?.doctor?.fullName}
+                {resultData?.doctor?.title || "BS"}{" "}
+                {resultData?.doctor?.fullName}
               </h2>
               <p className="text-xs text-slate-400">
-                Ca trực: <strong className="text-white">{resultData?.doctor?.shiftName || 'Hiện tại'}</strong>
+                Ca trực:{" "}
+                <strong className="text-white">
+                  {resultData?.doctor?.shiftName || "Hiện tại"}
+                </strong>
               </p>
             </div>
 
             <div className="rounded-2xl border border-teal-500/30 bg-teal-950/20 p-4 text-left space-y-2 text-xs">
               <div className="flex justify-between text-slate-300">
                 <span>Phòng khám đã mở khoá:</span>
-                <span className="font-bold text-teal-400">{sessionData?.room?.name}</span>
+                <span className="font-bold text-teal-400">
+                  {sessionData?.room?.name}
+                </span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>Độ tin cậy sinh trắc học:</span>
-                <span className="font-mono text-emerald-400">{(resultData?.similarity * 100 || 96.5).toFixed(1)}%</span>
+                <span className="font-mono text-emerald-400">
+                  {(resultData?.similarity * 100 || 96.5).toFixed(1)}%
+                </span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>Chống giả mạo PAD:</span>
-                <span className="font-semibold text-emerald-400">Đạt chuẩn ISO 30107</span>
+                <span className="font-semibold text-emerald-400">
+                  Đạt chuẩn ISO 30107
+                </span>
               </div>
             </div>
 
             <p className="text-xs text-teal-300 font-semibold">
-              Màn hình máy tính phòng khám đã mở khoá và giải phóng Desktop. Bác sĩ có thể bắt đầu làm việc ngay!
+              Màn hình máy tính phòng khám đã mở khoá và giải phóng Desktop. Bác
+              sĩ có thể bắt đầu làm việc ngay!
             </p>
           </div>
         )}
 
         {/* THẤT BÀI */}
-        {currentStep === 'failed' && (
+        {currentStep === "failed" && (
           <div className="text-center space-y-6">
             <div className="h-20 w-20 mx-auto rounded-3xl bg-rose-500/10 border-2 border-rose-500/30 text-rose-400 flex items-center justify-center shadow-xl">
               <AlertTriangle className="h-10 w-10" />
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-lg font-bold text-white">Xác thực không thành công</h2>
-              <p className="text-xs text-rose-300 px-4 leading-relaxed">{errorMessage}</p>
+              <h2 className="text-lg font-bold text-white">
+                Xác thực không thành công
+              </h2>
+              <p className="text-xs text-rose-300 px-4 leading-relaxed">
+                {errorMessage}
+              </p>
             </div>
 
             <button
@@ -754,19 +848,22 @@ export default function MobileScanPage() {
                 try {
                   const claimToken = getDeviceClaimToken();
                   const check = await fetch(`/api/kiosk/session/${sessionId}`, {
-                    headers: { 'x-device-claim-token': claimToken },
+                    headers: { "x-device-claim-token": claimToken },
                   });
                   if (check.ok) {
                     const cRaw = await check.json();
                     const cData = cRaw?.data ?? cRaw;
-                    if (cData?.status === 'VERIFIED') {
-                      setResultData({ success: true, doctor: cData.verifiedDoctor });
-                      setCurrentStep('success');
+                    if (cData?.status === "VERIFIED") {
+                      setResultData({
+                        success: true,
+                        doctor: cData.verifiedDoctor,
+                      });
+                      setCurrentStep("success");
                       return;
                     }
                   }
                 } catch {}
-                setCurrentStep('scanning');
+                setCurrentStep("scanning");
                 startCamera();
               }}
               className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
