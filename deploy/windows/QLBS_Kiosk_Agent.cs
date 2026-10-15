@@ -899,9 +899,6 @@ namespace QLBS.Kiosk
                             string pin = txtPin.Text.Trim();
                             if (string.IsNullOrEmpty(pin)) return false;
 
-                            // Mã PIN offline khẩn cấp phòng khi mất mạng
-                            if (pin == "888888" || pin == "bvqy4@it") return true;
-
                             try
                             {
                                 string overrideUrl = string.Format("{0}/api/kiosk/override-pin", serverUrl);
@@ -917,13 +914,28 @@ namespace QLBS.Kiosk
                                 using (Stream s = req.GetRequestStream()) { s.Write(bytes, 0, bytes.Length); }
                                 using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
                                 {
-                                    return (int)resp.StatusCode >= 200 && (int)resp.StatusCode < 300;
+                                    if ((int)resp.StatusCode >= 200 && (int)resp.StatusCode < 300) return true;
+                                }
+                            }
+                            catch (WebException wex)
+                            {
+                                if (wex.Response is HttpWebResponse errResp && errResp.StatusCode == HttpStatusCode.Unauthorized)
+                                {
+                                    return false; // Sai mã PIN
+                                }
+                                // Máy chủ mất kết nối: cho phép mã offline khẩn cấp
+                                if (pin == "888888" || pin == "bvqy4@it")
+                                {
+                                    Log("Server unreachable. Used emergency offline Master PIN to unlock.");
+                                    return true;
                                 }
                             }
                             catch
                             {
-                                return false;
+                                if (pin == "888888" || pin == "bvqy4@it") return true;
                             }
+
+                            return false;
                         };
 
                         btnUnlock.Click += (s, e) =>

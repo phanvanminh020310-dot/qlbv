@@ -442,23 +442,55 @@ export class KioskService implements OnModuleInit {
   }
 
   /**
-   * Mở khoá khẩn cấp bằng mã PIN IT (ghi nhận trạng thái mở khoá cho phòng khám)
+   * Mở khoá khẩn cấp bằng mã PIN IT (ghi nhận trạng thái mở khoá cho phòng khám).
+   * Tự động gắn mốc hết hạn theo ca trực hiện tại của phòng (+ thời gian ân hạn lateCheckoutMinutes).
+   * Khi qua ca tiếp theo hoặc ngày hôm sau, hệ thống sẽ tự động khoá máy lại để đón bác sĩ mới.
    */
-  recordItOverrideUnlock(roomCode: string, terminalId?: string) {
+  async recordItOverrideUnlock(roomCode: string, terminalId?: string) {
     const code = roomCode.toUpperCase().trim();
     const now = Date.now();
-    // Mở khoá khẩn cấp IT kéo dài 12 tiếng hoặc đến khi có lệnh khoá lại
-    const shiftEndMs = now + 12 * 3600 * 1000;
+    const lateMinutes = await this.getLateCheckoutMinutes();
+    const GRACE_BUFFER_MS = lateMinutes * 60 * 1000;
+
+    let shiftEndMs = now + 4 * 3600 * 1000; // Mặc định an toàn 4 tiếng nếu ngoài giờ ca
+    let currentShiftName = 'Mở khoá Khẩn cấp (IT)';
+
+    try {
+      // 1. Kiểm tra xem phòng có ca nào đang trực chính thức không
+      const onDutyRes = await this.integrationDuty.onDuty({ room: code }, now);
+      if (onDutyRes?.onDuty && onDutyRes.onDuty.length > 0) {
+        const item = onDutyRes.onDuty[0];
+        const iv = shiftInterval(item.dutyDate, item.shift.startTime, item.shift.endTime, item.shift.crossesMidnight);
+        shiftEndMs = iv.end + GRACE_BUFFER_MS;
+        currentShiftName = `${item.shift.name} (Mở IT)`;
+      } else {
+        // 2. Nếu không có ca chính thức lúc này, tìm ca sắp bắt đầu hoặc ca kế tiếp trong ngày
+        const candidateDates = candidateDutyDates(now);
+        const allRosterRows = await this.loadActiveRoster(code, candidateDates);
+        for (const row of allRosterRows) {
+          const iv = shiftInterval(row.dutyDate, row.startTime, row.endTime, row.crossesMidnight);
+          // Ca đang trong thời gian ân hạn hoặc sắp bắt đầu
+          if (now < iv.end + GRACE_BUFFER_MS) {
+            shiftEndMs = iv.end + GRACE_BUFFER_MS;
+            currentShiftName = `${row.shiftName} (Mở IT)`;
+            break;
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[KioskService] Lỗi tra cứu ca khi mở IT override:', e?.message || e);
+    }
+
     const itDoctor = {
       fullName: 'Kỹ thuật viên IT',
       title: 'IT Support',
-      shiftName: 'Mở khoá Khẩn cấp',
+      shiftName: currentShiftName,
     };
 
     this.activeRoomUnlocks.set(code, {
       roomCode: code,
       doctor: itDoctor,
-      shift: { shiftName: 'Mở khoá Khẩn cấp' },
+      shift: { shiftName: currentShiftName },
       unlockedAt: now,
       shiftEndMs,
       terminalId,
