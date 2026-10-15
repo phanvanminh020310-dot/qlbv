@@ -2,6 +2,16 @@ name: Kiosk standalone quality gate
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified Windows package to GitHub Releases (main only)
+        type: boolean
+        default: false
+      release_tag:
+        description: Component release tag matching the package version
+        type: string
+        default: kiosk-v2.0.0
+        required: true
   push:
     branches: [main]
     paths:
@@ -10,12 +20,16 @@ on:
       - "backend/src/modules/settings/**"
       - "backend/test/kiosk*.test.ts"
       - "backend/scripts/verify-kiosk-qr.cjs"
+      - "backend/scripts/prepare_kiosk_release.py"
+      - "backend/scripts/test_prepare_kiosk_release.py"
       - "frontend/src/app/kiosk/**"
       - "frontend/src/app/scan/**"
       - "frontend/src/app/(app)/quan-tri/cau-hinh/**"
       - ".github/workflows/kiosk-windows.yml"
   pull_request:
     paths:
+      - "backend/scripts/prepare_kiosk_release.py"
+      - "backend/scripts/test_prepare_kiosk_release.py"
       - "deploy/windows/**"
       - "backend/src/modules/kiosk/**"
       - "backend/test/kiosk*.test.ts"
@@ -40,6 +54,9 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci --no-audit --no-fund
+        working-directory: backend
+      - name: Test release validation without network or credentials
+        run: python3 -m unittest discover -s scripts -p 'test_prepare_kiosk_release.py' -v
         working-directory: backend
       - run: npm run typecheck && npm test && npm run build
         working-directory: backend
@@ -95,7 +112,7 @@ jobs:
           )
           & $csc @compileArgs
           if ($LASTEXITCODE -ne 0) { throw 'Windows compilation failed' }
-          Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/go_bo_kiosk.bat,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
+          Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/go_bo_kiosk.bat,deploy/windows/README.md,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
           "QLBS Kiosk 2.0.0`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
       - name: Native self-tests and off-screen WinForms rendering
         run: |
@@ -147,3 +164,50 @@ jobs:
             ${{ runner.temp }}/kiosk-qa/qr.png
             ${{ runner.temp }}/kiosk-qa/scanned.png
           if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
+    needs: [server-regression, phone-and-web, windows-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: kiosk-release-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: QLBS-Kiosk-Windows-2.0.0
+          path: release-artifact
+      - name: Verify the exact CI build and prepare release assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 backend/scripts/prepare_kiosk_release.py \
+            --source release-artifact --destination release-assets \
+            --tag "$RELEASE_TAG" --sha "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" --run-url "$CI_RUN_URL"
+      - name: Publish only after all verified assets are uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: "1"
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release already exists; refusing to replace published assets."
+            exit 1
+          fi
+          assets=(release-assets/*.zip release-assets/*.exe release-assets/*.sha256)
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
+            --title "QLBS Kiosk ${RELEASE_TAG#kiosk-v} — Windows" \
+            --notes-file release-assets/release-notes.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "## QLBS Kiosk Windows đã phát hành" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

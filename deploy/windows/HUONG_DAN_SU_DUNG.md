@@ -1,182 +1,367 @@
-# QLBS Kiosk 2.0 — Máy trạm phòng khám
+# QLBS Kiosk 2.0 — Hướng dẫn cài mới, cập nhật và vận hành
 
-**Ứng dụng WinForms độc lập · Một EXE · Không Edge/WebView · Bệnh viện quân y 4**
+**Cập nhật: 16/10/2026 · WinForms native · Một EXE · Bệnh viện quân y 4**
 
-## 1. Máy trạm cần gì?
+> **Bản mới không chạy Edge Kiosk và không dùng Agent điều khiển browser.** Tệp chạy chính là `QLBS_Kiosk.exe`. Không làm theo hướng dẫn cũ yêu cầu cài `QLBS_Kiosk_Agent.exe`, mở cổng localhost 28199, tạo nhiều mục Startup/Task Scheduler hay đặt NoWinKeys trong registry.
 
-- Windows 10/11 có .NET Framework 4.x; khuyến nghị 4.8 và Windows còn được hỗ trợ/cập nhật bảo mật.
-- Tài khoản Administrator **chỉ để cài, thay cấu hình hoặc gỡ**. Khi đăng nhập hằng ngày, ứng dụng chạy bằng tài khoản Windows của người dùng.
-- PC và điện thoại truy cập được **cùng địa chỉ web QLBV** trong mạng bệnh viện.
-- Điện thoại có trình duyệt hệ thống, camera trước; bác sĩ đã đăng ký sinh trắc học và được phân công trong lịch **đã công bố/đã chốt**.
-- Khuyến nghị HTTPS có chứng chỉ được **cả Windows lẫn điện thoại tin cậy**. Không bỏ qua kiểm tra chứng chỉ. Không cần webcam PC, GPS, Edge, WebView2 hay thư viện DLL riêng.
+## Mục lục
 
-> Đây là ứng dụng khoá máy trạm ở phiên người dùng, không phải trình điều khiển bảo mật của Windows. Đọc mục 8 trước khi triển khai diện rộng.
+1. [Tải đúng bộ cài và chuẩn bị](#1-tải-đúng-bộ-cài-và-chuẩn-bị)
+2. [Cập nhật VPS 1 và cấu hình trên web](#2-cập-nhật-vps-1-và-cấu-hình-trên-web)
+3. [Chọn đúng địa chỉ máy chủ](#3-chọn-đúng-địa-chỉ-máy-chủ)
+4. [Cài một PC bằng EXE — cách khuyến nghị](#4-cài-một-pc-bằng-exe--cách-khuyến-nghị)
+5. [Kiểm thử nhận ca bằng điện thoại](#5-kiểm-thử-nhận-ca-bằng-điện-thoại)
+6. [Chuyển từ Agent cũ, cập nhật và đổi phòng](#6-chuyển-từ-agent-cũ-cập-nhật-và-đổi-phòng)
+7. [Cài nhiều PC / gói chỉ có mã nguồn](#7-cài-nhiều-pc--gói-chỉ-có-mã-nguồn)
+8. [Hỗ trợ IT, cứu hộ và gỡ](#8-hỗ-trợ-it-cứu-hộ-và-gỡ)
+9. [Vị trí tệp và xử lý lỗi](#9-vị-trí-tệp-và-xử-lý-lỗi)
+10. [Checklist nghiệm thu trước triển khai hàng loạt](#10-checklist-nghiệm-thu-trước-triển-khai-hàng-loạt)
+11. [Giới hạn bảo mật cần biết](#11-giới-hạn-bảo-mật-cần-biết)
 
-## 2. Cập nhật máy chủ trước
+## 1. Tải đúng bộ cài và chuẩn bị
 
-Trên VPS 1, trong thư mục QLBV đang vận hành:
+### 1.1. Đường tải
+
+- **[Tải QLBS_Kiosk_2.0.0.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.0/QLBS_Kiosk_2.0.0.zip)**.
+- [Trang GitHub Release và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.0).
+- [README cài nhanh ngay trong thư mục Windows](README.md).
+
+Trong **Releases → Assets**, tải đúng **`QLBS_Kiosk_2.0.0.zip`**. Không nhầm với **Source code (zip)** mà GitHub tự tạo. `Code → Download ZIP` tải cả repository mã nguồn, không phải gói EXE đã build. Artifacts trong Actions là bản build kiểm thử có thời hạn lưu, còn Releases là nơi phân phối bộ cài.
+
+Gói phát hành có EXE được biên dịch bằng compiler .NET Framework trên **Windows CI**, không phải bản Mono dùng trong vòng thử nghiệm Linux trước đây. Xem `BUILD_INFO.txt` để biết commit nguồn. `SHA256SUMS.txt` chứa checksum các tệp trong gói; checksum ZIP được phát hành cạnh ZIP ở Releases.
+
+### 1.2. PC và điện thoại cần gì?
+
+- Windows 10/11 có .NET Framework 4.x; khuyến nghị 4.8 và image Windows còn được viện hỗ trợ/cập nhật bảo mật.
+- Có tài khoản Administrator để **cài, thay cấu hình hoặc gỡ**. Khi sử dụng hằng ngày, ứng dụng chạy bằng tài khoản người dùng Windows.
+- Không cần webcam PC, Edge, WebView2, SDK, NuGet hay DLL bên ngoài gói.
+- PC và điện thoại phải mở được **cùng địa chỉ web QLBV** trong mạng bệnh viện.
+- Dùng HTTPS có chứng chỉ được **cả Windows và điện thoại tin cậy** để camera web tự mở. Không bỏ qua lỗi chứng chỉ. Được Windows tin cậy không có nghĩa điện thoại đã tin cậy chứng chỉ đó.
+- Bác sĩ đã có dữ liệu khuôn mặt và phân công trong lịch **đã công bố/đã chốt**, phòng/tài khoản còn hoạt động.
+- Chuẩn bị trước mã phòng cho từng PC và giữ sẵn `go_bo_kiosk.bat` ở nơi IT có thể truy cập.
+
+**Lưu ý:** EXE chưa ký Authenticode bằng chứng thư doanh nghiệp. Nếu SmartScreen/Defender hay chính sách cơ quan chặn, IT xác minh nguồn, checksum và phê duyệt/ký mã theo quy định. Không tắt bảo vệ Windows toàn hệ thống.
+
+## 2. Cập nhật VPS 1 và cấu hình trên web
+
+### 2.1. Cập nhật máy chủ trước PC
+
+Kiểm tra sao lưu và quy trình bảo trì của viện. SSH vào **VPS 1**, chuyển vào thư mục repository QLBV đang vận hành rồi chạy:
 
 ```bash
 sudo bash deploy/update.sh
 ```
 
-1. Vào **Quản trị → Cấu hình hệ thống → Kiosk**, đặt **Master PIN riêng của bệnh viện**. Đổi PIN mặc định còn tồn tại từ bản cũ; không sử dụng chung mã công khai.
-2. Kiểm tra hai cấu hình:
-   - `kiosk.qrExpiresSeconds`: mặc định **15 giây**, hỗ trợ 10–600 giây.
-   - `kiosk.faceVerifyBufferSeconds`: mặc định **60 giây**, hỗ trợ 10–300 giây.
-3. Kiểm tra `kiosk.earlyCheckinMinutes` và `kiosk.lateCheckoutMinutes` theo quy định giao/nhận ca của bệnh viện.
-4. Danh mục phòng phải có đúng mã, đang hoạt động; lịch phải được công bố/chốt. Phòng `PK01` không được khớp nhầm với `PK010`.
-5. Nếu cấu hình `.env` gốc:
+Chờ cập nhật thành công. Không cài EXE v2 với backend cũ: bộ cài cần API v2 và sẽ từ chối giao thức/phòng/URL không phù hợp. Việc tải EXE không tự cập nhật VPS.
+
+**VPS 2 giữ kiến trúc cũ:** dịch vụ AI hiện có trên cổng 8001. Kiểm tra `AI_SERVICE_URL` trên VPS 1 trỏ đúng dịch vụ VPS 2 và truy cập được từ container backend. Không nhập URL VPS 2 vào bộ cài Windows. Gói Windows không chứa/cài mô hình AI.
+
+### 2.2. Cấu hình Kiosk
+
+Đăng nhập web bằng tài khoản có quyền quản trị → **Quản trị → Cấu hình hệ thống → Kiosk**:
+
+| Cấu hình | Cần làm |
+|---|---|
+| Master PIN IT (`kiosk.itMasterPin`) | Đặt mã riêng của viện; đổi mã mặc định còn giữ từ bản cũ. Không có mật khẩu dự phòng cố định. |
+| Hạn QR (`kiosk.qrExpiresSeconds`) | Mặc định **15 giây**; cho phép 10–600 giây. |
+| Thời gian xác thực sau quét (`kiosk.faceVerifyBufferSeconds`) | Mặc định **60 giây**; cho phép 10–300 giây. |
+| Cho nhận ca sớm (`kiosk.earlyCheckinMinutes`) | Đặt theo quy định viện. |
+| Ân hạn hết ca (`kiosk.lateCheckoutMinutes`) | Đặt theo quy định viện. Ví dụ ca hết 11:00, ân hạn 60 phút thì mốc khoá là 12:00. |
+| Cho phép tự đổi ảnh xác thực | Bật/tắt theo chính sách. Bật không cấp quyền quản trị cho bác sĩ và không bỏ các kiểm tra nghiệp vụ khác. |
+
+Lưu cấu hình. Không đưa PIN lên hướng dẫn công khai, ảnh chụp màn hình hoặc bộ cài máy trạm.
+
+### 2.3. Chuẩn bị phòng, bác sĩ và lịch
+
+1. Trong danh mục lịch trực, xác nhận **mã phòng** đang hoạt động, ví dụ `PK01`. Nhập mã, không nhập tên dài như “Phòng khám Nội 01”. `PK01` và `PK010` là hai phòng khác nhau.
+2. Tài khoản bác sĩ phải đang hoạt động.
+3. Người có quyền vào **Quản trị → Người dùng**, tại bác sĩ bấm nút **Đăng ký sinh trắc học khuôn mặt** và hoàn tất đăng ký. Nếu chính sách cho phép tự đăng ký, bác sĩ cũng có luồng tại **Cá nhân → Sinh trắc học Kiosk**. Kiosk PC nhận ca không cần webcam.
+4. Phân công đúng bác sĩ, đúng phòng, ngày và ca. **Công bố/chốt** lịch; bản nháp không được dùng để mở máy.
+5. Kiểm tra nghỉ phép và giờ ca, nhất là ca đêm qua ngày. Không có ca hợp lệ thì nhận diện đúng mặt cũng không tự cấp quyền mở Desktop.
+
+## 3. Chọn đúng địa chỉ máy chủ
+
+### 3.1. Nhập địa chỉ web gốc, không nhập đường dẫn trang
+
+Dùng địa chỉ mở giao diện web QLBV từ **cả PC lẫn điện thoại**. Các tên miền sau chỉ là ví dụ; thay bằng địa chỉ thực của viện.
+
+| Web đang sử dụng | Nhập vào bộ cài |
+|---|---|
+| `https://qlbv.benhvien.vn/login` | `https://qlbv.benhvien.vn` |
+| `https://qlbv.benhvien.vn:3000/login` | `https://qlbv.benhvien.vn:3000` |
+| `http://192.168.10.100:3000/login` | `http://192.168.10.100:3000` — chỉ cho thử LAN; camera web tự động cần HTTPS |
+
+**Không nhập:** `/login`, `/api`, `/kiosk/PK01`, cổng backend `4000`, cổng AI `8001`, `localhost` hoặc `127.0.0.1`. `localhost` trên điện thoại là chính điện thoại, không phải VPS.
+
+Nếu viện dùng **HTTPS cổng 3000**, giữ cả `https://` và `:3000`. Đừng tự đổi sang HTTP hoặc bỏ cổng khi web thực tế không phục vụ ở cổng mặc định.
+
+### 3.2. Biến môi trường nếu IT cố định URL quét
+
+Trong `.env` gốc trên VPS 1, nếu sử dụng:
 
 ```dotenv
 SCAN_BASE_URL=https://qlbv.benhvien.vn
 PUBLIC_URL=https://qlbv.benhvien.vn
 ```
 
-Bộ cài PC phải nhập **đúng cùng origin** `https://qlbv.benhvien.vn` — gồm giao thức, tên máy và cổng nếu có. Địa chỉ này phải mở được trên điện thoại; không nhập IP VPS 2 hay cổng API 4000. Có thể bỏ trống hai biến để giữ cách lấy origin từ máy trạm như các triển khai LAN trước đây.
+Hoặc với HTTPS cổng 3000:
 
-**VPS 2 không đổi kiến trúc**: giữ microservice AI hiện có trên cổng 8001; `AI_SERVICE_URL` trên VPS 1 phải trỏ đúng VPS 2. Bộ cài máy trạm không chứa/cài mô hình AI.
+```dotenv
+SCAN_BASE_URL=https://qlbv.benhvien.vn:3000
+PUBLIC_URL=https://qlbv.benhvien.vn:3000
+```
 
-## 3. Cài một phòng khám
+Sau khi thay `.env`, áp dụng lại triển khai theo quy trình VPS. Bộ cài PC phải nhập **đúng cùng origin**: giao thức, tên miền và cổng. Có thể bỏ trống hai biến để giữ cách lấy origin từ máy trạm như các triển khai LAN trước đây, nhưng mọi PC vẫn phải nhập URL điện thoại truy cập được.
 
-### Cách khuyến nghị: chỉ một EXE
+Chứng chỉ HTTPS phải khớp tên miền/IP đang nhập. Không dùng chứng chỉ của tên miền rồi thay URL thành IP nếu chứng chỉ không chứa IP đó.
 
-1. Giải nén gói phát hành vào thư mục cục bộ, kiểm tra SHA-256 với `SHA256SUMS.txt`.
-2. Mở `QLBS_Kiosk.exe`. Lần đầu hiện trình thiết lập.
-3. Nhập **địa chỉ web QLBV** và **mã phòng**, ví dụ `https://qlbv.benhvien.vn` / `PK01`.
-4. Bấm **Kiểm tra kết nối**. Bộ cài đối chiếu phiên bản API, đúng phòng, giờ máy chủ, URL quét và sự tồn tại giao diện điện thoại; không chỉ kiểm tra có mạng Internet.
-5. Bấm **Cài đặt máy trạm** và chấp nhận UAC. Nếu không cấp quyền hoặc kiểm tra thất bại, cấu hình đang chạy không bị thay thế.
+## 4. Cài một PC bằng EXE — cách khuyến nghị
 
-Ứng dụng tự tạo ID ngẫu nhiên riêng cho PC. Khi cài lại cùng phòng, ID v2 được giữ nguyên; lần chuyển đổi cũng nhận lại ID Agent cũ nếu cấu hình cũ hợp lệ. Khi đổi phòng, tạo ID mới.
+### Bước 1 — Tải và giải nén
 
-### Nếu nhận gói mã nguồn, chưa có EXE
+Tải ZIP từ [Releases](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.0), giải nén vào một thư mục cục bộ, ví dụ `C:\BoCai\QLBS_Kiosk_2.0.0`. Không mở EXE trực tiếp bên trong cửa sổ ZIP.
 
-Chạy `cai_dat_kiosk.bat`. Script dùng `csc.exe` đi kèm Windows để tạo **cùng một ứng dụng**, rồi mở trình thiết lập. Không tải NuGet, không cài SDK và không kiểm tra Edge/Chrome. Có thể biên dịch từ USB/chia sẻ chỉ đọc vì tệp tạm nằm trong `%TEMP%`.
+Trong cùng thư mục phải thấy ít nhất:
 
-Thư mục chỉ có **hai kịch bản dành cho IT**:
+```text
+QLBS_Kiosk.exe
+QLBS_Kiosk.cs
+cai_dat_kiosk.bat
+go_bo_kiosk.bat
+README.md
+HUONG_DAN_SU_DUNG.md
+BUILD_INFO.txt
+SHA256SUMS.txt
+NOTICE.md
+KIEM_THU_V2.md
+```
 
-| Tệp | Công dụng |
-|---|---|
-| `cai_dat_kiosk.bat` | Cài có giao diện hoặc cài im lặng, tự biên dịch nếu chưa có EXE |
-| `go_bo_kiosk.bat` | Cứu hộ/gỡ độc lập, dùng được ngay cả khi EXE/cấu hình hỏng |
+Chỉ có **hai BAT**. Các tệp tài liệu/mã nguồn không phải tiến trình chạy nền hay Agent phụ.
 
-### Vị trí sau cài
+### Bước 2 — Kiểm tra checksum
 
-| Nội dung | Vị trí |
-|---|---|
-| Ứng dụng | `%ProgramFiles%\QLBS Kiosk\QLBS_Kiosk.exe` |
-| Cấu hình máy | `%ProgramData%\QLBS\Kiosk\config.ini` |
-| Nhật ký | `%LOCALAPPDATA%\QLBS\Kiosk\kiosk.log` và `kiosk.log.1` |
-| Tự chạy | Một mục `HKLM\Software\Microsoft\Windows\CurrentVersion\Run\QLBS_Kiosk` |
+Mở PowerShell tại thư mục vừa giải nén:
 
-Cấu hình chỉ cho Administrators/SYSTEM ghi, Users đọc. Nhật ký quay vòng khoảng 1 MB/tệp; không ghi PIN, URL QR, ảnh hay vector khuôn mặt. Không đăng ký bốn lớp startup trùng nhau và không tạo tác vụ chạy quyền Administrator hằng ngày.
+```powershell
+Get-FileHash .\QLBS_Kiosk.exe -Algorithm SHA256
+```
 
-## 4. Triển khai nhiều phòng / cài im lặng
+Mở `SHA256SUMS.txt`, đối chiếu hash của `QLBS_Kiosk.exe`. Có thể kiểm tra ZIP với file `QLBS_Kiosk_2.0.0.zip.sha256` tải cạnh ZIP trên Releases. Nếu khác hash, dừng cài và tải/kiểm tra lại.
 
-Dùng **cùng một EXE**, mỗi PC chỉ khác mã phòng. Chạy với quyền Administrator/SYSTEM:
+### Bước 3 — Mở trình thiết lập
+
+Nhấp đúp **`QLBS_Kiosk.exe`** trong thư mục bộ cài. EXE bên ngoài thư mục đã cài sẽ mở màn thiết lập; nếu cần gọi rõ ràng:
+
+```bat
+QLBS_Kiosk.exe /setup
+```
+
+Không cần tạo shortcut Startup/Task Scheduler thủ công. Không cần mở trang web Kiosk trong Edge.
+
+### Bước 4 — Điền hai ô
+
+- **Địa chỉ máy chủ QLBV:** URL gốc đã xác định ở mục 3.
+- **Mã phòng khám:** ví dụ `PK01`.
+
+Không tự tạo/nhập terminal ID. Ứng dụng quản lý ID riêng cho PC.
+
+### Bước 5 — Kiểm tra kết nối
+
+Bấm **Kiểm tra kết nối**. Bộ cài kiểm tra:
+
+- API đúng phiên bản v2, phòng tồn tại/đang hoạt động.
+- Đồng hồ máy chủ và trạng thái của đúng terminal.
+- URL quét đúng origin và trang điện thoại mở được.
+- Chứng chỉ HTTPS được Windows tin cậy.
+
+Phải có thông báo kết nối hợp lệ/đúng tên phòng mới tiếp tục. “PC có Internet” chưa đủ chứng minh kết nối với QLBV hợp lệ. Nếu lỗi, xem mục 9; không sửa mã nguồn để bỏ qua preflight/chứng chỉ.
+
+### Bước 6 — Cài và chấp nhận UAC
+
+Bấm **Cài đặt máy trạm**, xác nhận quyền **Administrator** khi Windows hỏi. Không cấp UAC hoặc preflight thất bại thì cấu hình đang chạy không bị thay thế.
+
+Bộ cài chép EXE vào Program Files, lưu cấu hình có ACL bảo vệ và đăng ký **một** mục tự chạy HKLM. Cài tương tác sẽ khởi động ứng dụng qua Explorer; hằng ngày ứng dụng chạy bằng tài khoản người dùng, không phải tác vụ Administrator.
+
+Nếu Explorer không khởi chạy được ngay, cấu hình đã lưu; đăng xuất/đăng nhập Windows để mục tự chạy hoạt động. Không tạo thêm mục Startup để “sửa” bằng cách chạy trùng.
+
+### Bước 7 — Kiểm tra khởi động lại
+
+Sau khi kiểm thử an toàn và có phương án IT cứu hộ, đăng xuất/đăng nhập hoặc khởi động lại PC. Ứng dụng phải tự kết nối máy chủ, hiện trạng thái khoá/QR hoặc khôi phục lease còn hợp lệ do server xác nhận. Nếu chưa có mạng, hiển thị đang đồng bộ và tự phục hồi khi mạng có lại; không dùng QR giả hoặc dữ liệu lịch cache như lịch hiện tại.
+
+## 5. Kiểm thử nhận ca bằng điện thoại
+
+1. Dùng bác sĩ đã có sinh trắc học và ca hợp lệ; điện thoại ở mạng bệnh viện, mở được cùng URL QLBV.
+2. PC hiển thị đúng phòng, bác sĩ/ca và giờ máy chủ. QR tự đổi theo thời hạn, mặc định 15 giây.
+3. Dùng **Camera mặc định của điện thoại** quét trực tiếp QR trên PC. Không quét trong Zalo, Messenger, browser nhúng hoặc ứng dụng scanner. iPhone khuyến nghị mở bằng Safari; nếu Camera mở sang browser bị từ chối, chuyển liên kết sang Safari.
+4. Trình duyệt lần đầu hỏi quyền camera: chọn **Cho phép**. Nhìn thẳng **camera trước điện thoại**, đủ ánh sáng. Không cần PIN bốn số, GPS, chớp mắt hay quay đầu.
+5. Khi server ghi nhận quét, PC bỏ nét QR và che bằng nền trắng đục; hiển thị đếm lùi xác thực, mặc định 60 giây. Reload/reconnect không kéo dài thời hạn này.
+6. Nhận diện/PAD và lịch hợp lệ: **mọi cửa sổ Kiosk ẩn, trả hoàn toàn Desktop**. Không taskbar/tray/dock/badge/màn trắng và không tự mở/giành focus HIS. Bác sĩ tự dùng phần mềm làm việc.
+7. Hết ca + ân hạn: tự khoá và đồng bộ ca tiếp theo. Ví dụ ca hết 11:00, grace 60 phút thì mốc khoá là 12:00.
+
+Ứng dụng tiếp tục giám sát kín trong cùng tiến trình. Đồng hồ/thời hạn dùng **giờ server + bộ đếm monotonic**, không lấy giờ Windows người dùng chỉnh. Thay/xoá lịch, nghỉ phép hoặc giờ ca được đối soát lại; SSE là kênh chính, polling khoảng 3 giây là dự phòng cả khi đã mở Desktop.
+
+Mất kết nối xác minh được thì giữ/đưa máy về khoá; có mạng lại thì đối soát, chỉ khôi phục lease hợp lệ của đúng PC. Sau sleep/hibernate, khoá và kiểm tra lại. HTTPS vẫn không bỏ qua quyết định cấp quyền camera của hệ điều hành/trình duyệt.
+
+## 6. Chuyển từ Agent cũ, cập nhật và đổi phòng
+
+### 6.1. Máy đang chạy Agent + Edge cũ
+
+1. Cập nhật VPS 1 trước.
+2. Chuẩn bị phiên bảo trì, quyền Administrator và `go_bo_kiosk.bat`; ghi nhận URL/mã phòng hiện tại.
+3. Tải bản v2, giải nén, chạy `QLBS_Kiosk.exe` từ thư mục bộ cài, nhập cùng URL/phòng, kiểm tra rồi cài.
+4. Bộ cài dừng đúng Agent, dọn tự chạy cũ và chỉ đóng Edge/Chrome dùng **profile Kiosk cũ**. Không dừng HIS hay đóng tất cả tab browser thông thường.
+5. ID Agent cũ được nhận lại nếu cấu hình hợp lệ và cùng phòng. Không chép `config.ini` từ PC khác để ép giữ ID.
+6. Nếu còn NoWinKeys của bộ cài cũ, Explorer của phiên tương tác có thể được khởi động lại để nạp lại phím. Chạy bằng SYSTEM hoặc HKCU/GPO thuộc tài khoản khác có thể cần người dùng đăng xuất/đăng nhập và IT kiểm tra chính sách còn lại.
+7. Nghiệm thu mở Desktop/phím Windows/HIS, rồi mới áp dụng các phòng khác.
+
+Máy cài mới không bị thêm các chính sách NoWinKeys/Task Manager/DevTools dai dẳng. Không tự xoá GPO doanh nghiệp đại trà.
+
+### 6.2. Cập nhật phiên bản EXE sau này
+
+Tải bộ cài mới ở thư mục riêng, chạy EXE `/setup` hoặc `cai_dat_kiosk.bat`, giữ cùng URL/phòng. Bộ cài preflight, ghi tạm, thay EXE/cấu hình và cố gắng rollback phần cài chính nếu lỗi. Cùng phòng thì giữ ID v2. Không ghi đè EXE đang chạy bằng cách copy thủ công, không gỡ `/purge` khi chỉ cập nhật thông thường.
+
+Không có cơ chế tự tải/chạy cập nhật không kiểm soát. IT chủ động phân phối. Cài/cập nhật/gỡ dùng chung mutex; tác vụ xoá chậm của bản gỡ cũ có dấu nhận diện được huỷ khi cài mới để tránh xoá nhầm bản vừa cài lại.
+
+### 6.3. Đổi PC sang phòng khác
+
+Chạy lại `/setup`, nhập mã phòng mới và cài. Đổi phòng sẽ sinh terminal ID mới. Nếu tái sử dụng/thu hồi thiết bị và cần xoá cấu hình hoàn toàn, dùng gỡ `/purge` theo mục 8, sau đó cài lại. Không clone cấu hình/golden image đã có terminal ID sang PC khác.
+
+## 7. Cài nhiều PC / gói chỉ có mã nguồn
+
+### 7.1. Cài im lặng bằng EXE
+
+Dùng cùng một EXE cho mọi phòng. Mở **CMD đã có quyền Administrator**; ví dụ cho PC phòng `PK01`:
 
 ```bat
 QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn /room PK01 /quiet /no-start
 ```
 
-Hoặc từ gói mã nguồn:
+Với HTTPS cổng 3000 và phòng `PK02`:
 
 ```bat
-cai_dat_kiosk.bat /server https://qlbv.benhvien.vn /room PK01 /quiet /no-start
+QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn:3000 /room PK02 /quiet /no-start
 ```
 
-Trong PowerShell, đợi ứng dụng GUI kết thúc để lấy đúng mã trả về:
+- Thay URL/mã phòng thực. `/quiet` không hỏi UAC, phải có quyền trước; `/no-start` không mở giao diện sau cài.
+- Dùng tài khoản Administrator/SYSTEM qua công cụ quản trị máy sẵn có của viện. Không mở GUI trong session 0.
+- Ứng dụng sẽ tự chạy ở lần đăng nhập tiếp theo. Không cần sửa source theo từng phòng hay tạo ID thủ công.
+- Mã trả về: **0** thành công, **1** lỗi, **2** huỷ xác nhận gỡ.
+
+Trong PowerShell, dùng `Start-Process -Wait` để lấy đúng mã trả về của ứng dụng GUI:
 
 ```powershell
 $p = Start-Process '.\QLBS_Kiosk.exe' -ArgumentList @(
-  '/install', '/server', 'https://qlbv.benhvien.vn',
+  '/install', '/server', 'https://qlbv.benhvien.vn:3000',
   '/room', 'PK01', '/quiet', '/no-start'
 ) -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "Cài Kiosk thất bại: $($p.ExitCode)" }
 ```
 
-- Phân phối qua công cụ quản trị máy/GPO/Intune/SCCM sẵn có của đơn vị; mỗi máy nhận `room` riêng. Các công cụ này không phải phụ thuộc chạy của Kiosk.
-- `/quiet` không hiện UAC/hộp thoại; phải có quyền trước. Không mở giao diện trong session 0. Ứng dụng tự chạy khi người dùng đăng nhập lần sau.
-- Mã trả về: **0** thành công; **1** lỗi; **2** huỷ xác nhận gỡ.
-- **Không sao chép `config.ini` giữa các PC**, không đóng sẵn cấu hình Kiosk trong golden image. Nếu hai máy có cùng terminal ID thì chúng không còn là hai đích độc lập. Cài sau khi clone Windows để mỗi PC tự sinh GUID.
-- Cài, cập nhật và gỡ dùng chung khoá liên tiến trình. Tác vụ xoá chậm của bản gỡ cũ có dấu nhận diện riêng; bộ cài mới huỷ dấu đó để không xoá nhầm bản vừa cài lại.
-- Không có cơ chế tự tải/chạy cập nhật không kiểm soát. Phát hành mới được IT phân phối và chạy lại `/install`; bộ cài kiểm tra trước, ghi tạm, thay EXE/cấu hình và hoàn nguyên khi phần cài đặt chính thất bại.
+**Không clone `config.ini`**. Nếu hai PC có cùng ID, chúng không còn là hai đích độc lập. Cài Kiosk sau khi clone Windows/golden image để mỗi máy tự tạo GUID.
 
-### Chuyển từ Agent + Edge cũ
+### 7.2. Chỉ có mã nguồn, chưa có EXE
 
-Bộ cài nhận diện cài đặt cũ ở `C:\QLBS_Kiosk`, dừng đúng Agent, dọn các mục tự chạy cũ và chỉ đóng browser dùng **profile Kiosk cũ**. Không `taskkill` toàn bộ Edge/Chrome, không dừng HIS. Các chính sách Task Manager/NoWinKeys/DevTools của **bộ cài cũ** được dọn; máy cài mới không bị sửa các chính sách doanh nghiệp đó.
-
-Nếu còn `NoWinKeys` cũ, Explorer của phiên cài tương tác được khởi động lại để nạp lại phím Windows. Nếu triển khai bằng SYSTEM hoặc chính sách cũ nằm ở tài khoản Windows khác chưa được nạp, cho người dùng đăng xuất/đăng nhập và nhờ quản trị miền kiểm tra GPO/HKCU còn lại. Không xoá chính sách của tổ chức một cách đại trà.
-
-## 5. Bác sĩ sử dụng
-
-1. **Quét mã QR bằng điện thoại**: dùng Camera mặc định quét mã trực tiếp trên PC. QR tự thay theo cấu hình; mã cũ không còn hiệu lực khi được thay.
-2. **Nhìn thẳng camera điện thoại để xác thực**: PC bỏ toàn bộ nét QR và thay bằng nền trắng đục ngay khi nhận `SESSION_SCANNED`, hiện đếm lùi thời gian xác thực. Không có PIN bốn số, GPS hay động tác chớp mắt/quay đầu.
-3. **Mở khóa màn hình thành công**: máy chủ đối soát khuôn mặt, người thật và lịch trực. **Tất cả cửa sổ Kiosk ẩn ngay**, không taskbar, tray, dock, badge hay màn trắng còn lại; không tự mở/chiếm tiêu điểm HIS. Bác sĩ trở về Desktop Windows và tự sử dụng phần mềm làm việc.
-
-Ứng dụng vẫn giám sát kín trong cùng tiến trình để khoá lại khi hết ca + ân hạn. Giờ hiển thị và thời hạn dùng **đồng hồ máy chủ + bộ đếm monotonic**, không dựa vào giờ Windows do người dùng chỉnh.
-
-- Tải lại trang điện thoại **không gia hạn** bộ đệm xác thực.
-- Hai PC cùng phòng có QR và lease riêng; mở PC A không mở PC B.
-- Sửa/xoá phân công, thêm nghỉ phép hoặc đổi thời gian ca được đối soát lại. Cập nhật qua SSE; polling 3 giây là dự phòng, kể cả khi đang mở Desktop.
-- Khi mất kết nối xác minh được, giữ/đưa máy về màn khoá, không vẽ QR giả. Khi mạng trở lại, tự đồng bộ với máy chủ; chỉ khôi phục lease còn hợp lệ của đúng máy.
-- Sau resume từ sleep/hibernate, khoá và đối soát lại trước khi cho tiếp tục sử dụng.
-- HTTPS vẫn yêu cầu người dùng cấp quyền camera lần đầu. Hệ điều hành/trình duyệt quyết định việc cấp quyền; không hứa mở camera im lặng 100%. HTTP không có WebRTC tự động, chỉ là chế độ chụp dự phòng theo luồng di động hiện có.
-
-## 6. Hỗ trợ CNTT
-
-- Bấm **Hỗ trợ CNTT**, nhấp logo 5 lần, hoặc nhấn **Ctrl + Alt + Shift + F12**.
-- Nhập Master PIN cấu hình trên QLBV. Cho phép nhập chữ/số/backspace trong hộp thoại, vẫn chặn tổ hợp thoát hệ thống.
-- Xác minh **trên máy chủ**, không lưu PIN cục bộ, không có mã mở khoá bí mật dự phòng. Giới hạn 5 lần thử/10 phút theo IP và đích máy trạm, ghi nhật ký kiểm toán.
-- IT unlock cũng có thời hạn: ca hiện tại + ân hạn; ngoài ca không quá 4 giờ và không vượt giờ bắt đầu ca tiếp theo đã có trong lịch.
-- Khi server/mạng không hoạt động, PIN trực tuyến không hoạt động. IT dùng `go_bo_kiosk.bat` với Administrator; không hạ mức an toàn bằng PIN offline lưu trong máy.
-
-Bản 2 **không mở cổng localhost 28199**, không nhận `/unlock` từ trình duyệt. Một trang web bất kỳ không thể gọi cầu nối cục bộ để mở khoá ứng dụng mới.
-
-## 7. Gỡ / cứu hộ
-
-Chạy `go_bo_kiosk.bat` bằng Administrator. Script độc lập với EXE và cấu hình, dừng đúng tiến trình Kiosk theo đường dẫn, xoá tự chạy và trả quyền bàn phím do hook giữ. Không đóng HIS hay browser thông thường.
+Đặt `QLBS_Kiosk.cs` và `cai_dat_kiosk.bat` cùng thư mục, chạy BAT. Nó dùng `csc.exe` đi kèm .NET Framework Windows, không cần SDK/NuGet/Edge, rồi mở cùng trình thiết lập.
 
 ```bat
+cai_dat_kiosk.bat
+rem Hoac cai im lang tu nguon, chay trong CMD Administrator:
+cai_dat_kiosk.bat /server https://qlbv.benhvien.vn:3000 /room PK01 /quiet /no-start
+```
+
+Có EXE cùng thư mục thì BAT ưu tiên EXE đó. Muốn tự biên dịch lại, đổi tên/xoá **EXE trong thư mục bộ cài**, không xoá bản đang chạy trong Program Files. Mã nguồn/BAT trên USB chỉ đọc vẫn biên dịch vào `%TEMP%`.
+
+## 8. Hỗ trợ IT, cứu hộ và gỡ
+
+### 8.1. Mở hỗ trợ khi server còn hoạt động
+
+Bấm **Hỗ trợ CNTT**, nhấp logo 5 lần hoặc **Ctrl + Alt + Shift + F12**, nhập Master PIN đã đặt trong cấu hình QLBV. Cho phép gõ PIN/backspace, vẫn chặn tổ hợp thoát hệ thống trong phiên khoá.
+
+Xác minh **online** trên server; không lưu PIN trong PC, không có mã bí mật dự phòng. Sai PIN bị giới hạn 5 lần/10 phút theo IP và đích, có audit. IT unlock có thời hạn: ca hiện tại + grace; ngoài ca không quá 4 giờ và không vượt giờ bắt đầu ca tiếp theo đã có lịch.
+
+### 8.2. Mất mạng, server lỗi hoặc quên PIN
+
+PIN online không hoạt động khi server không xác minh được. **Chỉ IT có quyền Administrator** thực hiện cứu hộ bằng `go_bo_kiosk.bat` đã giữ sẵn.
+
+Vì bàn phím đang bị hook, không hứa rằng có thể gõ Win+R ngay trên màn khoá. IT dùng kênh quản trị hợp lệ của đơn vị, tài khoản Administrator hoặc secure-attention/Task Manager khi chính sách Windows cho phép để chạy bộ cứu hộ. `Ctrl+Alt+Del` thuộc Windows, không bị hook WinForms chặn. Nếu GPO/Task Manager/RDP bị hạn chế, quản trị miền xử lý theo quy trình viện; không cài PIN offline để vòng qua kiểm tra server.
+
+### 8.3. Gỡ bình thường và gỡ sạch
+
+Chạy `go_bo_kiosk.bat` bằng Administrator; script độc lập với EXE/cấu hình, dừng đúng Kiosk theo đường dẫn, xoá tự chạy, không dừng HIS/browser thông thường.
+
+```bat
+go_bo_kiosk.bat
+rem Im lang, da co quyen Administrator:
 go_bo_kiosk.bat /quiet
-rem Xoa ca cau hinh terminal va du lieu kiosk cu (chi khi can go sach):
+rem Xoa ca cau hinh terminal va du lieu kiosk cu da nhan dien:
 go_bo_kiosk.bat /quiet /purge
 ```
 
-Hoặc gỡ trong **Windows → Apps → QLBS Kiosk**, dùng `/uninstall` trên EXE. Mặc định giữ cấu hình để cài lại cùng terminal; `/purge` xoá cấu hình. Khi chuyển hẳn máy sang phòng khác/tái sử dụng, nên gỡ `/purge` trước.
+Mặc định **giữ cấu hình/terminal ID** để cài lại cùng phòng. `/purge` xoá cấu hình; lần cài sau sinh ID mới. Chỉ dùng `/purge` khi thật sự cần thu hồi/chuyển giao thiết bị, không dùng cho cập nhật thường lệ.
 
-## 8. Phạm vi bảo vệ thực tế — bắt buộc đọc
+Có thể gỡ trong **Windows → Apps → QLBS Kiosk**, hoặc từ CMD Administrator:
 
-- `WH_KEYBOARD_LL` là **hook user-mode**, không phải driver/kernel. Chặn phím Win, Alt+Tab, Alt+F4, Ctrl+Esc, Ctrl+Shift+Esc và các phím thông thường trong phiên khoá. **Không thể chặn Secure Attention Sequence `Ctrl+Alt+Del`**, đăng xuất/tắt máy, tài khoản Administrator, Safe Mode, can thiệp vật lý hoặc mọi cơ chế accessibility bằng ứng dụng WinForms đơn thuần.
-- HKLM Run chạy sau đăng nhập, **không thay thế màn hình đăng nhập/secure desktop** và không bảo đảm không có khe hở startup khi Explorer khởi động. Hỏng/chết tiến trình không phải khoá OS chống phá hoại. Muốn ranh giới bảo mật OS chặt hơn: IT phải cấu hình tài khoản tiêu chuẩn, chính sách Windows theo phiên bản/edition phù hợp, quyền Task Manager/đăng xuất, accessibility, RDP, boot/USB và quyền quản trị. Nghiệm thu trên image Windows thực tế.
-- Không dùng registry tắt Win/Task Manager/DevTools dai dẳng ở cài mới: khi mở khoá, Desktop thật sự dùng bình thường. Không vô hiệu hoá kiểm tra SSL và không cài chứng chỉ/driver không tin cậy.
-- Nhận diện WebView/scanner dựa trên UA, referrer và tín hiệu trình duyệt; **không phải chứng thực mật mã rằng Camera mặc định đã quét**, không chặn được mọi cách giả mạo/chuyển tiếp. Cần kết hợp QR ngắn hạn, claim một thiết bị, PAD, lịch trực, HTTPS, firewall/VLAN/Wi-Fi nội bộ. Không công khai `/api/kiosk/*` ra Internet.
-- AI PAD là kiểm tra phần mềm; việc tham chiếu ISO 30107 không tự đồng nghĩa đã được phòng thí nghiệm chứng nhận. Nghiệm thu mẫu thật/giả và tải đồng thời trên VPS 2 trước vận hành lâm sàng.
-- QR/lease/SSE hiện được quản lý trong **một tiến trình API**. Restart API làm mất lease và khoá lại máy để xác thực lại — hướng an toàn. Không nhân bản nhiều replica API phục vụ Kiosk nếu chưa dùng kho trạng thái chung/sticky routing được thiết kế riêng.
-- EXE không được ký Authenticode bằng chứng thư doanh nghiệp trong kho mã nguồn. SmartScreen có thể cảnh báo; đối chiếu SHA-256 hoặc ký bằng chứng thư hợp lệ của đơn vị trước khi phân phối. Không yêu cầu tắt Defender/SmartScreen toàn hệ thống.
+```bat
+"%ProgramFiles%\QLBS Kiosk\QLBS_Kiosk.exe" /uninstall
+```
 
-## 9. Kiểm thử và nghiệm thu
+Không xoá EXE/cấu hình thủ công thay cho uninstall và không `taskkill` toàn bộ Edge/Chrome. Máy từng dùng Agent cũ có thể cần đăng xuất/đăng nhập để nạp lại chính sách Explorer đã dọn.
 
-Kiểm thử tự động trong workflow `Kiosk standalone quality gate`:
+## 9. Vị trí tệp và xử lý lỗi
 
-- Biên dịch C# 5 bằng compiler .NET Framework thật trên Windows.
-- Self-test cấu hình, JSON envelope/null, đồng hồ server, SSE, state scan/lease, chính sách nhập PIN.
-- So sánh **từng module của 40 phiên bản QR** với `node-qrcode` độc lập; kiểm tra ảnh giao diện off-screen.
-- Kiểm thử nghiệp vụ cũ và Kiosk, cộng tích hợp PostgreSQL/Drizzle bằng PGlite chạy migration thật; AI được giả lập trong test, không thay thế nghiệm thu model thực.
-- Typecheck/build backend và frontend; phân tích cú pháp script cứu hộ mà không thực thi xoá registry trên CI.
+### 9.1. Sau cài
 
-**Trước khi triển khai hàng loạt**, nghiệm thu tối thiểu hai PC và hai điện thoại thật:
+| Nội dung | Vị trí |
+|---|---|
+| Ứng dụng | `%ProgramFiles%\QLBS Kiosk\QLBS_Kiosk.exe` |
+| Cấu hình đúng PC | `%ProgramData%\QLBS\Kiosk\config.ini` |
+| Nhật ký từng người dùng | `%LOCALAPPDATA%\QLBS\Kiosk\kiosk.log` và `kiosk.log.1` |
+| Tự chạy | Một giá trị `HKLM\Software\Microsoft\Windows\CurrentVersion\Run\QLBS_Kiosk` |
 
-- [ ] Windows 10/11 đúng image của viện; cài từ EXE và source-only BAT, đường dẫn có dấu/khoảng trắng.
-- [ ] Mã phòng sai, nhầm cổng API, HTTPS sai chứng chỉ: báo lỗi, không ghi đè cấu hình cũ.
-- [ ] QR 15s thay mã; ảnh QR cũ không dùng được; scan che trắng ngay, không lộ QR khi reconnect/tải lại.
-- [ ] Buffer 60s/cấu hình khác hết đúng hạn, không tự kéo dài; đổi ảnh sinh trắc học theo đúng quyền/toggle hệ thống.
-- [ ] Face thật/giả, sai bác sĩ, không có ca, đang nghỉ phép, nhiều bác sĩ cùng xác thực; AI VPS 2 hoạt động ổn định.
-- [ ] Hai PC chung phòng: chỉ đúng PC đã phát QR mở; PC khác/SSE reconnect không bị mở nhầm.
-- [ ] Mở khoá không còn cửa sổ/badge/taskbar/tray; phím Windows dùng lại, HIS đang mở không bị đóng hay tự chiếm focus.
-- [ ] Hết ca + grace, đổi/xoá lịch trực, ca đêm qua ngày, sleep/resume: tự khoá đúng và hiển thị ca tiếp theo.
-- [ ] Boot chưa có mạng, rút/cắm LAN, restart API, SSE qua proxy, DPI 100/125/150%, hai màn hình/cắm rút monitor.
-- [ ] PIN đúng/sai, giới hạn thử, hộp thoại nhập được, hotkey; giữ Ctrl/Alt/Win qua thời điểm khoá/mở không để kẹt phím; cứu hộ/gỡ hai lần liên tiếp và cài lại ngay sau gỡ không lỗi, không đóng HIS.
-- [ ] Chính sách Ctrl+Alt+Del/Task Manager/đăng xuất/accessibility/RDP được quản trị Windows nghiệm thu riêng.
+Admins/SYSTEM ghi cấu hình, Users đọc. Log quay vòng khoảng 1 MB/tệp, không ghi PIN, URL QR, ảnh hay vector khuôn mặt. Không sửa ACL hoặc chép config giữa các PC để xử lý lỗi.
 
-Không ghi “không lỗi 100%” khi chưa chạy các ca phần cứng và chính sách Windows thực tế này.
+### 9.2. Lỗi thường gặp
+
+| Triệu chứng | Kiểm tra / xử lý |
+|---|---|
+| GitHub không thấy EXE trong `deploy/windows` | Đây là thư mục mã nguồn. Tải **Assets → QLBS_Kiosk_2.0.0.zip** ở Releases, không chọn Source code ZIP. |
+| Sai giao thức API / không tìm thấy trang quét | Cập nhật VPS 1; nhập URL **web gốc**, không phải backend 4000/AI 8001; kiểm tra proxy `/api` và trang `/scan`. |
+| Không nhận mã phòng | Kiểm tra đúng mã phòng đang hoạt động; không nhập tên phòng; `PK01` khác `PK010`. |
+| HTTPS/chứng chỉ lỗi | Kiểm tra tên miền/IP/SAN, ngày hết hạn, chuỗi chứng chỉ và trust trên PC/điện thoại. Không tắt SSL validation. |
+| Camera điện thoại không tự mở | Dùng HTTPS tin cậy, cho quyền camera, thử Safari trên iOS/Chrome trên Android, không dùng browser nhúng. HTTP chỉ có luồng chụp dự phòng hiện có. |
+| Zalo/ứng dụng scanner bị từ chối | Dùng Camera mặc định, mở bằng trình duyệt hệ thống phù hợp. Đây là hành vi chặn WebView chủ động. |
+| Đúng khuôn mặt nhưng không mở | Kiểm tra đăng ký sinh trắc học, tài khoản hoạt động, phòng/ca/ngày, lịch công bố/chốt, nghỉ phép, thời gian early/grace và kết quả PAD của AI. |
+| PC không có QR / đang đồng bộ | Kiểm tra URL, LAN/VLAN, firewall, API/AI, proxy/SSE, chứng chỉ và log. Có mạng lại tự đồng bộ; không dùng mã QR cache. |
+| Bị khoá sau khi đang làm việc | Kiểm tra hết ca/grace, đổi/xoá lịch, nghỉ phép, mất kết nối, API restart hoặc sleep/resume. Không chỉnh giờ PC để kéo dài ca. |
+| Không gõ được PIN | Mở đúng hộp Hỗ trợ CNTT; thả Ctrl/Alt/Win sau hotkey, gõ lại. Kiểm tra lỗi phím còn giữ qua thời điểm khoá và báo IT nếu tái hiện. |
+| PIN sai/vượt lượt | Kiểm tra PIN đang cấu hình, chờ 10 phút hoặc IT cứu hộ bằng Administrator; không thử mã mặc định cũ. |
+| Sau cập nhật chưa tự chạy | Đăng xuất/đăng nhập; kiểm tra một mục HKLM Run, không thêm nhiều startup trùng. |
+| Không có quyền UAC/cài/gỡ | Dừng và nhờ IT; `/quiet` không tự cấp Administrator. |
+
+## 10. Checklist nghiệm thu trước triển khai hàng loạt
+
+[CI Windows/backend/frontend đã đạt](KIEM_THU_V2.md), nhưng không thay thế nghiệm thu trên image Windows, mạng và AI của viện. Thử ít nhất **hai PC và hai điện thoại**:
+
+- [ ] Update VPS 1, AI VPS 2 truy cập được; HTTPS cùng origin PC/điện thoại, QR TTL/buffer/grace đúng chính sách.
+- [ ] Cài bằng EXE, source-only BAT, đường dẫn có dấu/khoảng trắng; cấu hình sai/bad TLS phải bị từ chối, không phá cài cũ.
+- [ ] Cài từ Agent cũ: không còn Edge Kiosk, không tắt HIS/tab browser cá nhân, phím Windows hoạt động lại sau unlock.
+- [ ] Cài lại cùng phòng giữ ID; đổi phòng tạo ID mới; hai PC cùng phòng vẫn có ID/QR độc lập.
+- [ ] QR 15s đổi mã; scan che trắng ngay, không lộ khi reconnect; buffer 60s hoặc cấu hình khác hết đúng hạn, không gia hạn bằng reload.
+- [ ] Đúng/sai bác sĩ, không có ca, nghỉ phép, ca đêm qua ngày, sửa/xoá lịch đều đối soát đúng.
+- [ ] Hai PC: chỉ PC phát QR được mở. Test AI/PAD thật/giả và nhiều bác sĩ cùng xác thực trên VPS 2 thật.
+- [ ] Unlock không còn cửa sổ/badge/tray/taskbar/màn trắng; Desktop/HIS dùng bình thường, không tự giành focus HIS.
+- [ ] Hết ca + grace, restart API, rút/cắm LAN, boot chưa có mạng, sleep/resume tự khoá/đồng bộ đúng.
+- [ ] DPI 100/125/150%, nhiều màn hình và cắm/rút monitor.
+- [ ] PIN đúng/sai, rate limit, hotkey, giữ Ctrl/Alt/Win qua lock/unlock không kẹt; cứu hộ hai lần, gỡ/cài lại ngay không lỗi.
+- [ ] Toggle tự đổi ảnh đúng quyền; không cấp quyền ngoài chính sách khi bật.
+- [ ] Chính sách Ctrl+Alt+Del, Task Manager, đăng xuất, accessibility, RDP, boot/USB và quản trị viên được IT kiểm tra riêng.
+
+## 11. Giới hạn bảo mật cần biết
+
+- `WH_KEYBOARD_LL` là **hook user-mode**, không phải driver/kernel. Không thể chặn `Ctrl+Alt+Del`, secure desktop, quản trị viên, Safe Mode, can thiệp vật lý hoặc mọi cơ chế accessibility bằng WinForms đơn thuần.
+- HKLM Run chạy sau đăng nhập, không thay thế Windows logon/Assigned Access và không bảo đảm không có khe hở startup hoặc khi tiến trình hỏng. IT phải quản trị tài khoản tiêu chuẩn, quyền hệ thống và môi trường thiết bị theo edition/policy Windows thực tế.
+- Cài mới không đặt NoWinKeys/Task Manager/DevTools dai dẳng; khi mở Desktop các phím phải dùng bình thường. Không vô hiệu kiểm tra SSL hay bảo vệ Windows toàn hệ thống.
+- Chặn WebView/scanner dùng heuristic UA/referrer/tín hiệu trình duyệt, không chứng minh mật mã QR đến từ Camera mặc định và không ngăn mọi cách giả mạo/chuyển tiếp. Phải kết hợp QR ngắn hạn, claim, PAD, lịch, HTTPS và mạng viện. Không công khai `/api/kiosk/*` ra Internet.
+- PAD phần mềm không tự đồng nghĩa có chứng nhận ISO 30107 từ phòng kiểm định. Nghiệm thu ảnh/video/mặt nạ và tải model thật trước vận hành lâm sàng.
+- QR/lease/SSE hiện ở **một tiến trình API**. API restart làm mất lease, khoá lại để xác thực mới. Không scale nhiều replica phục vụ Kiosk nếu chưa thiết kế trạng thái dùng chung/sticky routing phù hợp.
+- EXE chưa ký Authenticode. Đối chiếu SHA-256 hoặc ký bằng chứng thư hợp lệ của đơn vị; không hứa “không lỗi 100%” chỉ từ CI.

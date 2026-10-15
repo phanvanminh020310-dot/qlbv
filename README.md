@@ -162,6 +162,8 @@ Máy trạm dùng một `QLBS_Kiosk.exe`, không cần Edge/WebView hay Agent ph
 QR native 15s, che trắng sau scan, buffer xác thực cấu hình được, đối soát lịch trực,
 unicast đúng máy, tự khoá theo ca và trả hoàn toàn Desktop khi mở.
 
+- **[Tải bộ cài Windows QLBS_Kiosk_2.0.0.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.0/QLBS_Kiosk_2.0.0.zip)**
+- **[Bắt đầu cài theo cách mới](deploy/windows/README.md)**
 - [Cài từng phòng / triển khai hàng loạt / cứu hộ CNTT](deploy/windows/HUONG_DAN_SU_DUNG.md)
 - [Kiến trúc hai VPS và giao thức máy trạm v2](deploy/KIOSK_ATTENDANCE_ARCHITECTURE.md)
 - [Kết quả kiểm thử và các mục còn phải nghiệm thu Windows](deploy/windows/KIEM_THU_V2.md)
