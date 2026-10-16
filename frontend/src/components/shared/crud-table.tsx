@@ -69,6 +69,8 @@ interface CrudTableProps {
   labelKey?: string;
   /** Nút thao tác thêm cho mỗi dòng */
   rowActions?: (row: Record<string, unknown>) => ReactNode;
+  /** Phiên bản thẻ gọn cho màn hình nhỏ; nếu có, bảng chỉ hiện từ breakpoint sm trở lên. */
+  mobileCard?: (row: Record<string, unknown>, actions: ReactNode) => ReactNode;
   onRowClick?: (row: Record<string, unknown>) => void;
   toolbar?: ReactNode;
   /** Dữ liệu trả về đã là danh sách phẳng (không phân trang) */
@@ -98,6 +100,7 @@ export function CrudTable({
   canDelete = true,
   labelKey = 'name',
   rowActions,
+  mobileCard,
   onRowClick,
   toolbar,
   pageSize = 15,
@@ -243,16 +246,67 @@ export function CrudTable({
     });
   };
 
+  const renderActions = (row: Record<string, unknown>): ReactNode => (
+    <>
+      {rowActions?.(row)}
+      {canEdit ? (
+        <Button variant="ghost" size="icon" title="Sửa" aria-label={`Sửa ${String(row[labelKey] ?? '')}`} onClick={() => openEdit(row)}>
+          <Pencil />
+        </Button>
+      ) : null}
+      {canDelete ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Xoá"
+          aria-label={`Xoá ${String(row[labelKey] ?? '')}`}
+          className="text-[var(--danger)]"
+          onClick={() => setDeleting(row)}
+        >
+          <Trash2 />
+        </Button>
+      ) : null}
+    </>
+  );
+
   return (
     <Card>
       <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div>
+        <div className="min-w-0">
           <div className="text-base font-semibold">{title}</div>
-          {description ? <div className="text-xs text-[var(--muted-foreground)]">{description}</div> : null}
+          {description ? <div className="mt-0.5 text-xs text-[var(--muted-foreground)]">{description}</div> : null}
         </div>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+          {toolbar}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setPage(1);
+              setSearch(keyword.trim());
+            }}
+            className="relative order-last w-full min-w-0 sm:order-none sm:w-56"
+          >
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
+            <Input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="h-9 w-full pl-8 text-sm sm:h-8.5"
+            />
+          </form>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => refetch()} title="Tải lại" aria-label="Tải lại danh sách">
+            <RefreshCw className={cn(isFetching && 'animate-spin')} />
+          </Button>
+          {canCreate ? (
+            <Button size="sm" className="ml-auto shrink-0 sm:ml-0" onClick={openCreate}>
+              <Plus /> {createLabel}
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
       {filterResource ? (
-        <div className="border-b px-4 py-2.5">
+        <div className="border-b bg-[var(--muted)]/20 px-4 py-3">
           <AdvancedFilter
             resource={filterResource}
             value={deepFilters}
@@ -263,34 +317,6 @@ export function CrudTable({
           />
         </div>
       ) : null}
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          {toolbar}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setPage(1);
-              setSearch(keyword.trim());
-            }}
-            className="relative min-w-0 flex-1 sm:flex-none"
-          >
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-            <Input
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder={searchPlaceholder}
-              className="h-9 w-full pl-8 text-sm sm:h-8.5 sm:w-56"
-            />
-          </form>
-          <Button variant="outline" size="sm" className="shrink-0" onClick={() => refetch()} title="Tải lại">
-            <RefreshCw className={cn(isFetching && 'animate-spin')} />
-          </Button>
-          {canCreate ? (
-            <Button size="sm" className="ml-auto sm:ml-0" onClick={openCreate}>
-              <Plus /> {createLabel}
-            </Button>
-          ) : null}
-        </div>
-      </div>
 
       {isLoading ? (
         <div className="space-y-2 p-4">
@@ -301,72 +327,63 @@ export function CrudTable({
       ) : rows.length === 0 ? (
         <EmptyState title="Chưa có dữ liệu" description="Bấm “Thêm mới” để tạo bản ghi đầu tiên." />
       ) : (
-        <TableWrap>
-          <thead>
-            <tr>
-              {tableColumns.map((c) => {
-                const sortable = sortEnabled && c.sortable !== false;
-                const activeSort = sort?.by === c.key ? sort : null;
-                return (
-                  <Th
-                    key={c.key}
-                    className={cn(c.className, sortable && 'cursor-pointer select-none hover:text-[var(--foreground)]')}
-                    onClick={sortable ? () => toggleSort(c.key) : undefined}
-                    title={sortable ? 'Bấm để sắp xếp (tăng / giảm / bỏ)' : undefined}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      {c.label}
-                      {sortable ? (
-                        activeSort?.dir === 'asc' ? (
-                          <ArrowUp className="size-3" />
-                        ) : activeSort?.dir === 'desc' ? (
-                          <ArrowDown className="size-3" />
-                        ) : (
-                          <ArrowUpDown className="size-3 opacity-40" />
-                        )
-                      ) : null}
-                    </span>
-                  </Th>
-                );
-              })}
-              {canEdit || canDelete || rowActions ? <Th className="w-px text-right">Thao tác</Th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <Tr key={String(row.id)} onClick={onRowClick ? () => onRowClick(row) : undefined}>
-                {tableColumns.map((c) => (
-                  <Td key={c.key} className={c.className}>
-                    {c.render ? c.render(row) : String(row[c.key] ?? '—')}
-                  </Td>
-                ))}
-                {canEdit || canDelete || rowActions ? (
-                  <Td className="text-right">
-                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                      {rowActions?.(row)}
-                      {canEdit ? (
-                        <Button variant="ghost" size="icon" title="Sửa" onClick={() => openEdit(row)}>
-                          <Pencil />
-                        </Button>
-                      ) : null}
-                      {canDelete ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Xoá"
-                          className="text-[var(--danger)]"
-                          onClick={() => setDeleting(row)}
-                        >
-                          <Trash2 />
-                        </Button>
-                      ) : null}
-                    </div>
-                  </Td>
-                ) : null}
-              </Tr>
-            ))}
-          </tbody>
-        </TableWrap>
+        <>
+          {mobileCard ? (
+            <div className="divide-y sm:hidden">
+              {rows.map((row) => mobileCard(row, renderActions(row)))}
+            </div>
+          ) : null}
+          <TableWrap className={mobileCard ? 'hidden sm:block' : undefined}>
+            <thead>
+              <tr>
+                {tableColumns.map((c) => {
+                  const sortable = sortEnabled && c.sortable !== false;
+                  const activeSort = sort?.by === c.key ? sort : null;
+                  return (
+                    <Th
+                      key={c.key}
+                      className={cn(c.className, sortable && 'cursor-pointer select-none hover:text-[var(--foreground)]')}
+                      onClick={sortable ? () => toggleSort(c.key) : undefined}
+                      title={sortable ? 'Bấm để sắp xếp (tăng / giảm / bỏ)' : undefined}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {c.label}
+                        {sortable ? (
+                          activeSort?.dir === 'asc' ? (
+                            <ArrowUp className="size-3" />
+                          ) : activeSort?.dir === 'desc' ? (
+                            <ArrowDown className="size-3" />
+                          ) : (
+                            <ArrowUpDown className="size-3 opacity-40" />
+                          )
+                        ) : null}
+                      </span>
+                    </Th>
+                  );
+                })}
+                {canEdit || canDelete || rowActions ? <Th className="w-px text-right">Thao tác</Th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <Tr key={String(row.id)} onClick={onRowClick ? () => onRowClick(row) : undefined}>
+                  {tableColumns.map((c) => (
+                    <Td key={c.key} className={c.className}>
+                      {c.render ? c.render(row) : String(row[c.key] ?? '—')}
+                    </Td>
+                  ))}
+                  {canEdit || canDelete || rowActions ? (
+                    <Td className="text-right">
+                      <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                        {renderActions(row)}
+                      </div>
+                    </Td>
+                  ) : null}
+                </Tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </>
       )}
 
       {data && data.total > 0 ? (

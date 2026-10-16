@@ -19,6 +19,7 @@ import { departments, jobTitles, roles, userRoles, users } from '../../db/schema
 import type { AccessContext } from '../../common/types/access-context';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
+import { DUTY_STAFF_ROLE_CODE, isDoctorTitle } from './duty-staff-role';
 import {
   IMPORT_MAX_ROWS,
   normalizeKey,
@@ -357,6 +358,17 @@ export class UserImportService {
           row.roleIds.push(r.id);
           row.roles.push(r.code);
           messages.push({ level: 'info', text: `Không chỉ định vai trò — gán mặc định "${r.name}"` });
+        }
+      }
+
+      // Bác sĩ luôn có thêm vai trò xem lịch trực, kể cả khi tệp đã chỉ định
+      // các vai trò nghiệp vụ khác. Không áp dụng vào dòng bị bỏ qua.
+      if ((row.action === 'create' || row.action === 'update') && isDoctorTitle(row.title)) {
+        const dutyStaff = roleIndex.get(DUTY_STAFF_ROLE_CODE);
+        if (dutyStaff && !row.roleIds.includes(dutyStaff.id)) {
+          row.roleIds.push(dutyStaff.id);
+          row.roles.push(dutyStaff.code);
+          messages.push({ level: 'info', text: `Chức danh Bác sĩ — bổ sung mặc định vai trò "${dutyStaff.name}"` });
         }
       }
       return row;

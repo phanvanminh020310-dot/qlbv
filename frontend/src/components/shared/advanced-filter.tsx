@@ -218,7 +218,7 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
 
         {Object.keys(presets).length > 0 ? (
           <Select
-            className="h-8 w-52 text-xs"
+            className="h-8 w-full sm:w-52 text-xs"
             value=""
             onChange={(e) => {
               const saved = presets[e.target.value];
@@ -297,8 +297,8 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
                 const options = field ? optionsFor(field) : [];
                 const multi = condition.op === 'in' || condition.op === 'nin';
                 return (
-                  <div key={condition.id} className="flex flex-wrap items-end gap-2">
-                    <div className="w-56 space-y-1">
+                  <div key={condition.id} className="grid gap-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,10rem)_minmax(0,1fr)_auto] sm:items-end">
+                    <div className="min-w-0 space-y-1">
                       <Label className="text-[11px] text-[var(--muted-foreground)]">Trường</Label>
                       <Select
                         className="h-8 text-xs"
@@ -326,7 +326,7 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
                       </Select>
                     </div>
 
-                    <div className="w-40 space-y-1">
+                    <div className="min-w-0 space-y-1">
                       <Label className="text-[11px] text-[var(--muted-foreground)]">Điều kiện</Label>
                       <Select
                         className="h-8 text-xs"
@@ -346,7 +346,7 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
                     </div>
 
                     {needsValue ? (
-                      <div className="min-w-52 flex-1 space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-[11px] text-[var(--muted-foreground)]">Giá trị</Label>
                         {field?.type === 'bool' ? (
                           <Select
@@ -432,13 +432,13 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
                         ) : null}
                       </div>
                     ) : (
-                      <div className="flex-1" />
+                      <div className="hidden sm:block" />
                     )}
 
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-[var(--danger)]"
+                      className="justify-self-end text-[var(--danger)]"
                       onClick={() => {
                         const next = conditions.filter((c) => c.id !== condition.id);
                         setConditions(next);
@@ -461,7 +461,7 @@ export function AdvancedFilter({ resource, value, onChange, className, defaultOp
                   Đóng
                 </Button>
                 {activeCount > 0 ? (
-                  <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                  <span className="hidden ml-auto text-[11px] text-[var(--muted-foreground)] sm:inline">
                     Cú pháp gửi lên: <code className="font-mono">{toFilterString(conditions) || '—'}</code>
                   </span>
                 ) : null}

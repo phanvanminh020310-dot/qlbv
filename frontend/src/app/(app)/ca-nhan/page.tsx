@@ -418,7 +418,7 @@ export default function ProfilePage() {
                       <span>
                         {canUpdateFace
                           ? 'Đã đăng ký nhận diện khuôn mặt sinh trắc học (sẵn sàng điểm danh ca trực & tự động mở khoá máy tính phòng khám).'
-                          : 'Hồ sơ khuôn mặt đã xác thực và khoá an ninh ca trực. Để chống gian lận điểm danh, cấp đổi khuôn mặt chỉ được thực hiện tại Phòng Tổ chức Cán bộ hoặc Phòng CNTT.'}
+                          : 'Hồ sơ khuôn mặt đã xác thực'}
                       </span>
                     </div>
                   ) : (

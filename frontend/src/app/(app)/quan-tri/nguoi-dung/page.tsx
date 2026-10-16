@@ -106,7 +106,7 @@ const MODULE_LABEL: Record<string, string> = {
   'print.render': 'In ấn — in/sử dụng mẫu',
   'studio.report': 'Studio — báo cáo động',
   'studio.dashboard': 'Studio — dashboard động',
-  user: 'Ngườii dùng',
+  user: 'Người dùng',
   role: 'Vai trò & phân quyền',
   'audit.log': 'Nhật ký hệ thống',
   setting: 'Cấu hình hệ thống',
@@ -124,6 +124,29 @@ function RoleDot({ color }: { color?: string }) {
       style={{ background: color || '#94A3B8' }}
     />
   );
+}
+
+function userInitials(fullName: unknown): string {
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'ND';
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return `${parts.at(-2)?.[0] ?? ''}${parts.at(-1)?.[0] ?? ''}`.toUpperCase();
+}
+
+function UserStatus({ row }: { row: Record<string, unknown> }) {
+  const locked = row.lockedUntil && new Date(String(row.lockedUntil)) > new Date();
+  if (locked) return <Badge tone="danger">Tạm khoá</Badge>;
+  return row.active ? <Badge tone="success">Đang làm việc</Badge> : <Badge tone="muted">Đã nghỉ</Badge>;
+}
+
+function isDoctorTitle(title: unknown): boolean {
+  const normalized = String(title ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLocaleLowerCase('vi-VN')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized === 'bac si' || normalized === 'bac sy';
 }
 
 /** Quản trị người dùng: CRUD, gán vai trò, phạm vi khoa, khoá/mở khoá, đặt lại mật khẩu, xem quyền hiệu lực. */
@@ -188,7 +211,7 @@ export default function UsersPage() {
       label: 'Chức danh',
       type: 'select',
       options: (jobTitles ?? []).map((t) => ({ value: t.name, label: t.name })),
-      help: 'Không bắt buộc · thêm chức danh ở Quản trị → Danh mục → Chức danh',
+      help: 'Không bắt buộc · chọn Bác sĩ sẽ tự thêm vai trò Nhân viên trực khám',
     },
     { name: 'departmentId', label: 'Khoa công tác', type: 'select', options: (departments ?? []).map((d) => ({ value: d.id, label: `${'— '.repeat(Math.max(0, d.level - 1))}${d.name}` })) },
     { name: 'email', label: 'Thư điện tử', type: 'email', placeholder: 'Không bắt buộc' },
@@ -270,12 +293,13 @@ export default function UsersPage() {
   return (
     <>
       <PageHeader
-        title="Người dùng"
-        description="Tài khoản, vai trò và phạm vi dữ liệu được phép truy cập"
+        title="Người dùng & phân quyền"
+        description="Quản lý tài khoản nhân sự, vai trò và phạm vi dữ liệu được phép truy cập"
       />
 
       <CrudTable
-        title="Danh sách người dùng"
+        title="Danh sách nhân sự"
+        description="Tra cứu nhanh, quản lý vai trò và bảo mật tài khoản trong một nơi."
         endpoint="/users"
         filterResource="users"
         fields={fields}
@@ -298,6 +322,44 @@ export default function UsersPage() {
             </Badge>
           </>
         }
+        mobileCard={(row, actions) => {
+          const roleList = parseUserRoles(row.roles);
+          return (
+            <article key={String(row.id)} className="space-y-3 px-4 py-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-600 text-sm font-bold text-white shadow-sm">
+                  {userInitials(row.fullName)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">{String(row.fullName ?? '—')}</div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--muted-foreground)]">@{String(row.username ?? '—')}</div>
+                    </div>
+                    <UserStatus row={row} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl bg-[var(--muted)]/45 px-3 py-2.5 text-xs">
+                <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Chức danh</div><div className="mt-0.5 truncate font-medium">{String(row.title || '—')}</div></div>
+                <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Khoa</div><div className="mt-0.5 truncate font-medium">{String(row.departmentName || '—')}</div></div>
+                <div className="col-span-2 min-w-0">
+                  <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Vai trò</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {roleList.length ? roleList.map(({ name, code, color }) => <Badge key={code} tone="muted"><span className="inline-flex items-center gap-1"><RoleDot color={color} />{name}</span></Badge>) : <span className="text-[var(--muted-foreground)]">Chưa gán</span>}
+                  </div>
+                </div>
+                <div className="col-span-2 min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Đăng nhập gần nhất</div><div className="mt-0.5 truncate font-medium">{row.lastLoginAt ? formatDateTime(String(row.lastLoginAt)) : 'Chưa đăng nhập'}</div></div>
+              </div>
+
+              <div className="border-t pt-2.5">
+                <span className="text-[11px] font-medium text-[var(--muted-foreground)]">Thao tác</span>
+                <div className="mt-1.5 grid grid-cols-4 gap-1" onClick={(event) => event.stopPropagation()}>{actions}</div>
+              </div>
+            </article>
+          );
+        }}
         columns={[
           { key: 'username', label: 'Tài khoản' },
           { key: 'fullName', label: 'Họ và tên' },
@@ -327,11 +389,7 @@ export default function UsersPage() {
           {
             key: 'lockedUntil',
             label: 'Trạng thái',
-            render: (row) => {
-              const locked = row.lockedUntil && new Date(String(row.lockedUntil)) > new Date();
-              if (locked) return <Badge tone="danger">Tạm khoá</Badge>;
-              return row.active ? <Badge tone="success">Đang làm việc</Badge> : <Badge tone="muted">Đã nghỉ</Badge>;
-            },
+            render: (row) => <UserStatus row={row} />,
           },
           {
             key: 'lastLoginAt',
@@ -420,8 +478,9 @@ export default function UsersPage() {
             </div>
           ) : null}
           {(roles ?? []).map((role) => {
-            const checked = roleCodes.includes(role.code);
-            const disabled = role.code === SUPER_ADMIN_ROLE && !me?.isSuperAdmin;
+            const doctorDutyRole = role.code === 'NHAN_VIEN_TRUC' && isDoctorTitle(roleTarget?.title);
+            const checked = doctorDutyRole || roleCodes.includes(role.code);
+            const disabled = (role.code === SUPER_ADMIN_ROLE && !me?.isSuperAdmin) || doctorDutyRole;
             return (
               <label
                 key={role.code}
@@ -445,7 +504,8 @@ export default function UsersPage() {
                     {role.name}
                     {role.code === SUPER_ADMIN_ROLE ? <Crown className="size-3.5 text-amber-500" /> : null}
                     <span className="font-mono text-[10px] text-[var(--muted-foreground)]">{role.code}</span>
-                    {disabled ? <Badge tone="muted">Chỉ Quản trị tối cao</Badge> : null}
+                    {role.code === SUPER_ADMIN_ROLE && !me?.isSuperAdmin ? <Badge tone="muted">Chỉ Quản trị tối cao</Badge> : null}
+                    {doctorDutyRole ? <Badge tone="success">Mặc định cho Bác sĩ</Badge> : null}
                   </div>
                   <div className="text-[11px] text-[var(--muted-foreground)]">
                     Phạm vi: {SCOPE_LABEL[role.dataScope]}

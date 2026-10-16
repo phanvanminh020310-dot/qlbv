@@ -112,6 +112,11 @@
 
 Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-label].json.gz` v2.
 
+### Trang Người dùng & vai trò trực — quy tắc duy trì
+- `/quan-tri/nguoi-dung` dùng thẻ nhân sự trên mobile và bảng đầy đủ từ breakpoint `sm`; thanh tìm kiếm luôn xuống hàng riêng trên mobile, không được che khuất. Bộ lọc nâng cao phải được đặt ngoài header của `CrudTable`, hoạt động được với thao tác thêm điều kiện và không gây tràn ngang.
+- `backend/drizzle/0023_gan_vai_tro_truc_cho_bac_si.sql` chỉ **bổ sung** (không thay thế) `NHAN_VIEN_TRUC` cho người dùng chưa xoá có chức danh `Bác sĩ` hoặc `Bác Sỹ`; câu lệnh có thể chạy lặp an toàn.
+- Tạo/sửa tài khoản, thay thế danh sách vai trò và nhập Excel/CSV cũng phải tự giữ vai trò `NHAN_VIEN_TRUC` cho đúng chức danh Bác sĩ. Không suy rộng quy tắc này sang các chức danh có chứa chữ “bác sĩ” như `Bác sĩ CKI` nếu danh mục chưa được người dùng yêu cầu.
+
 ## 5. Kiến trúc tham chiếu nhanh (bản in · lịch trực)
 
 ### Bản in (Yêu cầu 10)

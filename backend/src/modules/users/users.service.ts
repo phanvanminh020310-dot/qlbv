@@ -27,6 +27,7 @@ import { buildPage, type Paginated, parseFilters } from '../../common/dto/query.
 import { SUPER_ADMIN_ROLE, type AccessContext } from '../../common/types/access-context';
 import { AuthService } from '../auth/auth.service';
 import { AuditService } from '../audit/audit.service';
+import { DUTY_STAFF_ROLE_CODE, isDoctorTitle } from './duty-staff-role';
 import type {
   CreateUserDto,
   ResetPasswordDto,
@@ -230,8 +231,9 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, actor: AccessContext) {
+    const roleCodes = [...new Set([...(dto.roleCodes ?? []), ...(isDoctorTitle(dto.title) ? [DUTY_STAFF_ROLE_CODE] : [])])];
     // Chặn leo thang: người tạo tài khoản có vai SUPER_ADMIN chỉ khi chính họ là SUPER_ADMIN
-    if (!actor.isSuperAdmin && dto.roleCodes?.includes(SUPER_ADMIN_ROLE)) {
+    if (!actor.isSuperAdmin && roleCodes.includes(SUPER_ADMIN_ROLE)) {
       throw new ForbiddenException('Chỉ Quản trị tối cao mới tạo được tài khoản có vai trò Quản trị tối cao');
     }
     const username = dto.username.trim().toLowerCase();
@@ -267,8 +269,8 @@ export class UsersService {
       })
       .returning();
 
-    if (dto.roleCodes?.length) {
-      const ids = await this.resolveRoleIds(dto.roleCodes);
+    if (roleCodes.length) {
+      const ids = await this.resolveRoleIds(roleCodes);
       if (ids.length > 0) {
         await this.db.db
           .insert(userRoles)
@@ -318,12 +320,29 @@ export class UsersService {
       })
       .where(eq(users.id, id));
 
-    if (dto.roleCodes) await this.setRoles(id, { roleCodes: dto.roleCodes, replace: true });
+    if (dto.roleCodes) await this.setRoles(id, { roleCodes: dto.roleCodes, replace: true }, actor);
+    else await this.assignDutyStaffRoleIfDoctor(id, dto.title ?? current.title);
     if (dto.departmentScopeIds) await this.setDepartmentScopes(id, { departmentIds: dto.departmentScopeIds });
 
     await this.auth.invalidateUserCache(id);
     if (dto.password) await this.auth.revokeAllSessions(id);
     return this.findOne(id);
+  }
+
+
+  /** Bác sĩ luôn được bổ sung vai trò xem lịch trực; không tự gỡ vai trò khác. */
+  private async assignDutyStaffRoleIfDoctor(userId: number, title: string | null | undefined): Promise<void> {
+    if (!isDoctorTitle(title)) return;
+    const [role] = await this.db.db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(eq(roles.code, DUTY_STAFF_ROLE_CODE))
+      .limit(1);
+    if (!role) return;
+    await this.db.db
+      .insert(userRoles)
+      .values({ userId, roleId: role.id })
+      .onConflictDoNothing();
   }
 
   /** Xoá mềm — giữ lại lịch sử thao tác của người dùng */
@@ -443,9 +462,10 @@ export class UsersService {
   }
 
   async setRoles(id: number, dto: SetRolesDto, actor?: AccessContext) {
-    await this.findOne(id);
+    const target = await this.findOne(id);
     await this.assertCanTouchTarget(id, actor);
-    const ids = await this.resolveRoleIds(dto.roleCodes);
+    const roleCodes = [...new Set([...(dto.roleCodes ?? []), ...(isDoctorTitle(target.title) ? [DUTY_STAFF_ROLE_CODE] : [])])];
+    const ids = await this.resolveRoleIds(roleCodes);
 
     // Chỉ Quản trị tối cao mới được GÁN vai trò Quản trị tối cao cho ai
     const [superRoleRow] = await this.db.db
