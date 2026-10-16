@@ -321,12 +321,12 @@ export class AuthService {
       ? 'ALL'
       : roleRows.reduce<DataScope>((acc, r) => MAX_SCOPE(acc, r.dataScope), 'OWN');
 
-    const scopeRows = user.departmentId
-      ? []
-      : await this.db.db
-          .select({ departmentId: userDepartmentScopes.departmentId })
-          .from(userDepartmentScopes)
-          .where(eq(userDepartmentScopes.userId, userId));
+    // A primary department does not replace explicitly assigned additional scopes.
+    // Department schedulers may be assigned to more than one clinical department.
+    const scopeRows = await this.db.db
+      .select({ departmentId: userDepartmentScopes.departmentId })
+      .from(userDepartmentScopes)
+      .where(eq(userDepartmentScopes.userId, userId));
 
     const departmentIds = new Set<number>();
     if (user.departmentId) departmentIds.add(user.departmentId);

@@ -118,8 +118,17 @@ test("candidate query never exposes hospital-wide staff to a department schedule
   const start = source.indexOf("async candidates(user: AccessContext");
   const end = source.indexOf("/* ================================================================ Lưới lịch", start);
   const candidates = source.slice(start, end);
-  assert.ok(candidates.includes("if (!this.core.isAll(user))"));
+  assert.ok(candidates.includes("user.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA')"));
+  assert.ok(candidates.includes("user.dataScope === 'DEPT'"));
   assert.ok(candidates.includes("const departmentIds = this.core.scopeDeptIds(user)"));
   assert.ok(candidates.includes("conds.push(inArray(users.departmentId, departmentIds))"));
-  assert.ok(candidates.includes("if (!departmentIds.length) return []"));
+  assert.ok(candidates.includes("chưa được gán phạm vi khoa"));
+});
+
+test("auth context merges home department with explicitly assigned department scopes", () => {
+  const source = readFileSync(resolve(__dirname, "..", "src", "modules", "auth", "auth.service.ts"), "utf8");
+  assert.ok(source.includes("A primary department does not replace explicitly assigned additional scopes"));
+  assert.ok(source.includes(".from(userDepartmentScopes)"));
+  assert.ok(source.includes("if (user.departmentId) departmentIds.add(user.departmentId)"));
+  assert.ok(source.includes("for (const s of scopeRows) departmentIds.add(s.departmentId)"));
 });

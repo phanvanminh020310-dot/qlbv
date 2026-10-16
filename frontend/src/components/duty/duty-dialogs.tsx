@@ -99,6 +99,13 @@ export function AssignDialog({
   // Candidate evaluation includes roster constraints, so defer the expensive API work
   // until typing pauses rather than invalidating/re-rendering on every keystroke.
   useEffect(() => {
+    setQ("");
+    setSubmittedQuery("");
+    setForceFor(null);
+    setForceReason("");
+  }, [open, slot?.id]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => setSubmittedQuery(q.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [q]);
@@ -108,7 +115,6 @@ export function AssignDialog({
     queryFn: () => dutyApi.candidates(slot!.id, submittedQuery || undefined),
     enabled: open && !!slot && !locked,
     staleTime: 5_000,
-    placeholderData: (previousData) => previousData,
   });
   if (!slot) return null;
   const full = slot.filled >= slot.requiredCount;
@@ -197,6 +203,10 @@ export function AssignDialog({
             ) : null}
             {cand.isLoading ? (
               <div className="py-6 text-center text-sm text-[var(--muted-foreground)]">Đang kiểm tra ràng buộc…</div>
+            ) : cand.isError ? (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                Không tải được danh sách người trực: {errorText(cand.error)}
+              </div>
             ) : (
               <ul className="max-h-[52vh] divide-y overflow-y-auto rounded-lg border">
                 {list.map((c) => {

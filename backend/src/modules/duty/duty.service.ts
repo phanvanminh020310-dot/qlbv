@@ -1210,12 +1210,18 @@ export class DutyService {
     const s = await this.core.getSlot(slotId);
     this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
     const conds: SQL[] = [eq(users.active, true), isNull(users.deletedAt)];
-    // Department schedulers (HCT/CNK/Phó CNK) may only discover staff in their
-    // explicitly assigned department scope. Hospital-wide coordinators retain
-    // their existing all-department view through duty.manage-all.
-    if (!this.core.isAll(user)) {
+    // HCT/CNK/Phó CNK use the dedicated department scheduler role. Never let that
+    // role enumerate staff outside its explicit department assignment, even when
+    // another inherited permission happens to include duty.manage-all.
+    const isDepartmentScheduler =
+      user.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA') || user.dataScope === 'DEPT';
+    if (isDepartmentScheduler || !this.core.isAll(user)) {
       const departmentIds = this.core.scopeDeptIds(user);
-      if (!departmentIds.length) return [];
+      if (!departmentIds.length) {
+        throw new ForbiddenException(
+          'Tài khoản xếp lịch chưa được gán phạm vi khoa. Liên hệ quản trị để gán khoa trước khi chọn người trực.',
+        );
+      }
       conds.push(inArray(users.departmentId, departmentIds));
     }
     if (q?.trim()) {
