@@ -5,6 +5,7 @@ import { DbService, type Executor, type Tx } from '../../db/db.service';
 import {
   dutyAbsences,
   dutyAssignments,
+  dutyAttendance,
   dutyClosedDays,
   dutyLogs,
   dutyPeriods,
@@ -1263,6 +1264,202 @@ export class DutyService {
     });
     list.sort((a, b) => Number(b.ok) - Number(a.ok) || a.errors.length - b.errors.length || a.warnings.length - b.warnings.length || a.fullName.localeCompare(b.fullName, 'vi'));
     return list;
+  }
+
+  /* ================================================================ Theo dõi xác thực trực tiếp */
+
+  /**
+   * Bảng quan sát ca đang diễn ra. Chỉ dùng lịch đã công bố/chốt và cùng hàm
+   * shiftInterval với Kiosk, vì vậy không thể biến ca sắp tới hay ca đã hết
+   * thành trạng thái "đang trực". Dữ liệu điểm danh được lấy từ bản ghi AI
+   * đã lưu, không dựa vào trạng thái RAM của một máy trạm.
+   */
+  async liveMonitor(user: AccessContext) {
+    if (!this.core.canManageAny(user)) {
+      throw new ForbiddenException('Bạn chưa có quyền theo dõi xác thực ca trực.');
+    }
+
+    // Vai trò điều phối khoa/data-scope DEPT phải luôn bị giới hạn, kể cả khi
+    // một quyền thừa kế vô tình chứa duty.manage-all.
+    const forceDepartmentScope =
+      user.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA') || user.dataScope === 'DEPT';
+    const canSeeAll = this.core.isAll(user) && !forceDepartmentScope;
+    const departmentIds = this.core.scopeDeptIds(user);
+    if (!canSeeAll && !departmentIds.length) {
+      throw new ForbiddenException(
+        'Tài khoản chưa được gán phạm vi khoa để theo dõi xác thực ca trực. Vui lòng liên hệ quản trị viên.',
+      );
+    }
+
+    const now = Date.now();
+    // Ca đêm xuất phát từ hôm qua vẫn có thể đang diễn ra hôm nay.
+    const dates = [addDays(bangkokToday(now), -1), bangkokToday(now)];
+    const where: SQL[] = [
+      inArray(dutySlots.dutyDate, dates),
+      inArray(dutyPeriods.status, ['CONG_BO', 'DA_CHOT']),
+      eq(dutyRooms.active, true),
+    ];
+    if (!canSeeAll) where.push(inArray(dutyRooms.departmentId, departmentIds));
+
+    const activeSlots = (await this.core.loadSlots(this.db.db, and(...where))).filter((slot) => {
+      const interval = shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight);
+      return interval.start <= now && now < interval.end;
+    });
+    if (!activeSlots.length) {
+      return {
+        serverTime: new Date(now).toISOString(),
+        scope: canSeeAll ? 'ALL' : 'DEPT',
+        summary: { rooms: 0, slots: 0, expected: 0, verified: 0, pending: 0, unassigned: 0 },
+        rooms: [],
+      };
+    }
+
+    const assignments = await this.assignmentsOfSlots(activeSlots.map((slot) => slot.id));
+    const slotById = new Map(activeSlots.map((slot) => [slot.id, slot]));
+    const assignedUserIds = [...new Set(assignments.map((assignment) => assignment.userId))];
+    // Use the same approved-absence rule as Kiosk: a person absent for any
+    // calendar day touched by an overnight shift must not appear as awaiting a scan.
+    const absencesByUser = await this.core.loadAbsences(
+      this.db.db,
+      assignedUserIds,
+      dates[0],
+      addDays(dates[dates.length - 1], 1),
+    );
+    const isAbsentForSlot = (slotId: number, userId: number) => {
+      const slot = slotById.get(slotId);
+      if (!slot) return false;
+      const overnight = slot.crossesMidnight || slot.endTime <= slot.startTime;
+      const lastDate = overnight ? addDays(slot.dutyDate, 1) : slot.dutyDate;
+      return (absencesByUser.get(userId) ?? []).some((absence) =>
+        absence.endDate >= slot.dutyDate && absence.startDate <= lastDate,
+      );
+    };
+    const earliestStart = Math.min(
+      ...activeSlots.map((slot) =>
+        shiftInterval(slot.dutyDate, slot.startTime, slot.endTime, slot.crossesMidnight).start,
+      ),
+    );
+    const attendance = await this.db.db
+      .select({
+        id: dutyAttendance.id,
+        slotId: dutyAttendance.slotId,
+        userId: dutyAttendance.userId,
+        checkinTime: dutyAttendance.checkinTime,
+        method: dutyAttendance.method,
+      })
+      .from(dutyAttendance)
+      .where(
+        and(
+          inArray(dutyAttendance.slotId, activeSlots.map((slot) => slot.id)),
+          eq(dutyAttendance.method, 'AI_FACIAL_BIOMETRICS'),
+          gte(dutyAttendance.checkinTime, new Date(earliestStart)),
+        ),
+      )
+      .orderBy(desc(dutyAttendance.checkinTime));
+    // Query đã sắp xếp mới nhất trước: giữ một check-in mới nhất cho mỗi người/ô.
+    const attendanceByAssignment = new Map<string, (typeof attendance)[number]>();
+    for (const row of attendance) {
+      if (row.slotId == null || attendanceByAssignment.has(`${row.slotId}:${row.userId}`)) continue;
+      attendanceByAssignment.set(`${row.slotId}:${row.userId}`, row);
+    }
+
+    const assignmentsBySlot = new Map<number, typeof assignments>();
+    for (const assignment of assignments) {
+      const list = assignmentsBySlot.get(assignment.slotId) ?? [];
+      list.push(assignment);
+      assignmentsBySlot.set(assignment.slotId, list);
+    }
+
+    const rooms = new Map<
+      number,
+      {
+        id: number;
+        code: string;
+        name: string;
+        location: string;
+        departmentId: number | null;
+        slots: Array<{
+          id: number;
+          roleName: string;
+          shiftCode: string;
+          shiftName: string;
+          shiftColor: string;
+          startTime: string;
+          endTime: string;
+          requiredCount: number;
+          doctors: Array<{
+            userId: number;
+            fullName: string;
+            title: string;
+            departmentName: string;
+            absent: boolean;
+            verified: boolean;
+            verifiedAt: string | null;
+          }>;
+          unassigned: number;
+        }>;
+      }
+    >();
+    for (const slot of activeSlots) {
+      const room = rooms.get(slot.roomId) ?? {
+        id: slot.roomId,
+        code: slot.roomCode,
+        name: slot.roomName,
+        location: slot.roomLocation,
+        departmentId: slot.roomDepartmentId,
+        slots: [],
+      };
+      const people = (assignmentsBySlot.get(slot.id) ?? []).map((assignment) => {
+        const absent = isAbsentForSlot(slot.id, assignment.userId);
+        const checkin = absent ? undefined : attendanceByAssignment.get(`${slot.id}:${assignment.userId}`);
+        return {
+          userId: assignment.userId,
+          fullName: assignment.fullName,
+          title: assignment.title ?? '',
+          departmentName: assignment.departmentName ?? '',
+          absent,
+          verified: !!checkin,
+          verifiedAt: checkin?.checkinTime?.toISOString() ?? null,
+        };
+      });
+      room.slots.push({
+        id: slot.id,
+        roleName: slot.roleName,
+        shiftCode: slot.shiftCode,
+        shiftName: slot.shiftName,
+        shiftColor: slot.shiftColor,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        requiredCount: slot.requiredCount,
+        doctors: people,
+        unassigned: Math.max(0, slot.requiredCount - people.length),
+      });
+      rooms.set(slot.roomId, room);
+    }
+
+    const roomList = [...rooms.values()]
+      .map((room) => ({
+        ...room,
+        slots: room.slots.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.roleName.localeCompare(b.roleName, 'vi')),
+      }))
+      .sort((a, b) => a.code.localeCompare(b.code, 'vi', { numeric: true }));
+    const allDoctors = roomList.flatMap((room) => room.slots.flatMap((slot) => slot.doctors));
+    const activeDoctors = allDoctors.filter((doctor) => !doctor.absent);
+    const unassigned = roomList.reduce((total, room) => total + room.slots.reduce((n, slot) => n + slot.unassigned, 0), 0);
+    const verified = activeDoctors.filter((doctor) => doctor.verified).length;
+    return {
+      serverTime: new Date(now).toISOString(),
+      scope: canSeeAll ? 'ALL' : 'DEPT',
+      summary: {
+        rooms: roomList.length,
+        slots: activeSlots.length,
+        expected: activeDoctors.length,
+        verified,
+        pending: activeDoctors.length - verified,
+        unassigned,
+      },
+      rooms: roomList,
+    };
   }
 
   /* ================================================================ Lưới lịch */

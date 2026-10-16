@@ -9,6 +9,7 @@ import type { AccessContext } from '../../common/types/access-context';
  *  - `userIds`     : chỉ những người dùng cụ thể (ví dụ thông báo cá nhân).
  *  - `permission`  : người dùng có quyền đó; kèm `departmentId` thì người bị
  *                    giới hạn phạm vi chỉ nhận sự kiện thuộc khoa mình.
+ *  - `permissions` : người dùng có ít nhất một quyền trong danh sách (OR).
  *  - không gì cả   : mọi kết nối (chỉ dùng cho sự kiện hệ thống vô danh).
  */
 export interface RealtimeEvent {
@@ -18,6 +19,8 @@ export interface RealtimeEvent {
   departmentId?: number | null;
   userIds?: number[];
   permission?: string;
+  /** Một trong các quyền này là đủ để nhận sự kiện. */
+  permissions?: string[];
   data?: Record<string, unknown>;
 }
 
@@ -63,6 +66,7 @@ export class RealtimeService {
     if (event.userIds?.length) return event.userIds.includes(user.id);
     if (user.isSuperAdmin) return true;
     if (event.permission && !user.permissions.includes(event.permission)) return false;
+    if (event.permissions?.length && !event.permissions.some((permission) => user.permissions.includes(permission))) return false;
     const scoped = user.dataScope !== 'ALL';
     if (event.departmentId != null && scoped) {
       return user.departmentIds.includes(event.departmentId) || user.departmentId === event.departmentId;

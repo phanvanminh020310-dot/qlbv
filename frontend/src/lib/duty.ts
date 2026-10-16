@@ -179,6 +179,42 @@ export interface LogRow {
   userName: string | null;
 }
 
+export interface LiveMonitorDoctor {
+  userId: number;
+  fullName: string;
+  title: string;
+  departmentName: string;
+  absent: boolean;
+  verified: boolean;
+  verifiedAt: string | null;
+}
+export interface LiveMonitorSlot {
+  id: number;
+  roleName: string;
+  shiftCode: string;
+  shiftName: string;
+  shiftColor: string;
+  startTime: string;
+  endTime: string;
+  requiredCount: number;
+  doctors: LiveMonitorDoctor[];
+  unassigned: number;
+}
+export interface LiveMonitorRoom {
+  id: number;
+  code: string;
+  name: string;
+  location: string;
+  departmentId: number | null;
+  slots: LiveMonitorSlot[];
+}
+export interface LiveMonitorResponse {
+  serverTime: string;
+  scope: 'ALL' | 'DEPT';
+  summary: { rooms: number; slots: number; expected: number; verified: number; pending: number; unassigned: number };
+  rooms: LiveMonitorRoom[];
+}
+
 /* ------------------------------------------------------------------ Nhãn */
 
 export const PHASE_LABEL: Record<Phase, string> = { NHAP: 'Bản nháp', MO: 'Đã công bố', CHOT: 'Đã chốt' };
@@ -404,6 +440,7 @@ export const dutyApi = {
   register: (slotId: number) => post<{ ok: boolean }>(`/duty/slots/${slotId}/register`),
   unregister: (slotId: number) => post<{ ok: boolean }>(`/duty/slots/${slotId}/unregister`),
   me: () => get<MeResponse>('/duty/me'),
+  liveMonitor: () => get<LiveMonitorResponse>('/duty/live-monitor'),
   staff: (q?: string) => get<StaffItem[]>(`/duty/staff${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   absences: (q?: { from?: string; to?: string; userId?: number }) => {
     const qs = new URLSearchParams();
@@ -442,6 +479,7 @@ export const DUTY_KEYS = {
   myOptions: (id: number) => ['duty-options', id] as const,
   summary: (id: number) => ['duty-summary', id] as const,
   logs: (id: number) => ['duty-logs', id] as const,
+  liveMonitor: ['duty-live-monitor'] as const,
   candidates: (slotId: number) => ['duty-candidates', slotId] as const,
   me: ['duty-me'] as const,
   staff: ['duty-staff'] as const,

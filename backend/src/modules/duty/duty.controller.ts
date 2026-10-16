@@ -45,6 +45,13 @@ export class DutyController {
     return this.service.staff(q.q);
   }
 
+  @Get('live-monitor')
+  @RequirePermissions(MANAGE_ANY, 'any')
+  @ApiOperation({ summary: 'Theo dõi thời gian thực bác sĩ đã xác thực vào các ca đang diễn ra' })
+  liveMonitor(@CurrentUser() user: AccessContext) {
+    return this.service.liveMonitor(user);
+  }
+
   @Get('absences')
   @RequirePermissions('duty.view')
   @ApiOperation({ summary: 'Danh sách nghỉ phép (người thường chỉ thấy của mình)' })

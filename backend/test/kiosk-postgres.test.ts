@@ -42,11 +42,13 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     "kiosk.earlyCheckinMinutes": 60,
     "kiosk.itMasterPin": "fixture-it-pin-not-production",
   };
+  const realtimeEvents: any[] = [];
   const service = new KioskService(
     database as any,
     new IntegrationDutyService(database as any),
     { get: async (key: string) => settings[key] ?? null } as any,
     { log: async () => {} } as any,
+    { publish: (event: any) => realtimeEvents.push(event) } as any,
   );
   t.after(() => service.onModuleDestroy());
   await pg.exec(`
@@ -135,6 +137,10 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       assert.equal(attendance.length, 1);
       assert.equal(attendance[0].slotId, 7001);
       assert.equal(attendance[0].roomId, 7001);
+      assert.ok(
+        realtimeEvents.some((event) => event.topic === "duty-attendance" && event.type === "verified" && event.data?.slotId === 7001),
+        "màn hình điều phối được báo ngay sau khi điểm danh sinh trắc học được lưu",
+      );
       const pcA = await service.getKioskStatus(
         "PK01",
         "pc_a",

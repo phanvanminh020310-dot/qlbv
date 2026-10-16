@@ -1206,6 +1206,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       .select({
         slotId: dutySlots.id,
         roomId: dutyRooms.id,
+        roomDepartmentId: dutyRooms.departmentId,
         dutyDate: dutySlots.dutyDate,
         roomCode: dutyRooms.code,
         roomName: dutyRooms.name,
@@ -1706,6 +1707,24 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         userId: bestMatch.userId,
         description: `Xác thực ca ${currentShift.shiftCode} tại ${session.roomCode}; máy trạm ${session.terminalId}`,
       });
+      // Bảng điều phối nhận ngay tín hiệu, nhưng dữ liệu hiển thị vẫn được API
+      // đọc lại từ duty_attendance để không phụ thuộc vào trạng thái RAM Kiosk.
+      try {
+        this.realtime?.publish({
+          topic: "duty-attendance",
+          type: "verified",
+          permissions: ["duty.manage", "duty.manage-all"],
+          departmentId: currentShift.roomDepartmentId ?? null,
+          data: {
+            attendanceId,
+            slotId: currentShift.slotId,
+            roomCode: session.roomCode,
+            userId: bestMatch.userId,
+          },
+        });
+      } catch {
+        // Realtime chỉ giúp làm mới giao diện; không được ảnh hưởng đến xác thực.
+      }
 
       return {
         success: true,
