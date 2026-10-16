@@ -198,7 +198,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
 
         {/* Chế độ tạo (chỉ khi tạo mới) */}
         {!isEdit ? (
-          <div className="flex items-center gap-2 rounded-xl bg-[var(--muted)]/50 p-1 border">
+          <div className="grid grid-cols-1 gap-1 rounded-xl border bg-[var(--muted)]/50 p-1 sm:grid-cols-2">
             <button
               type="button"
               onClick={() => setCreateMode("week")}
@@ -226,7 +226,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
 
         {!isEdit && createMode === "week" ? (
           <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-3.5 space-y-3 dark:border-teal-900 dark:bg-teal-950/20">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1">
                 <Label htmlFor="w-year" className="text-xs">Năm</Label>
                 <Select id="w-year" value={String(selectedYear)} onChange={(e) => onSelectYear(Number(e.target.value))}>
@@ -235,7 +235,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
                   ))}
                 </Select>
               </div>
-              <div className="col-span-2 space-y-1">
+              <div className="space-y-1 sm:col-span-2">
                 <Label htmlFor="w-week" className="text-xs">Chọn tuần trong năm</Label>
                 <Select id="w-week" value={String(selectedWeek)} onChange={(e) => onSelectWeek(Number(e.target.value))}>
                   {weeksOfYear.map((w) => (
@@ -675,14 +675,14 @@ export default function KyLichPage() {
         description="Tạo kỳ lịch tuần, sinh ô trực, phân công, công bố và chốt lịch. Theo dõi giờ trực công bằng và nhật ký thay đổi."
         actions={
           canManage ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
               <Button
                 onClick={() => setQuickCreateOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
+                className="w-full bg-emerald-600 text-white font-medium shadow-sm hover:bg-emerald-700 sm:w-auto"
               >
                 <Sparkles className="h-4 w-4 mr-1" /> Tạo tuần tiếp theo
               </Button>
-              <Button onClick={() => setCreating(true)} variant="outline">
+              <Button onClick={() => setCreating(true)} variant="outline" className="w-full sm:w-auto">
                 <CalendarPlus className="h-4 w-4" /> Tùy chỉnh kỳ lịch
               </Button>
             </div>
@@ -716,18 +716,18 @@ export default function KyLichPage() {
             }
             description="Tìm kiếm, lọc theo Năm / Tháng / Trạng thái và xem tiến độ phân công của từng tuần."
             actions={
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                <div className="relative col-span-2 sm:col-auto">
                   <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[var(--muted-foreground)]" />
                   <Input
-                    className="h-8 pl-8 w-44 text-xs"
+                    className="h-9 w-full pl-8 text-xs sm:h-8 sm:w-44"
                     placeholder="Tìm tên, tuần..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
                 <Select
-                  className="h-8 text-xs w-32"
+                  className="h-9 w-full text-xs sm:h-8 sm:w-32"
                   value={yearFilter}
                   onChange={(e) => setYearFilter(e.target.value)}
                   aria-label="Lọc theo năm"
@@ -738,7 +738,7 @@ export default function KyLichPage() {
                   ))}
                 </Select>
                 <Select
-                  className="h-8 text-xs w-32"
+                  className="h-9 w-full text-xs sm:h-8 sm:w-32"
                   value={monthFilter}
                   onChange={(e) => setMonthFilter(e.target.value)}
                   aria-label="Lọc theo tháng"
@@ -813,6 +813,40 @@ export default function KyLichPage() {
           </div>
 
           <CardBody className="p-0">
+            <div className="space-y-2 p-3 md:hidden">
+              {filteredPeriods.map((p) => {
+                const isCur = p.startDate <= today && p.endDate >= today;
+                const percent = p.requiredCount ? Math.min(100, Math.round(((p.filledCount ?? 0) / p.requiredCount) * 100)) : 0;
+                const isFull = !!p.requiredCount && p.filledCount! >= p.requiredCount;
+                const weekNum = p.isoWeek || isoWeekNumber(p.startDate).week;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedId(p.id)}
+                    className={`w-full rounded-xl border p-3 text-left transition active:scale-[0.99] ${selected?.id === p.id ? "border-[var(--primary)] bg-[var(--accent)] ring-1 ring-[var(--primary)]/30" : "bg-[var(--card)]"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold">{p.name}</span>
+                          {isCur ? <CurrentWeekBadge /> : null}
+                          <span className="rounded bg-[var(--muted)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--muted-foreground)]">T{weekNum}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">{fmtDate(p.startDate)} – {fmtDate(p.endDate)} · Chốt {fmtDateTime(p.lockedAt ?? p.lockAt)}</p>
+                      </div>
+                      <PhaseBadge period={p} />
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between text-xs"><span>Tiến độ xếp trực</span><span className={isFull ? "font-semibold text-emerald-600" : "font-semibold text-amber-600"}>{p.filledCount ?? 0}/{p.requiredCount ?? 0} · {percent}%</span></div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={isFull ? "h-full bg-emerald-500" : "h-full bg-amber-500"} style={{ width: `${percent}%` }} /></div>
+                    </div>
+                  </button>
+                );
+              })}
+              {filteredPeriods.length === 0 ? <p className="px-3 py-8 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy kỳ lịch nào phù hợp với bộ lọc hiện tại.</p> : null}
+            </div>
+            <div className="hidden md:block">
             <TableWrap>
               <table className="w-full text-sm">
                 <thead>
@@ -915,6 +949,7 @@ export default function KyLichPage() {
                 </tbody>
               </table>
             </TableWrap>
+            </div>
           </CardBody>
         </Card>
       ) : null}
@@ -1141,7 +1176,21 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
   if (loading) return <Skeleton className="h-40 w-full" />;
   if (!slots.length) return <EmptyState title="Chưa có ô trực" description="Dùng nút Sinh ô hoặc Thêm ô để tạo lịch." />;
   return (
-    <TableWrap>
+    <>
+      <div className="space-y-2 md:hidden">
+        {slots.map((s) => (
+          <div key={s.id} className="rounded-xl border p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div><div className="font-semibold">{weekdayLabel(new Date(`${s.dutyDate}T00:00:00Z`).getUTCDay() || 7)} · {fmtDm(s.dutyDate)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{s.roomCode} · {s.roleName}</div></div>
+              <Badge tone={s.filled >= s.requiredCount ? "success" : "warning"}>{s.filled}/{s.requiredCount}</Badge>
+            </div>
+            <div className="mt-2 flex items-center gap-1.5"><ShiftChip code={s.shiftCode} color={s.shiftColor} /><span className="text-xs">{s.startTime}–{s.endTime}</span></div>
+            <div className="mt-2 text-xs text-[var(--muted-foreground)]">{s.assignments.map((a) => a.fullName).join(", ") || "Chưa có người trực"}</div>
+            {canEdit ? <div className="mt-2 flex justify-end"><Button size="sm" variant="ghost" onClick={() => onDelete(s)}><Trash2 className="h-4 w-4" /> Xoá ô</Button></div> : null}
+          </div>
+        ))}
+      </div>
+      <div className="hidden md:block"><TableWrap>
       <table className="w-full text-sm">
         <thead>
           <tr>
@@ -1182,7 +1231,8 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
           ))}
         </tbody>
       </table>
-    </TableWrap>
+    </TableWrap></div>
+    </>
   );
 }
 
@@ -1197,7 +1247,10 @@ function HoursTab({ data, loading }: { data?: { items: { userId: number; fullNam
         <KpiTile label="Ít giờ nhất" value={hoursText(data.fairness.minHours)} />
         <KpiTile label="Chênh lệch" value={hoursText(data.fairness.gapHours)} tone={data.fairness.gapHours > 24 ? "warning" : "success"} hint="Càng nhỏ càng công bằng" />
       </div>
-      <TableWrap>
+      <div className="space-y-2 md:hidden">
+        {data.items.map((i) => <div key={i.userId} className="rounded-xl border p-3"><div className="font-semibold">{i.fullName}</div><div className="mt-0.5 text-xs text-[var(--muted-foreground)]">{i.title} · {i.departmentName || "—"}</div><div className="mt-2 grid grid-cols-4 gap-1 text-center text-xs"><span><b className="block text-sm">{i.days}</b>Ngày</span><span><b className="block text-sm">{i.shifts}</b>Ca</span><span><b className="block text-sm">{i.nights}</b>Đêm</span><span><b className="block text-sm">{hoursText(i.hours)}</b>Giờ</span></div></div>)}
+      </div>
+      <div className="hidden md:block"><TableWrap>
         <table className="w-full text-sm">
           <thead>
             <tr>
@@ -1224,7 +1277,7 @@ function HoursTab({ data, loading }: { data?: { items: { userId: number; fullNam
             ))}
           </tbody>
         </table>
-      </TableWrap>
+      </TableWrap></div>
     </div>
   );
 }

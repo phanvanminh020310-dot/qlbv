@@ -245,7 +245,7 @@ export function CrudTable({
 
   return (
     <Card>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+      <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <div className="text-base font-semibold">{title}</div>
           {description ? <div className="text-xs text-[var(--muted-foreground)]">{description}</div> : null}
@@ -263,7 +263,7 @@ export function CrudTable({
           />
         </div>
       ) : null}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {toolbar}
           <form
             onSubmit={(e) => {
@@ -271,21 +271,21 @@ export function CrudTable({
               setPage(1);
               setSearch(keyword.trim());
             }}
-            className="relative"
+            className="relative min-w-0 flex-1 sm:flex-none"
           >
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <Input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder={searchPlaceholder}
-              className="h-8.5 w-56 pl-8 text-sm"
+              className="h-9 w-full pl-8 text-sm sm:h-8.5 sm:w-56"
             />
           </form>
-          <Button variant="outline" size="sm" onClick={() => refetch()} title="Tải lại">
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => refetch()} title="Tải lại">
             <RefreshCw className={cn(isFetching && 'animate-spin')} />
           </Button>
           {canCreate ? (
-            <Button size="sm" onClick={openCreate}>
+            <Button size="sm" className="ml-auto sm:ml-0" onClick={openCreate}>
               <Plus /> {createLabel}
             </Button>
           ) : null}
