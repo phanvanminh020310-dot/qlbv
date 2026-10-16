@@ -3,6 +3,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   CalendarPlus,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
   Eye,
@@ -559,6 +561,57 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
   );
 }
 
+/* ================================================================== Phân trang */
+
+function PaginationBar({
+  total,
+  page,
+  pageSize,
+  onPage,
+  noun,
+}: {
+  total: number;
+  page: number;
+  pageSize: number;
+  onPage: (page: number) => void;
+  noun: string;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const start = total ? (safePage - 1) * pageSize + 1 : 0;
+  const end = Math.min(total, safePage * pageSize);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-[var(--muted)]/15 px-3 py-2.5 text-xs text-[var(--muted-foreground)] sm:px-4">
+      <span>
+        Hiển thị <b className="text-[var(--foreground)]">{start}–{end}</b> / {total} {noun}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2"
+          disabled={safePage <= 1}
+          onClick={() => onPage(safePage - 1)}
+          title="Trang trước"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </Button>
+        <span className="min-w-20 text-center tabular-nums">Trang {safePage}/{pageCount}</span>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2"
+          disabled={safePage >= pageCount}
+          onClick={() => onPage(safePage + 1)}
+          title="Trang sau"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /* ================================================================== Trang chính */
 
 export default function KyLichPage() {
@@ -586,6 +639,8 @@ export default function KyLichPage() {
   const [monthFilter, setMonthFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [search, setSearch] = useState<string>("");
+  const [periodPage, setPeriodPage] = useState(1);
+  const PERIODS_PAGE_SIZE = 8;
 
   const canManage = can("duty.period.manage");
   /** Giờ trực tổng hợp và nhật ký chỉ dành cho người quản lý lịch */
@@ -625,6 +680,17 @@ export default function KyLichPage() {
       return true;
     });
   }, [allPeriods, yearFilter, monthFilter, statusFilter, search, today]);
+
+  const periodPageCount = Math.max(1, Math.ceil(filteredPeriods.length / PERIODS_PAGE_SIZE));
+  const safePeriodPage = Math.min(periodPage, periodPageCount);
+  const visiblePeriods = useMemo(
+    () =>
+      filteredPeriods.slice(
+        (safePeriodPage - 1) * PERIODS_PAGE_SIZE,
+        safePeriodPage * PERIODS_PAGE_SIZE,
+      ),
+    [filteredPeriods, safePeriodPage, PERIODS_PAGE_SIZE],
+  );
 
   const currentCount = useMemo(() => allPeriods.filter((p) => p.startDate <= today && p.endDate >= today).length, [allPeriods, today]);
   const draftCount = useMemo(() => allPeriods.filter((p) => p.status === "NHAP").length, [allPeriods]);
@@ -712,9 +778,10 @@ export default function KyLichPage() {
               <div className="flex items-center gap-2 text-base">
                 <span>Danh mục kỳ lịch trực</span>
                 <Badge tone="muted">{filteredPeriods.length}/{allPeriods.length} kỳ</Badge>
+                <span className="text-xs font-normal text-[var(--muted-foreground)]">Danh sách kỳ lịch</span>
               </div>
             }
-            description="Tìm kiếm, lọc theo Năm / Tháng / Trạng thái và xem tiến độ phân công của từng tuần."
+            description="Lọc danh sách kỳ lịch riêng; chọn một kỳ để xem ô trực, giờ trực và nhật ký ở phần chi tiết bên dưới."
             actions={
               <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                 <div className="relative col-span-2 sm:col-auto">
@@ -723,13 +790,13 @@ export default function KyLichPage() {
                     className="h-9 w-full pl-8 text-xs sm:h-8 sm:w-44"
                     placeholder="Tìm tên, tuần..."
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => { setSearch(e.target.value); setPeriodPage(1); }}
                   />
                 </div>
                 <Select
                   className="h-9 w-full text-xs sm:h-8 sm:w-32"
                   value={yearFilter}
-                  onChange={(e) => setYearFilter(e.target.value)}
+                  onChange={(e) => { setYearFilter(e.target.value); setPeriodPage(1); }}
                   aria-label="Lọc theo năm"
                 >
                   <option value="ALL">Tất cả năm</option>
@@ -740,7 +807,7 @@ export default function KyLichPage() {
                 <Select
                   className="h-9 w-full text-xs sm:h-8 sm:w-32"
                   value={monthFilter}
-                  onChange={(e) => setMonthFilter(e.target.value)}
+                  onChange={(e) => { setMonthFilter(e.target.value); setPeriodPage(1); }}
                   aria-label="Lọc theo tháng"
                 >
                   <option value="ALL">Tất cả tháng</option>
@@ -757,7 +824,7 @@ export default function KyLichPage() {
             <span className="text-xs font-semibold mr-1 text-[var(--muted-foreground)]">Trạng thái:</span>
             <button
               type="button"
-              onClick={() => setStatusFilter("ALL")}
+              onClick={() => { setStatusFilter("ALL"); setPeriodPage(1); }}
               className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
                 statusFilter === "ALL"
                   ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
@@ -768,7 +835,7 @@ export default function KyLichPage() {
             </button>
             <button
               type="button"
-              onClick={() => setStatusFilter("CURRENT")}
+              onClick={() => { setStatusFilter("CURRENT"); setPeriodPage(1); }}
               className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
                 statusFilter === "CURRENT"
                   ? "bg-emerald-600 text-white shadow-sm"
@@ -779,7 +846,7 @@ export default function KyLichPage() {
             </button>
             <button
               type="button"
-              onClick={() => setStatusFilter("CONG_BO")}
+              onClick={() => { setStatusFilter("CONG_BO"); setPeriodPage(1); }}
               className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
                 statusFilter === "CONG_BO"
                   ? "bg-teal-600 text-white shadow-sm"
@@ -790,7 +857,7 @@ export default function KyLichPage() {
             </button>
             <button
               type="button"
-              onClick={() => setStatusFilter("DA_CHOT")}
+              onClick={() => { setStatusFilter("DA_CHOT"); setPeriodPage(1); }}
               className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
                 statusFilter === "DA_CHOT"
                   ? "bg-indigo-600 text-white shadow-sm"
@@ -801,7 +868,7 @@ export default function KyLichPage() {
             </button>
             <button
               type="button"
-              onClick={() => setStatusFilter("NHAP")}
+              onClick={() => { setStatusFilter("NHAP"); setPeriodPage(1); }}
               className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
                 statusFilter === "NHAP"
                   ? "bg-amber-600 text-white shadow-sm"
@@ -814,7 +881,7 @@ export default function KyLichPage() {
 
           <CardBody className="p-0">
             <div className="space-y-2 p-3 md:hidden">
-              {filteredPeriods.map((p) => {
+              {visiblePeriods.map((p) => {
                 const isCur = p.startDate <= today && p.endDate >= today;
                 const percent = p.requiredCount ? Math.min(100, Math.round(((p.filledCount ?? 0) / p.requiredCount) * 100)) : 0;
                 const isFull = !!p.requiredCount && p.filledCount! >= p.requiredCount;
@@ -860,7 +927,7 @@ export default function KyLichPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPeriods.map((p) => {
+                  {visiblePeriods.map((p) => {
                     const isCur = p.startDate <= today && p.endDate >= today;
                     const percent = p.requiredCount ? Math.min(100, Math.round(((p.filledCount ?? 0) / p.requiredCount) * 100)) : 0;
                     const isFull = p.requiredCount && p.filledCount! >= p.requiredCount;
@@ -951,6 +1018,13 @@ export default function KyLichPage() {
             </TableWrap>
             </div>
           </CardBody>
+          <PaginationBar
+            total={filteredPeriods.length}
+            page={safePeriodPage}
+            pageSize={PERIODS_PAGE_SIZE}
+            onPage={setPeriodPage}
+            noun="kỳ lịch"
+          />
         </Card>
       ) : null}
 
@@ -1023,6 +1097,7 @@ export default function KyLichPage() {
                     label: "Ô trực",
                     content: (
                       <SlotsTable
+                        key={selected.id}
                         slots={g?.slots ?? []}
                         loading={grid.isLoading}
                         canEdit={canManage && selected.status === "NHAP"}
@@ -1173,12 +1248,25 @@ export default function KyLichPage() {
 /* ================================================================== Các tab */
 
 function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; loading: boolean; canEdit: boolean; onDelete: (s: GridSlot) => void }) {
+  const [page, setPage] = useState(1);
+  const SLOT_PAGE_SIZE = 25;
+  const pageCount = Math.max(1, Math.ceil(slots.length / SLOT_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visibleSlots = slots.slice((safePage - 1) * SLOT_PAGE_SIZE, safePage * SLOT_PAGE_SIZE);
+
   if (loading) return <Skeleton className="h-40 w-full" />;
   if (!slots.length) return <EmptyState title="Chưa có ô trực" description="Dùng nút Sinh ô hoặc Thêm ô để tạo lịch." />;
   return (
-    <>
-      <div className="space-y-2 md:hidden">
-        {slots.map((s) => (
+    <div className="overflow-hidden rounded-xl border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-[var(--muted)]/15 px-3 py-2.5">
+        <div>
+          <h3 className="text-sm font-semibold">Danh sách ô trực</h3>
+          <p className="text-xs text-[var(--muted-foreground)]">Phân trang độc lập với danh sách kỳ lịch để giữ bảng nhẹ khi một kỳ có nhiều phòng và ca.</p>
+        </div>
+        <Badge tone="muted">{slots.length} ô</Badge>
+      </div>
+      <div className="space-y-2 p-3 md:hidden">
+        {visibleSlots.map((s) => (
           <div key={s.id} className="rounded-xl border p-3">
             <div className="flex items-start justify-between gap-2">
               <div><div className="font-semibold">{weekdayLabel(new Date(`${s.dutyDate}T00:00:00Z`).getUTCDay() || 7)} · {fmtDm(s.dutyDate)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{s.roomCode} · {s.roleName}</div></div>
@@ -1204,7 +1292,7 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
           </tr>
         </thead>
         <tbody>
-          {slots.map((s) => (
+          {visibleSlots.map((s) => (
             <Tr key={s.id}>
               <Td className="whitespace-nowrap">{weekdayLabel(new Date(`${s.dutyDate}T00:00:00Z`).getUTCDay() || 7)} {fmtDm(s.dutyDate)}</Td>
               <Td className="font-medium">{s.roomCode}</Td>
@@ -1232,7 +1320,14 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
         </tbody>
       </table>
     </TableWrap></div>
-    </>
+      <PaginationBar
+        total={slots.length}
+        page={safePage}
+        pageSize={SLOT_PAGE_SIZE}
+        onPage={setPage}
+        noun="ô trực"
+      />
+    </div>
   );
 }
 

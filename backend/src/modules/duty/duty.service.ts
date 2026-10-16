@@ -1210,6 +1210,14 @@ export class DutyService {
     const s = await this.core.getSlot(slotId);
     this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
     const conds: SQL[] = [eq(users.active, true), isNull(users.deletedAt)];
+    // Department schedulers (HCT/CNK/Phó CNK) may only discover staff in their
+    // explicitly assigned department scope. Hospital-wide coordinators retain
+    // their existing all-department view through duty.manage-all.
+    if (!this.core.isAll(user)) {
+      const departmentIds = this.core.scopeDeptIds(user);
+      if (!departmentIds.length) return [];
+      conds.push(inArray(users.departmentId, departmentIds));
+    }
     if (q?.trim()) {
       const like = `%${q.trim()}%`;
       conds.push(or(ilike(users.fullName, like), ilike(users.username, like)) as SQL);

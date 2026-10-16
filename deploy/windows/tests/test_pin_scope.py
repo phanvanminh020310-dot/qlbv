@@ -1,4 +1,4 @@
-"""Guard approved native policy: standard Users lock; Administrators bypass by group SID.
+"""Native kiosk policy guards: all Windows accounts, active-shift-only lock, online release.
 
 This source-only suite needs no hospital configuration, Windows credentials or network.
 """
@@ -24,42 +24,49 @@ def digest(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-class NativeAccountPolicyTests(unittest.TestCase):
+class NativeKioskPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = SOURCE.read_text(encoding="utf-8-sig")
 
-    def test_version_and_policy_are_explicit(self):
-        self.assertIn('[assembly: AssemblyVersion("2.0.3.0")]', self.source)
-        self.assertIn('internal const string Version = "2.0.3";', self.source)
-        policy = class_block(self.source, "AccountPolicy")
-        self.assertIn('AdministratorsSid = "S-1-5-32-544"', policy)
-        self.assertIn("GetTokenInformation", policy)
-        self.assertIn("WindowsBuiltInRole.Administrator", policy)
-        self.assertNotIn("Environment.UserName", policy)
-
-    def test_program_bypasses_admin_before_kiosk_components_start(self):
+    def test_version_and_all_account_runtime_policy_are_explicit(self):
+        self.assertIn('[assembly: AssemblyVersion("2.0.4.0")]', self.source)
+        self.assertIn('internal const string Version = "2.0.4";', self.source)
         program = class_block(self.source, "Program")
-        guard = "if (!explicitSetup && AccountPolicy.IsAdministratorAccount()) return 0;"
-        self.assertIn(guard, program)
-        self.assertLess(program.index(guard), program.index("new Mutex"))
-        self.assertLess(program.index(guard), program.index("new KioskContext"))
-        self.assertLess(program.index(guard), program.index("KioskConfig.Load"))
-
-    def test_deny_only_administrators_are_not_mistaken_for_standard_users(self):
-        policy = class_block(self.source, "AccountPolicy")
-        self.assertIn("Attributes are intentionally ignored", policy)
-        self.assertIn("HasAdministratorInTokenGroups", policy)
-        self.assertIn("TestRawAdminTokenGroups", class_block(self.source, "SelfTests"))
+        self.assertIn("including local/domain Administrators and UAC-filtered tokens", program)
+        self.assertIn("no account-based runtime bypass", program)
+        self.assertNotIn("AccountPolicy", self.source)
+        self.assertNotIn("GetTokenInformation", self.source)
         self.assertNotIn("Environment.UserName", self.source)
 
-    def test_server_pin_hook_and_network_lease_logic_remain_unchanged(self):
+    def test_native_lock_requires_explicit_online_active_shift_snapshot(self):
+        snapshot = class_block(self.source, "KioskSnapshot")
+        view = class_block(self.source, "KioskView")
+        context = class_block(self.source, "KioskContext")
+        self.assertIn('result.KioskRequired = Json.Flag(data, "kioskRequired");', snapshot)
+        self.assertIn("if (!result.KioskRequired) { result.IsUnlocked = true; return result; }", snapshot)
+        self.assertIn("if (!snapshot.KioskRequired)", view)
+        self.assertIn("MarkReleased(\"Không có ca trực đang diễn ra. Desktop đang được mở.\"", view)
+        self.assertIn("internal bool Locked, Connected, Scanned;", view)
+        self.assertIn("Release(\"Không kết nối được máy chủ; Desktop đang được mở.", context)
+        self.assertIn("Release(\"Đang đối soát lại ca trực sau khi máy tính hoạt động trở lại…\"", context)
+        self.assertNotIn("Lock(\"Đang cập nhật lịch trực", context)
+        self.assertIn("Status response alone may apply a lock after exact online reconciliation", context)
+
+    def test_server_pin_and_keyboard_guard_remain_online_and_scoped(self):
         it_body = class_block(self.source, "ItDialog").split("        private void Verify(", 1)[1]
         self.assertEqual(digest(it_body), "ba3fa8d13ebdb10d2d08e226ace8e225ec97675f11f668aec439ebf350cc61d2")
         hook = class_block(self.source, "KeyboardGuard").split("        private IntPtr Handle(", 1)[1]
         self.assertEqual(digest(hook), "167b6a2905b865bd0b66451040b3670c36e4d08372eb87584870015eafa7a49c")
-        network = class_block(self.source, "KioskContext").split("        private void Apply(", 1)[1].split("        private void ShowItDialog()", 1)[0]
-        self.assertEqual(digest(network), "6b1eec99b610e357683ea5ae1d345bc6d35785a12b2f1e673f8e981e4b96d0e3")
+        self.assertNotIn("default", it_body.lower())
+
+    def test_qr_subtitle_removed_and_self_test_covers_release(self):
+        self.assertNotIn("Không cần camera máy tính", self.source)
+        self.assertNotIn("Không yêu cầu GPS", self.source)
+        selftest = class_block(self.source, "SelfTests")
+        self.assertIn('"kioskRequired\\":true', selftest)
+        self.assertIn("no active shift releases desktop", selftest)
+        self.assertIn("offline releases desktop", selftest)
 
 
 if __name__ == "__main__":

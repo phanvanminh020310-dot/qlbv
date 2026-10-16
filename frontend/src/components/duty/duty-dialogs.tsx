@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -92,13 +92,23 @@ export function AssignDialog({
 }) {
   const actions = useDutyActions();
   const [q, setQ] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [forceFor, setForceFor] = useState<number | null>(null);
   const [forceReason, setForceReason] = useState("");
+
+  // Candidate evaluation includes roster constraints, so defer the expensive API work
+  // until typing pauses rather than invalidating/re-rendering on every keystroke.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSubmittedQuery(q.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [q]);
+
   const cand = useQuery({
-    queryKey: [...DUTY_KEYS.candidates(slot?.id ?? 0), q],
-    queryFn: () => dutyApi.candidates(slot!.id, q.trim() || undefined),
+    queryKey: [...DUTY_KEYS.candidates(slot?.id ?? 0), submittedQuery],
+    queryFn: () => dutyApi.candidates(slot!.id, submittedQuery || undefined),
     enabled: open && !!slot && !locked,
     staleTime: 5_000,
+    placeholderData: (previousData) => previousData,
   });
   if (!slot) return null;
   const full = slot.filled >= slot.requiredCount;
@@ -170,7 +180,17 @@ export function AssignDialog({
           <section>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-semibold">Chọn người trực</h4>
-              <Input className="h-8 w-56 text-sm" placeholder="Tìm theo tên…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <div className="space-y-1">
+                <Input
+                  className="h-8 w-56 text-sm"
+                  placeholder="Tìm theo tên…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+                <p className="text-[10px] text-[var(--muted-foreground)]">
+                  Tìm sau khi dừng gõ 0,3 giây
+                </p>
+              </div>
             </div>
             {full ? (
               <div className="mb-2 text-xs text-amber-600 dark:text-amber-400">Ô đã đủ người. Gỡ bớt người trực trước khi thêm, hoặc tăng số người cần của ô.</div>

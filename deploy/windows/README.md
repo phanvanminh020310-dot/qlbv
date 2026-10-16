@@ -1,124 +1,74 @@
-# Cài QLBS Kiosk 2.0.3 — WinForms mới
+# QLBS Kiosk 2.0.4 — WinForms workstation
 
-> **Chính sách 2.0.3 đã được xác nhận:** cài/gỡ vẫn cần UAC Administrator, nhưng Kiosk chỉ khóa tài khoản Windows thường. Bất kỳ tài khoản nào là thành viên nhóm **Administrators** được bỏ qua theo SID nhóm (kể cả token UAC chưa nâng quyền), để IT xử lý NIC/chứng chỉ/sự cố cục bộ. Không xét theo tên đăng nhập. Vì vậy chỉ cấp Administrator cho IT được ủy quyền; bác sĩ phải dùng User thường.
->
-> PIN IT vẫn xác minh online; không thêm PIN mở máy local/offline. Khi API mất kết nối Kiosk User vẫn khóa an toàn; IT xử lý bằng đăng nhập Administrator.
->
-> Kiosk vẫn native WinForms, QR/face/roster và hook chặn thoát của tài khoản User giữ nguyên.
+`QLBS_Kiosk.exe` is the native Windows kiosk for an outpatient workstation. It does not use Edge Kiosk, WebView, a local unlock service, or the legacy `QLBS_Kiosk_Agent.exe`.
 
+## Operating policy (2.0.4)
 
-**Đây là bản native một `QLBS_Kiosk.exe`. Không dùng Edge Kiosk, WebView hay `QLBS_Kiosk_Agent.exe` cũ.**
+- The kiosk applies to **every interactive Windows account**, including local/domain **Administrators** and UAC-filtered Administrator tokens. Nobody has to change to a standard account for it to run.
+- It overlays and hooks the desktop **only** when an **online** QLBV reconciliation confirms an assigned, published/locked shift that is **currently inside its exact time interval** for the configured room.
+- No current shift, an upcoming shift, a completed shift, an early-arrival window, a post-shift grace window, an unpublished/draft period, or an unavailable roster reconciliation **does not lock** the desktop.
+- If the workstation loses connection to QLBV/API, resumes from sleep, or receives an invalid status response, it immediately releases the desktop. Once online again, it locks again only if the next status confirms a current shift.
+- QR is created only while a current shift needs kiosk protection. At the end of a shift (for example 17:00), the desktop remains open unless the next online reconciliation confirms another shift already in progress.
+- The IT button and `Ctrl+Alt+Shift+F12` remain available only while locked. Its PIN is verified online and is bound to the current active shift; there is no offline/local PIN or default PIN in the EXE.
 
-## Tải đúng bộ cài
+Installation, update, and uninstall still require UAC Administrator rights. This is separate from the runtime policy above.
 
-- **[Tải QLBS_Kiosk_2.0.3.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.3/QLBS_Kiosk_2.0.3.zip)**
-- [Trang phát hành và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.3)
-- **[Hướng dẫn chi tiết từ đầu đến cuối](HUONG_DAN_SU_DUNG.md)**
-- [Kết quả kiểm thử Windows và các mục còn phải nghiệm thu](KIEM_THU_V2.md)
+## Before installing a PC
 
-> Trong trang Releases, chọn tài sản **`QLBS_Kiosk_2.0.3.zip`** ở mục **Assets**. Không chọn **Source code (zip)** nếu cần EXE có sẵn. `Code → Download ZIP` chỉ tải mã nguồn; các file EXE/ZIP phát hành không được commit vào thư mục này.
->
-> Artifacts trong Actions là đầu ra kiểm thử có thời hạn lưu. Releases là nơi tải bộ cài chính thức. Nếu tải gói chỉ chứa `.cs` và hai BAT, đó là gói nguồn; BAT vẫn biên dịch được nhưng không phải cách tải EXE khuyến nghị.
+1. Deploy the server revision first. From the QLBV repository on VPS 1:
 
-## Cài nhanh một phòng — làm đúng thứ tự
+   ```bash
+   sudo bash deploy/update.sh
+   ```
 
-### 1. Cập nhật máy chủ QLBV trên VPS 1
+   The updater preserves database/configuration and restarts only the affected services. Do not manually replace Docker volumes or `.env` files.
 
-Trong thư mục repository QLBV đang vận hành, sau khi kiểm tra sao lưu theo quy trình viện:
+2. In QLBV, ensure the room code is active and the relevant period is published or locked. The doctor must be assigned and active; approved absence removes the shift from kiosk eligibility.
+3. Configure a unique online **PIN IT** in System settings. Do not rely on any old/default PIN.
+4. Make sure the PC and phone can reach the same public QLBV web origin (HTTPS is required for the normal phone camera workflow).
 
-```bash
-sudo bash deploy/update.sh
+## Install or update a workstation
+
+After the 2.0.4 release is published, download `QLBS_Kiosk_2.0.4.zip` and its SHA-256 checksum from the repository Release assets. Do not use GitHub's `Source code (zip)` as an EXE package.
+
+1. Extract to a local folder; do not launch directly inside the ZIP.
+2. Verify the `QLBS_Kiosk.exe` hash against `SHA256SUMS.txt`.
+3. Run `QLBS_Kiosk.exe`, enter the **web origin** (for example `https://qlbv.benhvien.vn:3000`) and the exact room code (for example `PK01`). Do not enter `/api`, port 4000, the AI port, or `localhost`.
+4. Choose **Kiểm tra kết nối**, then **Cài đặt máy trạm** and accept UAC.
+
+Silent deployment from an elevated command prompt:
+
+```bat
+QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn:3000 /room PK01 /quiet /no-start
 ```
 
-**Phải cập nhật API v2 trước khi cài EXE mới.** VPS 2 tiếp tục chạy AI hiện có; kiểm tra `AI_SERVICE_URL` của VPS 1 trỏ đúng VPS 2.
+Each PC creates and retains its own terminal ID in `%ProgramData%\QLBS\Kiosk\config.ini`. Never clone that file between PCs.
 
-### 2. Chuẩn bị trên web QLBV
+## Expected behavior for acceptance
 
-- Vào **Quản trị → Cấu hình hệ thống → Kiosk**, đặt **PIN IT riêng**; không dùng lại mã mặc định cũ.
-- QR mặc định **15 giây**; thời gian xác thực sau quét mặc định **60 giây**. Ân hạn hết ca chỉ áp dụng khi nhận QR/face; sau khi đã mở bằng QR/face, Desktop chỉ tự khóa ở đầu ca công bố kế tiếp của phòng. Nếu chưa có ca kế tiếp thì không tự khóa chỉ vì đã hết giờ ca.
-- PIN IT không phải mở tự do: trong ca, phiên bị chặn ở đầu ca kế tiếp (không dùng grace để vượt giao ca); thay bác sĩ/phân công của ca đang mở hoặc không đối soát được lịch sẽ khoá lại. Ngoài ca, phiên không vượt đầu ca kế tiếp và tối đa 4 giờ.
-- Có mã phòng đang hoạt động, ví dụ `PK01`, và lịch đã công bố/chốt cho đúng bác sĩ.
-- Bác sĩ đã đăng ký khuôn mặt. Người có quyền có thể đăng ký trong **Quản trị → Người dùng → nút đăng ký sinh trắc học**.
-
-### 3. Tải, giải nén và kiểm tra gói trên PC
-
-Giải nén ZIP vào một thư mục cục bộ. Trong gói phải có:
-
-```text
-QLBS_Kiosk.exe
-QLBS_Kiosk.cs
-cai_dat_kiosk.bat
-go_bo_kiosk.bat
-README.md
-HUONG_DAN_SU_DUNG.md
-BUILD_INFO.txt
-SHA256SUMS.txt
-NOTICE.md
-KIEM_THU_V2.md
-```
-
-Mở PowerShell tại thư mục đó:
-
-```powershell
-Get-FileHash .\QLBS_Kiosk.exe -Algorithm SHA256
-```
-
-Đối chiếu dòng `QLBS_Kiosk.exe` trong `SHA256SUMS.txt`. EXE được build trên Windows nhưng **chưa ký Authenticode**. Không tắt Defender/SmartScreen toàn hệ thống; nếu chính sách doanh nghiệp chặn, IT kiểm tra checksum và áp dụng phê duyệt/ký mã theo quy định.
-
-### 4. Mở EXE và nhập đúng hai thông tin
-
-Nhấp đúp **`QLBS_Kiosk.exe`** → trình thiết lập:
-
-| Ô | Nhập |
+| Situation | Expected desktop state |
 |---|---|
-| Địa chỉ máy chủ QLBV | **Địa chỉ web gốc** đang dùng, ví dụ `https://qlbv.benhvien.vn` |
-| Mã phòng khám | Mã trong danh mục, ví dụ `PK01` |
+| Published/locked, assigned shift currently active and API reachable | Kiosk locks; QR/online IT PIN can release for that current shift. |
+| Before start, after end, or no assigned active shift | Desktop open; no QR issued. |
+| Shift ends at 17:00 and no shift is currently active after that | Desktop open immediately. |
+| Network/API/roster reconciliation fails, boot without network, sleep/resume | Desktop opens immediately; no offline PIN path. |
+| Network returns while an active shift is confirmed | Kiosk locks again after status reconciliation. |
+| Administrator account signs in | Same online active-shift policy as every other account. |
 
-Nếu web chạy HTTPS cổng 3000, phải nhập cả cổng: **`https://qlbv.benhvien.vn:3000`**. Đây là ví dụ; thay bằng địa chỉ thực của viện.
+## Removal
 
-**Không nhập** `/login`, `/kiosk/PK01`, `/api`, cổng backend `4000`, cổng AI `8001` hay `localhost`.
-
-Bấm **Kiểm tra kết nối** → khi hợp lệ bấm **Cài đặt máy trạm** → chấp nhận **UAC/Administrator**. Không cần tự tạo Task Scheduler hay file Startup. Cài xong ứng dụng tự chạy; lần đăng nhập Windows sau cũng tự chạy.
-
-### 5. Thử bằng điện thoại của bác sĩ
-
-1. Điện thoại truy cập được cùng địa chỉ QLBV trong mạng bệnh viện; HTTPS phải có chứng chỉ tin cậy.
-2. Dùng **Camera mặc định** quét QR trên PC; không quét trong Zalo/Messenger/ứng dụng scanner. iPhone khuyến nghị mở liên kết bằng Safari.
-3. Cho phép camera trước trên trang xác thực, nhìn thẳng camera điện thoại.
-4. PC che trắng QR, đếm lùi xác thực; thành công thì **ẩn toàn bộ Kiosk, trả Desktop**, không tự mở HIS.
-5. Sau khi bác sĩ đã mở bằng QR/face, Kiosk đối soát ca kế tiếp: có ca công bố kế tiếp thì tự khóa đúng giờ bắt đầu ca đó; chưa có ca kế tiếp thì không tự khóa chỉ vì hết giờ ca. PIN IT vẫn dùng rule chặt riêng.
-
-### 6. CNTT mở hỗ trợ / gỡ
-
-- Nút **Hỗ trợ CNTT** hoặc **Ctrl + Alt + Shift + F12** → nhập PIN đã đặt trên máy chủ.
-- Mất mạng/server thì PIN trực tuyến không dùng được. IT đăng nhập tài khoản Windows thuộc **Administrators**: Kiosk 2.0.3 tự thoát trước khi đặt hook, nên IT có Desktop để sửa card mạng/chứng chỉ. Sửa xong phải đăng xuất Administrator và trở lại User thường để Kiosk chạy lại; không gỡ Kiosk chỉ để sửa mạng.
-- Gỡ mặc định giữ cấu hình/ID máy. `/purge` xoá cấu hình và sẽ tạo ID mới khi cài lại.
-
-## Cài nhiều PC
-
-Chạy CMD đã có quyền Administrator, đổi `PK01` theo từng máy:
+Run `go_bo_kiosk.bat` as Administrator, or:
 
 ```bat
-QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn /room PK01 /quiet /no-start
+"%ProgramFiles%\QLBS Kiosk\QLBS_Kiosk.exe" /uninstall
 ```
 
-Với HTTPS cổng 3000:
+Removal keeps the room/terminal configuration by default. Add `/purge` only when the terminal identity must be retired.
 
-```bat
-QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn:3000 /room PK02 /quiet /no-start
-```
+## Validation and release
 
-Ứng dụng sẽ chạy ở lần đăng nhập tiếp theo. **Không clone `config.ini` giữa các PC.** Cùng một EXE dùng cho mọi phòng; mỗi PC tự sinh ID riêng. Không cần sửa mã nguồn theo từng phòng.
+- Native source policy checks: `python deploy/windows/tests/test_pin_scope.py`
+- The Windows CI workflow compiles C# 5/.NET Framework, runs native self-tests, QR fixtures, and keyboard input checks.
+- Server/frontend checks and the physical acceptance checklist are described in [KIEM_THU_V2.md](KIEM_THU_V2.md) and [HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md).
 
-## Cần đọc trước triển khai hàng loạt
-
-- CI đã chạy Windows compiler/self-test, đối chiếu 40 phiên bản QR, backend 56 test và build hai ứng dụng. [Xem chứng cứ](KIEM_THU_V2.md).
-- Cài-gỡ/UAC/ACL/hook, Desktop thực, DPI/nhiều màn hình, điện thoại và AI/PAD thật vẫn phải nghiệm thu tại viện.
-- `WH_KEYBOARD_LL` là hook user-mode, **không chặn được `Ctrl+Alt+Del`** và không thay thế bảo mật OS.
-- Toàn bộ quy trình, lỗi thường gặp, chuyển từ Agent cũ và checklist nằm trong **[HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md)**.
-
-## Dành cho người phát hành phiên bản
-
-Trong **Actions → Kiosk standalone quality gate → Run workflow**, chọn nhánh **main**, bật **publish_release**, nhập tag đúng phiên bản gói, ví dụ `kiosk-v2.0.3`.
-
-Workflow phải chạy đạt backend, frontend và Windows trước; sau đó kiểm tra checksum/commit nguồn của artifact, tạo draft Release, tải đủ ZIP/EXE và checksum lên rồi mới công bố. Dùng `GITHUB_TOKEN` ngắn hạn của Actions, không lưu PAT cá nhân trong source. Nếu Release đã tồn tại, workflow từ chối thay thế asset; phiên bản mới phải có version/tag riêng.
+For a release, use **Actions → Kiosk standalone quality gate**, enable `publish_release`, and enter the new tag `kiosk-v2.0.4`. Never overwrite previous release assets.

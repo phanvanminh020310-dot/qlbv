@@ -141,7 +141,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         "https://hospital.test",
       );
       assert.equal(pcA.isUnlocked, true);
-      assert.equal(pcA.shiftEndMs, MORNING + 24 * 60 * 60 * 1000);
+      assert.equal(pcA.shiftEndMs, Date.parse("2026-10-15T11:00:00+07:00"));
       assert.equal(
         (await service.getKioskStatus("PK01", "pc_b", "https://hospital.test"))
           .isUnlocked,
@@ -215,7 +215,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
   );
 
   await t.test(
-    "adding an absence revokes an already unlocked biometric lease; overnight absences cover the second day",
+    "adding an absence removes the active shift and releases the desktop; overnight absences cover the second day",
     async () => {
       await pg.exec(
         "INSERT INTO duty_absences (user_id, start_date, end_date) VALUES (7001, '2026-10-15', '2026-10-15')",
@@ -228,6 +228,11 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       assert.equal(
         (await service.getKioskStatus("PK01", "pc_a", "https://hospital.test"))
           .isUnlocked,
+        true,
+      );
+      assert.equal(
+        (await service.getKioskStatus("PK01", "pc_a", "https://hospital.test"))
+          .kioskRequired,
         false,
       );
       now = Date.parse("2026-10-15T03:00:00+07:00");
@@ -275,6 +280,33 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
           .isUnlocked,
         false,
       );
+      now = MORNING;
+    },
+  );
+
+  await t.test(
+    "face verification cannot release a PC after the exact shift end even while its phone buffer remains valid",
+    async () => {
+      settings["kiosk.faceVerifyBufferSeconds"] = 180;
+      now = Date.parse("2026-10-15T10:59:00+07:00");
+      service.lockRoom("PK01");
+      const status = await service.getKioskStatus("PK01", "pc_a", "https://hospital.test");
+      const id = status.qrSession!.sessionId;
+      await service.touchSessionScan(id, { claimToken: TOKEN });
+      const before = (await database.db.select().from(schema.dutyAttendance)).length;
+      service.verifyAndExtractAi = async () => {
+        now = Date.parse("2026-10-15T11:01:00+07:00");
+        return { isLive: true, embedding: [1, ...Array<number>(511).fill(0)] };
+      };
+      await assert.rejects(
+        service.verifyFaceAndUnlock({ sessionId: id, snapshotBase64: "fixture-only", claimToken: TOKEN }),
+        /khung giờ ca trực|Ca trực đã kết thúc/,
+      );
+      assert.equal((await database.db.select().from(schema.dutyAttendance)).length, before);
+      const released = await service.getKioskStatus("PK01", "pc_a", "https://hospital.test");
+      assert.equal(released.kioskRequired, false);
+      assert.equal(released.isUnlocked, true);
+      settings["kiosk.faceVerifyBufferSeconds"] = 60;
       now = MORNING;
     },
   );

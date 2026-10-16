@@ -27,8 +27,8 @@ using Net.Codecrete.QrCodeGenerator;
 [assembly: AssemblyDescription("Xác thực ca trực — Bệnh viện quân y 4")]
 [assembly: AssemblyCompany("Bệnh viện quân y 4")]
 [assembly: AssemblyProduct("QLBS Kiosk")]
-[assembly: AssemblyVersion("2.0.3.0")]
-[assembly: AssemblyFileVersion("2.0.3.0")]
+[assembly: AssemblyVersion("2.0.4.0")]
+[assembly: AssemblyFileVersion("2.0.4.0")]
 [assembly: AssemblyCopyright(QLBS.Kiosk.ThirdParty.Notice)]
 
 namespace QLBS.Kiosk
@@ -45,7 +45,7 @@ namespace QLBS.Kiosk
 
     internal static class Program
     {
-        internal const string Version = "2.0.3";
+        internal const string Version = "2.0.4";
         internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "QLBS Kiosk");
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QLBS", "Kiosk");
         internal static readonly string ConfigPath = Path.Combine(DataDirectory, "config.ini");
@@ -72,11 +72,9 @@ namespace QLBS.Kiosk
                 if (options.Has("install")) return Installer.InstallFromOptions(options);
                 bool explicitSetup = options.Has("setup") ||
                     (args.Length == 0 && !String.Equals(Path.GetFullPath(Application.ExecutablePath), Path.Combine(InstallDirectory, "QLBS_Kiosk.exe"), StringComparison.OrdinalIgnoreCase));
-                // HKLM Run is machine-wide, but kiosk policy is per interactive account.
-                // Check the Administrators SID, not a username. This includes UAC filtered (deny-only) tokens.
-                // The bypass is before configuration, hooks, forms and network activity, so an authorized
-                // Administrator can repair a local NIC or certificate without an offline kiosk escape PIN.
-                if (!explicitSetup && AccountPolicy.IsAdministratorAccount()) return 0;
+                // HKLM Run is machine-wide and the online kiosk policy applies to every
+                // interactive Windows account, including local/domain Administrators and UAC-filtered tokens.
+                // Installation and removal still require UAC; there is no account-based runtime bypass.
                 if (explicitSetup || !File.Exists(ConfigPath))
                 {
                     Application.Run(new SetupForm());
@@ -100,58 +98,6 @@ namespace QLBS.Kiosk
             finally
             {
                 if (mutex != null) { mutex.Close(); mutex = null; }
-            }
-        }
-    }
-
-    internal static class AccountPolicy
-    {
-        // Well-known SID of the local built-in Administrators group. Deliberately do not
-        // use username matching: renamed/local/domain administrator accounts must behave alike.
-        internal const string AdministratorsSid = "S-1-5-32-544";
-
-        internal static bool HasAdministratorSid(IEnumerable<string> groupSids)
-        {
-            foreach (string sid in groupSids)
-                if (String.Equals(sid, AdministratorsSid, StringComparison.OrdinalIgnoreCase)) return true;
-            return false;
-        }
-
-        // TOKEN_GROUPS begins after pointer-size alignment. SID_AND_ATTRIBUTES is 16 bytes
-        // on x64 and 8 bytes on x86. Attributes are intentionally ignored: UAC may mark the
-        // Administrators SID DENY_ONLY, but that is still an administrator account for policy.
-        internal static bool HasAdministratorInTokenGroups(IntPtr buffer, int byteCount)
-        {
-            if (buffer == IntPtr.Zero || byteCount < 4) throw new InvalidDataException("TOKEN_GROUPS bị thiếu.");
-            int count = Marshal.ReadInt32(buffer), offset = IntPtr.Size, stride = IntPtr.Size == 8 ? 16 : 8;
-            if (count == 0) return false;
-            if (count < 0 || byteCount < offset || count > (byteCount - offset) / stride)
-                throw new InvalidDataException("TOKEN_GROUPS không hợp lệ.");
-            for (int i = 0; i < count; i++)
-            {
-                IntPtr sid = Marshal.ReadIntPtr(buffer, offset + i * stride);
-                if (sid != IntPtr.Zero && String.Equals(new SecurityIdentifier(sid).Value, AdministratorsSid, StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            return false;
-        }
-
-        internal static bool IsAdministratorAccount()
-        {
-            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
-            {
-                if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) return true;
-                int needed;
-                // The sizing call is expected to fail with ERROR_INSUFFICIENT_BUFFER.
-                Native.GetTokenInformation(identity.Token, 2, IntPtr.Zero, 0, out needed);
-                if (needed <= 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Không đọc được nhóm tài khoản Windows.");
-                IntPtr buffer = Marshal.AllocHGlobal(needed);
-                try
-                {
-                    if (!Native.GetTokenInformation(identity.Token, 2, buffer, needed, out needed))
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Không đọc được token tài khoản Windows.");
-                    return HasAdministratorInTokenGroups(buffer, needed);
-                }
-                finally { Marshal.FreeHGlobal(buffer); }
             }
         }
     }
@@ -312,7 +258,7 @@ namespace QLBS.Kiosk
     internal sealed class KioskSnapshot
     {
         internal double ServerTime, ExpiresAt, ShiftEndMs;
-        internal bool IsUnlocked, Scanned;
+        internal bool KioskRequired, IsUnlocked, Scanned;
         internal int QrSeconds, BufferSeconds;
         internal string RoomName, SessionId, QrUrl, DoctorName, ShiftName, ShiftHours, DutyDate;
         internal QrCode Qr;
@@ -327,10 +273,14 @@ namespace QLBS.Kiosk
             result.ServerTime = Json.Number(data, "serverTime");
             if (result.ServerTime < 1577836800000d || result.ServerTime > 4102444800000d) throw new InvalidDataException("Không nhận được thời gian chuẩn từ máy chủ.");
             result.RoomName = Json.Text(room, "name");
+            result.KioskRequired = Json.Flag(data, "kioskRequired");
             result.IsUnlocked = Json.Flag(data, "isUnlocked");
             result.ShiftEndMs = Json.Number(data, "shiftEndMs");
+            // A missing/false flag means the server did not confirm an active published shift.
+            // Release rather than making a local or stale schedule decide Windows lock state.
+            if (!result.KioskRequired) { result.IsUnlocked = true; return result; }
             if (result.IsUnlocked && (result.ShiftEndMs <= result.ServerTime || result.ShiftEndMs > result.ServerTime + 48 * 3600000d))
-                throw new InvalidDataException("Mốc tự khoá ca trực không hợp lệ. Máy trạm tiếp tục được bảo vệ.");
+                throw new InvalidDataException("Mốc kết thúc ca trực không hợp lệ. Đang đối soát lại máy chủ.");
             Dictionary<string, object> duty = Json.Object(Json.Value(data, "currentScheduled"));
             result.DoctorName = (Json.Text(duty, "title") + " " + Json.Text(duty, "fullName")).Trim();
             result.ShiftName = Json.Text(duty, "shiftName");
@@ -502,18 +452,23 @@ namespace QLBS.Kiosk
     internal sealed class KioskView
     {
         internal readonly ServerClock Clock = new ServerClock();
-        internal bool Locked = true, Connected, Scanned;
-        internal string RoomCode, RoomName, SessionId = "", Message = "Đang kết nối máy chủ bệnh viện…";
+        internal bool Locked, Connected, Scanned;
+        internal string RoomCode, RoomName, SessionId = "", Message = "Đang chờ đối soát lịch trực từ máy chủ…";
         internal string DoctorName = "", ShiftName = "", ShiftHours = "", DutyDate = "";
         internal double ExpiresAt, ShiftEndMs;
         internal int QrSeconds = 15, BufferSeconds = 60;
         internal QrCode Qr;
         internal int Remaining { get { return Clock.IsSynchronized ? Math.Max(0, (int)Math.Ceiling((ExpiresAt - Clock.Now) / 1000d)) : 0; } }
         internal void ClearQr() { Qr = null; SessionId = ""; ExpiresAt = 0; Scanned = false; }
-        internal bool LeaseExpired { get { return !Locked && (!Clock.IsSynchronized || Clock.Now >= ShiftEndMs); } }
+        internal bool LeaseExpired { get { return !Locked && ShiftEndMs > 0 && Clock.IsSynchronized && Clock.Now >= ShiftEndMs; } }
         internal void MarkLocked(string message, bool offline)
         {
             Locked = true; ClearQr(); ShiftEndMs = 0; Message = message;
+            if (offline) Connected = false;
+        }
+        internal void MarkReleased(string message, bool offline)
+        {
+            Locked = false; ClearQr(); ShiftEndMs = 0; Message = message;
             if (offline) Connected = false;
         }
         internal bool ObserveScan(string session, double deadline, int buffer)
@@ -528,9 +483,14 @@ namespace QLBS.Kiosk
             Clock.Sync(snapshot.ServerTime, transitMs);
             Connected = true; RoomName = snapshot.RoomName; DoctorName = snapshot.DoctorName;
             ShiftName = snapshot.ShiftName; ShiftHours = snapshot.ShiftHours; DutyDate = snapshot.DutyDate;
+            if (!snapshot.KioskRequired)
+            {
+                MarkReleased("Không có ca trực đang diễn ra. Desktop đang được mở.", false);
+                return true;
+            }
             if (snapshot.IsUnlocked)
             {
-                if (snapshot.ShiftEndMs <= Clock.Now) { MarkLocked("Ca trực đã kết thúc. Đang đồng bộ…", false); return false; }
+                if (snapshot.ShiftEndMs <= Clock.Now) { MarkReleased("Ca trực vừa kết thúc. Desktop đang được mở.", false); return false; }
                 ShiftEndMs = snapshot.ShiftEndMs; ClearQr(); Locked = false;
                 return true;
             }
@@ -569,6 +529,11 @@ namespace QLBS.Kiosk
             this.config = config;
             api = new ApiClient(config);
             view = new KioskView { RoomCode = config.RoomCode, RoomName = "Phòng khám " + config.RoomCode };
+#if KIOSK_INPUT_TEST
+            // The Windows-only keyboard fixture has no network worker by design; give it a
+            // synthetic locked state without changing the production online-first startup policy.
+            view.MarkLocked("Kiểm thử bàn phím", false);
+#endif
             dispatcher.CreateControl();
             keyboard = new KeyboardGuard(delegate { return view.Locked; }, delegate { return itDialog != null; }, delegate { Post(ShowItDialog); });
             RebuildWindows();
@@ -594,7 +559,7 @@ namespace QLBS.Kiosk
         private void DisplayChanged(object sender, EventArgs args) { Post(RebuildWindows); }
         private void PowerChanged(object sender, PowerModeChangedEventArgs args)
         {
-            if (args.Mode == PowerModes.Resume) Post(delegate { Interlocked.Increment(ref revision); Lock("Đang đối soát lại ca trực sau khi máy tính hoạt động trở lại…", true); wake.Set(); });
+            if (args.Mode == PowerModes.Resume) Post(delegate { Interlocked.Increment(ref revision); Release("Đang đối soát lại ca trực sau khi máy tính hoạt động trở lại…", true); wake.Set(); });
         }
         private void RebuildWindows()
         {
@@ -614,7 +579,7 @@ namespace QLBS.Kiosk
             if (view.LeaseExpired)
             {
                 Interlocked.Increment(ref revision);
-                Lock("Ca trực đã kết thúc. Đang cập nhật ca tiếp theo…", true);
+                Release("Ca trực đã kết thúc. Đang đối soát lại máy chủ…", false);
                 wake.Set();
             }
             if (!view.Locked) return; // No foreground activity, tray icon, taskbar item or dock when unlocked.
@@ -648,12 +613,13 @@ namespace QLBS.Kiosk
                 if (!ours && windows.Count > 0) { windows[0].Activate(); Native.SetForegroundWindow(windows[0].Handle); }
             }
         }
-        private void Lock(string message, bool offline)
+        private void Release(string message, bool offline)
         {
-            bool changed = !view.Locked;
-            view.MarkLocked(message, offline);
-            foreach (LockForm window in windows) { if (!window.Visible) window.Show(); if (itDialog == null) window.TopMost = true; window.Invalidate(); }
-            if (changed) Log.Write("Workstation locked.");
+            bool changed = view.Locked;
+            view.MarkReleased(message, offline);
+            if (itDialog != null) itDialog.Close();
+            foreach (LockForm window in windows) if (!window.IsDisposed) window.Hide();
+            if (changed) Log.Write("Desktop released; awaiting online duty reconciliation.");
         }
         private void Apply(KioskSnapshot snapshot, double transitMs, long expectedRevision)
         {
@@ -682,10 +648,9 @@ namespace QLBS.Kiosk
                     double transit = requestTime.Elapsed.TotalMilliseconds / 2;
                     Post(delegate { Apply(snapshot, transit, expected); });
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    string message = ex.Message;
-                    Post(delegate { if (expected == revision) Lock(message, true); });
+                    Post(delegate { if (expected == revision) Release("Không kết nối được máy chủ; Desktop đang được mở. Đang chờ đối soát lại…", true); });
                 }
                 if (WaitHandle.WaitAny(wait, 3000) == 0) return;
             }
@@ -739,8 +704,7 @@ namespace QLBS.Kiosk
             else if (name == "LOCK_EVENT")
             {
                 Interlocked.Increment(ref revision);
-                Lock("Đang cập nhật lịch trực…", false);
-                wake.Set();
+                wake.Set(); // Status response alone may apply a lock after exact online reconciliation.
             }
             else if (name == "UNLOCK_EVENT")
             {
@@ -860,7 +824,6 @@ namespace QLBS.Kiosk
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool UnhookWindowsHookEx(IntPtr hook);
         [DllImport("user32.dll")] internal static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)] internal static extern IntPtr GetModuleHandle(string name);
-        [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GetTokenInformation(IntPtr token, int tokenInformationClass, IntPtr buffer, int bufferLength, out int returnLength);
         [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
         [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool SetForegroundWindow(IntPtr handle);
@@ -1020,7 +983,6 @@ namespace QLBS.Kiosk
             string qrLabel = view.Scanned ? "Vui lòng hoàn tất trên điện thoại" : view.Connected && view.Qr != null && view.Remaining > 0 ? "Tự đổi mã sau " + view.Remaining + " giây" : "Tự khôi phục khi mạng sẵn sàng";
             KioskArt.Round(g, new RectangleF(859, 509, 380, 36), 17, Color.FromArgb(225, 242, 238), Color.Transparent);
             KioskArt.Text(g, qrLabel, 14, FontStyle.Bold, Color.FromArgb(16, 113, 98), new RectangleF(865, 509, 368, 36), StringAlignment.Center);
-            KioskArt.Text(g, "Không cần camera máy tính  ·  Không yêu cầu GPS", 11, FontStyle.Regular, Color.FromArgb(108, 132, 137), new RectangleF(835, 556, 428, 20), StringAlignment.Center);
             string[] steps = new string[] { "Quét mã QR bằng điện thoại", "Nhìn thẳng camera điện thoại để xác thực", "Mở khóa màn hình thành công" };
             for (int i = 0; i < 3; i++)
             {
@@ -1221,7 +1183,7 @@ namespace QLBS.Kiosk
             using (ApiClient api = new ApiClient(config)) api.Preflight();
             bool launch = !options.Has("no-start") && !options.Has("quiet") && Process.GetCurrentProcess().SessionId != 0;
             Install(config, launch);
-            if (!options.Has("quiet")) MessageBox.Show("Đã cài QLBS Kiosk cho " + config.RoomCode + ".\nKiosk chỉ khóa tài khoản User thường; mọi tài khoản thuộc nhóm Administrators được bỏ qua để IT xử lý sự cố.\n\n" + (launch ? "Máy trạm đang khởi động qua Windows Explorer." : "Ứng dụng sẽ chạy ở lần đăng nhập tiếp theo."), "QLBS Kiosk", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!options.Has("quiet")) MessageBox.Show("Đã cài QLBS Kiosk cho " + config.RoomCode + ".\nKiosk áp dụng cho mọi tài khoản Windows, kể cả Administrators. Chỉ khi máy chủ xác nhận ca đang diễn ra thì Kiosk mới khóa; mất kết nối hoặc không có ca thì Desktop được mở.\n\n" + (launch ? "Máy trạm đang khởi động qua Windows Explorer." : "Ứng dụng sẽ chạy ở lần đăng nhập tiếp theo."), "QLBS Kiosk", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         internal static void Install(KioskConfig config, bool launch)
@@ -1520,25 +1482,6 @@ namespace QLBS.Kiosk
     internal static class SelfTests
     {
         private static void Assert(bool condition, string message) { if (!condition) throw new Exception("SELF-TEST FAILED: " + message); }
-        private static void TestRawAdminTokenGroups()
-        {
-            int offset = IntPtr.Size, stride = IntPtr.Size == 8 ? 16 : 8;
-            foreach (bool admin in new bool[] { false, true })
-            {
-                SecurityIdentifier sid = new SecurityIdentifier(admin ? AccountPolicy.AdministratorsSid : "S-1-5-32-545");
-                byte[] bytes = new byte[sid.BinaryLength]; sid.GetBinaryForm(bytes, 0);
-                IntPtr sidBuffer = Marshal.AllocHGlobal(bytes.Length), groups = Marshal.AllocHGlobal(offset + stride);
-                try
-                {
-                    Marshal.Copy(bytes, 0, sidBuffer, bytes.Length);
-                    Marshal.WriteInt32(groups, 1); Marshal.WriteIntPtr(groups, offset, sidBuffer);
-                    // Administrator case is deny-only; it must still bypass Kiosk at runtime.
-                    Marshal.WriteInt32(groups, offset + IntPtr.Size, admin ? 0x10 : 0x4);
-                    Assert(AccountPolicy.HasAdministratorInTokenGroups(groups, offset + stride) == admin, "raw TOKEN_GROUPS deny-only administrator classification " + admin);
-                }
-                finally { Marshal.FreeHGlobal(groups); Marshal.FreeHGlobal(sidBuffer); }
-            }
-        }
         internal static int Run(string output)
         {
             try
@@ -1561,7 +1504,7 @@ namespace QLBS.Kiosk
                 Assert(oversized, "bounded SSE");
                 KioskConfig config = new KioskConfig { ServerUrl = "https://hospital.test", RoomCode = "PK01", TerminalId = "term_12345678901234567890123456789012" }; config.Validate();
                 string session = "e270973a-0bc2-4bfd-89f9-9d6a876f7031";
-                Dictionary<string, object> payload = Json.Decode("{\"protocolVersion\":2,\"terminalId\":\"" + config.TerminalId + "\",\"roomExists\":true,\"room\":{\"code\":\"PK01\",\"name\":\"Phòng khám 1\"},\"serverTime\":1792000000000,\"isUnlocked\":false,\"qrSession\":{\"sessionId\":\"" + session + "\",\"qrUrl\":\"https://hospital.test/scan/" + session + "\",\"expiresAt\":1792000015000,\"totalExpiresSeconds\":15,\"faceVerifyBufferSeconds\":60,\"status\":\"WAITING\"}}");
+                Dictionary<string, object> payload = Json.Decode("{\"protocolVersion\":2,\"terminalId\":\"" + config.TerminalId + "\",\"roomExists\":true,\"kioskRequired\":true,\"room\":{\"code\":\"PK01\",\"name\":\"Phòng khám 1\"},\"serverTime\":1792000000000,\"isUnlocked\":false,\"qrSession\":{\"sessionId\":\"" + session + "\",\"qrUrl\":\"https://hospital.test/scan/" + session + "\",\"expiresAt\":1792000015000,\"totalExpiresSeconds\":15,\"faceVerifyBufferSeconds\":60,\"status\":\"WAITING\"}}");
                 KioskSnapshot snapshot = KioskSnapshot.Parse(payload, config); Assert(snapshot.Qr != null && !snapshot.Scanned, "waiting QR");
                 Dictionary<string, object> qr = Json.Object(payload["qrSession"]); qr["status"] = "SCANNED"; qr["scannedAt"] = 1792000000000d;
                 snapshot = KioskSnapshot.Parse(payload, config); Assert(snapshot.Scanned && snapshot.Qr == null, "scanned never renders QR");
@@ -1575,18 +1518,13 @@ namespace QLBS.Kiosk
                 Assert(view.ObserveScan(session, waiting.ServerTime + 60000, 60) && view.Scanned && view.Qr == null, "immediate opaque mask");
                 view.ApplySnapshot(waiting, 0);
                 Assert(view.Scanned && view.Qr == null && view.ExpiresAt == waiting.ServerTime + 60000, "no scanned-to-waiting regression");
-                payload["isUnlocked"] = true; payload["shiftEndMs"] = waiting.ServerTime + 3600000;
+                payload["kioskRequired"] = false; payload["isUnlocked"] = false; payload["shiftEndMs"] = 0;
                 KioskSnapshot released = KioskSnapshot.Parse(payload, config);
-                view.ApplySnapshot(released, 0); Assert(!view.Locked && view.Qr == null && view.SessionId == "", "clean desktop release state");
+                view.ApplySnapshot(released, 0); Assert(!view.Locked && view.Qr == null && view.SessionId == "", "no active shift releases desktop");
                 Assert(!view.ObserveScan(session, waiting.ServerTime + 60000, 60), "late scan cannot reopen a released kiosk");
-                view.Clock.Sync(released.ShiftEndMs + 1, 0); Assert(view.LeaseExpired, "local shift deadline uses server clock");
-                view.MarkLocked("offline", true); Assert(view.Locked && !view.Connected && view.Qr == null, "offline fail closed");
-                payload["shiftEndMs"] = 0; bool noDeadline = false; try { KioskSnapshot.Parse(payload, config); } catch (InvalidDataException) { noDeadline = true; }
-                Assert(noDeadline, "no unlimited unlock lease");
-                TestRawAdminTokenGroups();
-                Assert(AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-545", AccountPolicy.AdministratorsSid }), "administrator SID bypasses runtime");
-                Assert(!AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-545", "S-1-5-11" }), "standard user never bypasses runtime");
-                Assert(!AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-5440" }), "administrator SID match is exact");
+                view.MarkReleased("offline", true); Assert(!view.Locked && !view.Connected && view.Qr == null, "offline releases desktop");
+                payload["kioskRequired"] = true; payload["isUnlocked"] = true; bool noDeadline = false; try { KioskSnapshot.Parse(payload, config); } catch (InvalidDataException) { noDeadline = true; }
+                Assert(noDeadline, "active-shift unlock requires finite deadline");
                 Assert(KeyboardPolicy.PermitsPinKey(0x39, false, false, false) && KeyboardPolicy.PermitsPinKey(0x08, false, false, false), "PIN typing and backspace");
                 Assert(!KeyboardPolicy.PermitsPinKey(0x5B, false, false, false) && !KeyboardPolicy.PermitsPinKey(0x09, false, true, false) && !KeyboardPolicy.PermitsPinKey(0x73, false, true, false) && !KeyboardPolicy.PermitsPinKey(0x1B, true, false, false), "system escape keys blocked inside PIN dialog");
                 Assert(!KeyboardPolicy.PermitsPinKey(0x44, false, false, true), "Win+D is blocked with Win already held");
@@ -1633,7 +1571,7 @@ namespace QLBS.Kiosk
                     RunRemovalFixture(removalScript);
                     Assert(!Directory.Exists(removalFixture), "own pending uninstall removes its test directory");
                 }
-                File.WriteAllText(Path.Combine(directory, "self-test.txt"), "PASS: config, strict JSON, server clock, SSE framing/limits, terminal targeting, scan overlay/state transitions, bounded desktop lease, raw TOKEN_GROUPS including deny-only Administrators, keyboard policy, all 40 QR versions\n", Encoding.UTF8);
+                File.WriteAllText(Path.Combine(directory, "self-test.txt"), "PASS: config, strict JSON, server clock, SSE framing/limits, terminal targeting, active-shift lock/release transitions, offline desktop release, keyboard policy, all 40 QR versions\n", Encoding.UTF8);
                 Console.WriteLine("QLBS Kiosk self-tests passed: " + directory); return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.ToString()); return 1; }

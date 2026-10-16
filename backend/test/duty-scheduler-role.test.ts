@@ -111,3 +111,15 @@ test("migration role xếp lịch tạo quyền DEPT và thu hồi tự đăng k
   `);
   assert.deepEqual(chiefDutyPerms.rows, []);
 });
+
+
+test("candidate query never exposes hospital-wide staff to a department scheduler", () => {
+  const source = readFileSync(resolve(__dirname, "..", "src", "modules", "duty", "duty.service.ts"), "utf8");
+  const start = source.indexOf("async candidates(user: AccessContext");
+  const end = source.indexOf("/* ================================================================ Lưới lịch", start);
+  const candidates = source.slice(start, end);
+  assert.ok(candidates.includes("if (!this.core.isAll(user))"));
+  assert.ok(candidates.includes("const departmentIds = this.core.scopeDeptIds(user)"));
+  assert.ok(candidates.includes("conds.push(inArray(users.departmentId, departmentIds))"));
+  assert.ok(candidates.includes("if (!departmentIds.length) return []"));
+});
