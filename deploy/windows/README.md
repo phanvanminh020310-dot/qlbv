@@ -1,22 +1,22 @@
-# Cài QLBS Kiosk 2.0.2 — WinForms mới
+# Cài QLBS Kiosk 2.0.3 — WinForms mới
 
-> **Bản 2.0.2 theo đúng gói cũ đã chốt:** Kiosk áp dụng cho **mọi tài khoản Windows, bao gồm Administrator**, không có nhánh bỏ qua tài khoản/nhóm quản trị viên. Không dùng hành vi chỉ khóa User của 2.0.1 trong bản này.
+> **Chính sách 2.0.3 đã được xác nhận:** cài/gỡ vẫn cần UAC Administrator, nhưng Kiosk chỉ khóa tài khoản Windows thường. Bất kỳ tài khoản nào là thành viên nhóm **Administrators** được bỏ qua theo SID nhóm (kể cả token UAC chưa nâng quyền), để IT xử lý NIC/chứng chỉ/sự cố cục bộ. Không xét theo tên đăng nhập. Vì vậy chỉ cấp Administrator cho IT được ủy quyền; bác sĩ phải dùng User thường.
 >
-> Chỉ đưa bản sửa nhập PIN CNTT vào nền mã 2.0.0: giữ focus hộp PIN, không để cửa sổ khóa giành focus và xử lý modifier/key-up. Hook bảo vệ vẫn hoạt động; xác minh PIN/mở khóa phía server giữ nguyên. Cài/gỡ vẫn cần UAC/Administrator.
+> PIN IT vẫn xác minh online; không thêm PIN mở máy local/offline. Khi API mất kết nối Kiosk User vẫn khóa an toàn; IT xử lý bằng đăng nhập Administrator.
 >
-> Nếu API v2 của gói cũ đang hoạt động thì sửa PIN này **không yêu cầu thay cấu hình hoặc nâng backend**, không đổi URL/phòng/certificate/port và không cần sinh lại HTTPS. Bộ P2 một-lần vẫn dùng đúng hai BAT. Các bản phát hành cũ giữ nguyên để đối chiếu.
+> Kiosk vẫn native WinForms, QR/face/roster và hook chặn thoát của tài khoản User giữ nguyên.
 
 
 **Đây là bản native một `QLBS_Kiosk.exe`. Không dùng Edge Kiosk, WebView hay `QLBS_Kiosk_Agent.exe` cũ.**
 
 ## Tải đúng bộ cài
 
-- **[Tải QLBS_Kiosk_2.0.2.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.2/QLBS_Kiosk_2.0.2.zip)**
-- [Trang phát hành và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2)
+- **[Tải QLBS_Kiosk_2.0.3.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.3/QLBS_Kiosk_2.0.3.zip)**
+- [Trang phát hành và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.3)
 - **[Hướng dẫn chi tiết từ đầu đến cuối](HUONG_DAN_SU_DUNG.md)**
 - [Kết quả kiểm thử Windows và các mục còn phải nghiệm thu](KIEM_THU_V2.md)
 
-> Trong trang Releases, chọn tài sản **`QLBS_Kiosk_2.0.2.zip`** ở mục **Assets**. Không chọn **Source code (zip)** nếu cần EXE có sẵn. `Code → Download ZIP` chỉ tải mã nguồn; các file EXE/ZIP phát hành không được commit vào thư mục này.
+> Trong trang Releases, chọn tài sản **`QLBS_Kiosk_2.0.3.zip`** ở mục **Assets**. Không chọn **Source code (zip)** nếu cần EXE có sẵn. `Code → Download ZIP` chỉ tải mã nguồn; các file EXE/ZIP phát hành không được commit vào thư mục này.
 >
 > Artifacts trong Actions là đầu ra kiểm thử có thời hạn lưu. Releases là nơi tải bộ cài chính thức. Nếu tải gói chỉ chứa `.cs` và hai BAT, đó là gói nguồn; BAT vẫn biên dịch được nhưng không phải cách tải EXE khuyến nghị.
 
@@ -91,7 +91,7 @@ Bấm **Kiểm tra kết nối** → khi hợp lệ bấm **Cài đặt máy tr�
 ### 6. CNTT mở hỗ trợ / gỡ
 
 - Nút **Hỗ trợ CNTT** hoặc **Ctrl + Alt + Shift + F12** → nhập PIN đã đặt trên máy chủ.
-- Mất mạng/server thì PIN trực tuyến không dùng được. IT có quyền Administrator dùng **`go_bo_kiosk.bat`**; xem cách truy cập cứu hộ trong hướng dẫn chi tiết.
+- Mất mạng/server thì PIN trực tuyến không dùng được. IT đăng nhập tài khoản Windows thuộc **Administrators**: Kiosk 2.0.3 tự thoát trước khi đặt hook, nên IT có Desktop để sửa card mạng/chứng chỉ. Sửa xong phải đăng xuất Administrator và trở lại User thường để Kiosk chạy lại; không gỡ Kiosk chỉ để sửa mạng.
 - Gỡ mặc định giữ cấu hình/ID máy. `/purge` xoá cấu hình và sẽ tạo ID mới khi cài lại.
 
 ## Cài nhiều PC
@@ -119,6 +119,6 @@ QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn:3000 /room PK02 /quiet 
 
 ## Dành cho người phát hành phiên bản
 
-Trong **Actions → Kiosk standalone quality gate → Run workflow**, chọn nhánh **main**, bật **publish_release**, nhập tag đúng phiên bản gói, ví dụ `kiosk-v2.0.2`.
+Trong **Actions → Kiosk standalone quality gate → Run workflow**, chọn nhánh **main**, bật **publish_release**, nhập tag đúng phiên bản gói, ví dụ `kiosk-v2.0.3`.
 
 Workflow phải chạy đạt backend, frontend và Windows trước; sau đó kiểm tra checksum/commit nguồn của artifact, tạo draft Release, tải đủ ZIP/EXE và checksum lên rồi mới công bố. Dùng `GITHUB_TOKEN` ngắn hạn của Actions, không lưu PAT cá nhân trong source. Nếu Release đã tồn tại, workflow từ chối thay thế asset; phiên bản mới phải có version/tag riêng.

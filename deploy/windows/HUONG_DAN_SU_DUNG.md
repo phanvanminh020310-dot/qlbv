@@ -1,10 +1,10 @@
 # QLBS Kiosk 2.0 — Hướng dẫn cài mới, cập nhật và vận hành
 
-> **Bản 2.0.2 theo đúng gói cũ đã chốt:** Kiosk áp dụng cho **mọi tài khoản Windows, bao gồm Administrator**, không có nhánh bỏ qua tài khoản/nhóm quản trị viên. Không dùng hành vi chỉ khóa User của 2.0.1 trong bản này.
+> **Chính sách 2.0.3 đã được xác nhận:** cài/gỡ vẫn cần UAC Administrator, nhưng Kiosk chỉ khóa tài khoản Windows thường. Bất kỳ tài khoản nào là thành viên nhóm **Administrators** được bỏ qua theo SID nhóm (kể cả token UAC chưa nâng quyền), để IT xử lý NIC/chứng chỉ/sự cố cục bộ. Không xét theo tên đăng nhập. Vì vậy chỉ cấp Administrator cho IT được ủy quyền; bác sĩ phải dùng User thường.
 >
-> Chỉ đưa bản sửa nhập PIN CNTT vào nền mã 2.0.0: giữ focus hộp PIN, không để cửa sổ khóa giành focus và xử lý modifier/key-up. Hook bảo vệ vẫn hoạt động; xác minh PIN/mở khóa phía server giữ nguyên. Cài/gỡ vẫn cần UAC/Administrator.
+> PIN IT vẫn xác minh online; không thêm PIN mở máy local/offline. Khi API mất kết nối Kiosk User vẫn khóa an toàn; IT xử lý bằng đăng nhập Administrator.
 >
-> Nếu API v2 của gói cũ đang hoạt động thì sửa PIN này **không yêu cầu thay cấu hình hoặc nâng backend**, không đổi URL/phòng/certificate/port và không cần sinh lại HTTPS. Bộ P2 một-lần vẫn dùng đúng hai BAT. Các bản phát hành cũ giữ nguyên để đối chiếu.
+> Kiosk vẫn native WinForms, QR/face/roster và hook chặn thoát của tài khoản User giữ nguyên.
 
 
 **Cập nhật: 16/10/2026 · WinForms native · Một EXE · Bệnh viện quân y 4**
@@ -29,11 +29,11 @@
 
 ### 1.1. Đường tải
 
-- **[Tải QLBS_Kiosk_2.0.2.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.2/QLBS_Kiosk_2.0.2.zip)**.
-- [Trang GitHub Release và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2).
+- **[Tải QLBS_Kiosk_2.0.3.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.3/QLBS_Kiosk_2.0.3.zip)**.
+- [Trang GitHub Release và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.3).
 - [README cài nhanh ngay trong thư mục Windows](README.md).
 
-Trong **Releases → Assets**, tải đúng **`QLBS_Kiosk_2.0.2.zip`**. Không nhầm với **Source code (zip)** mà GitHub tự tạo. `Code → Download ZIP` tải cả repository mã nguồn, không phải gói EXE đã build. Artifacts trong Actions là bản build kiểm thử có thời hạn lưu, còn Releases là nơi phân phối bộ cài.
+Trong **Releases → Assets**, tải đúng **`QLBS_Kiosk_2.0.3.zip`**. Không nhầm với **Source code (zip)** mà GitHub tự tạo. `Code → Download ZIP` tải cả repository mã nguồn, không phải gói EXE đã build. Artifacts trong Actions là bản build kiểm thử có thời hạn lưu, còn Releases là nơi phân phối bộ cài.
 
 Gói phát hành có EXE được biên dịch bằng compiler .NET Framework trên **Windows CI**, không phải bản Mono dùng trong vòng thử nghiệm Linux trước đây. Xem `BUILD_INFO.txt` để biết commit nguồn. `SHA256SUMS.txt` chứa checksum các tệp trong gói; checksum ZIP được phát hành cạnh ZIP ở Releases.
 
@@ -126,7 +126,7 @@ Chứng chỉ HTTPS phải khớp tên miền/IP đang nhập. Không dùng ch�
 
 ### Bước 1 — Tải và giải nén
 
-Tải ZIP từ [Releases](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2), giải nén vào một thư mục cục bộ, ví dụ `C:\BoCai\QLBS_Kiosk_2.0.2`. Không mở EXE trực tiếp bên trong cửa sổ ZIP.
+Tải ZIP từ [Releases](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.3), giải nén vào một thư mục cục bộ, ví dụ `C:\BoCai\QLBS_Kiosk_2.0.3`. Không mở EXE trực tiếp bên trong cửa sổ ZIP.
 
 Trong cùng thư mục phải thấy ít nhất:
 
@@ -153,7 +153,7 @@ Mở PowerShell tại thư mục vừa giải nén:
 Get-FileHash .\QLBS_Kiosk.exe -Algorithm SHA256
 ```
 
-Mở `SHA256SUMS.txt`, đối chiếu hash của `QLBS_Kiosk.exe`. Có thể kiểm tra ZIP với file `QLBS_Kiosk_2.0.2.zip.sha256` tải cạnh ZIP trên Releases. Nếu khác hash, dừng cài và tải/kiểm tra lại.
+Mở `SHA256SUMS.txt`, đối chiếu hash của `QLBS_Kiosk.exe`. Có thể kiểm tra ZIP với file `QLBS_Kiosk_2.0.3.zip.sha256` tải cạnh ZIP trên Releases. Nếu khác hash, dừng cài và tải/kiểm tra lại.
 
 ### Bước 3 — Mở trình thiết lập
 
@@ -187,13 +187,13 @@ Phải có thông báo kết nối hợp lệ/đúng tên phòng mới tiếp t�
 
 Bấm **Cài đặt máy trạm**, xác nhận quyền **Administrator** khi Windows hỏi. Không cấp UAC hoặc preflight thất bại thì cấu hình đang chạy không bị thay thế.
 
-Bộ cài chép EXE vào Program Files, lưu cấu hình có ACL bảo vệ và đăng ký **một** mục tự chạy HKLM. Cài tương tác sẽ khởi động ứng dụng qua Explorer; khi vận hành, mọi tài khoản đăng nhập đều bị áp dụng Kiosk, kể cả Administrator.
+Bộ cài chép EXE vào Program Files, lưu cấu hình có ACL bảo vệ và đăng ký **một** mục tự chạy HKLM. Mục Run này gọi EXE cho mọi phiên đăng nhập, nhưng EXE kiểm tra SID nhóm trước khi làm gì: **User thường** sẽ chạy Kiosk; tài khoản thuộc **Administrators** kết thúc ngay, không tạo hook hay phủ màn hình. Cài tương tác vẫn khởi động Kiosk qua Explorer khi phiên hiện tại là User thường.
 
 Nếu Explorer không khởi chạy được ngay, cấu hình đã lưu; đăng xuất/đăng nhập Windows để mục tự chạy hoạt động. Không tạo thêm mục Startup để “sửa” bằng cách chạy trùng.
 
 ### Bước 7 — Kiểm tra khởi động lại
 
-Sau khi kiểm thử an toàn và có phương án IT cứu hộ, đăng xuất/đăng nhập hoặc khởi động lại PC. Cả User và Administrator đều phải tự chạy Kiosk khi cấu hình đã cài; ứng dụng tự kết nối máy chủ, hiện trạng thái khoá/QR hoặc khôi phục lease còn hợp lệ do server xác nhận. Nếu chưa có mạng, hiển thị đang đồng bộ và tự phục hồi khi mạng có lại; không dùng QR giả hoặc dữ liệu lịch cache như lịch hiện tại.
+Sau khi kiểm thử an toàn, đăng xuất/đăng nhập hoặc khởi động lại PC. Đăng nhập **User thường** phải tự chạy Kiosk và hiện trạng thái khoá/QR hoặc khôi phục lease còn hợp lệ do server xác nhận. Đăng nhập **Administrator** phải không hiện Kiosk để IT có Desktop sửa sự cố; sau sửa, IT đăng xuất và đăng nhập lại User thường. Nếu User chưa có mạng, Kiosk khóa an toàn và tự phục hồi khi mạng có lại; không dùng QR giả hoặc dữ liệu lịch cache.
 
 ## 5. Kiểm thử nhận ca bằng điện thoại
 
@@ -288,9 +288,9 @@ Xác minh **online** trên server; không lưu PIN trong PC, không có mã bí 
 
 ### 8.2. Mất mạng, server lỗi hoặc quên PIN
 
-PIN online không hoạt động khi server không xác minh được. **Chỉ IT có quyền Administrator** thực hiện cứu hộ bằng `go_bo_kiosk.bat` đã giữ sẵn.
+PIN online không hoạt động khi server không xác minh được. **Không gỡ Kiosk chỉ để sửa một lỗi mạng cục bộ.** IT đăng nhập tài khoản Windows thuộc nhóm **Administrators**; Kiosk 2.0.3 tự kết thúc trước khi tạo hook, vì vậy IT có Desktop để kiểm tra cáp/switch, bật lại adapter, driver, DNS hoặc chứng chỉ. Sửa xong, IT đăng xuất Administrator rồi đăng nhập lại User thường để Kiosk tự chạy và đối soát server.
 
-Vì bàn phím đang bị hook, không hứa rằng có thể gõ Win+R ngay trên màn khoá. IT dùng kênh quản trị hợp lệ của đơn vị, tài khoản Administrator hoặc secure-attention/Task Manager khi chính sách Windows cho phép để chạy bộ cứu hộ. `Ctrl+Alt+Del` thuộc Windows, không bị hook WinForms chặn. Nếu GPO/Task Manager/RDP bị hạn chế, quản trị miền xử lý theo quy trình viện; không cài PIN offline để vòng qua kiểm tra server.
+Nếu User đang bị phủ Kiosk và không thể chuyển phiên theo quy trình đơn vị, `Ctrl+Alt+Del` thuộc Secure Desktop của Windows, không bị hook WinForms chặn. IT chỉ dùng kênh quản trị hợp lệ để chuyển sang Administrator. Nếu GPO/Task Manager/RDP bị hạn chế, quản trị miền xử lý theo quy trình viện; không thêm PIN offline để vòng qua kiểm tra server.
 
 ### 8.3. Gỡ bình thường và gỡ sạch
 
@@ -331,7 +331,7 @@ Admins/SYSTEM ghi cấu hình, Users đọc. Log quay vòng khoảng 1 MB/tệp,
 
 | Triệu chứng | Kiểm tra / xử lý |
 |---|---|
-| GitHub không thấy EXE trong `deploy/windows` | Đây là thư mục mã nguồn. Tải **Assets → QLBS_Kiosk_2.0.2.zip** ở Releases, không chọn Source code ZIP. |
+| GitHub không thấy EXE trong `deploy/windows` | Đây là thư mục mã nguồn. Tải **Assets → QLBS_Kiosk_2.0.3.zip** ở Releases, không chọn Source code ZIP. |
 | Sai giao thức API / không tìm thấy trang quét | Cập nhật VPS 1; nhập URL **web gốc**, không phải backend 4000/AI 8001; kiểm tra proxy `/api` và trang `/scan`. |
 | Không nhận mã phòng | Kiểm tra đúng mã phòng đang hoạt động; không nhập tên phòng; `PK01` khác `PK010`. |
 | HTTPS/chứng chỉ lỗi | Kiểm tra tên miền/IP/SAN, ngày hết hạn, chuỗi chứng chỉ và trust trên PC/điện thoại. Không tắt SSL validation. |
