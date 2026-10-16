@@ -141,7 +141,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         "https://hospital.test",
       );
       assert.equal(pcA.isUnlocked, true);
-      assert.equal(pcA.shiftEndMs, Date.parse("2026-10-15T12:00:00+07:00"));
+      assert.equal(pcA.shiftEndMs, MORNING + 24 * 60 * 60 * 1000);
       assert.equal(
         (await service.getKioskStatus("PK01", "pc_b", "https://hospital.test"))
           .isUnlocked,
@@ -160,6 +160,24 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
           (7005, 7001, '2026-10-15', 7001, 7005, 7001);
         INSERT INTO duty_assignments (id, slot_id, user_id) VALUES (7005, 7005, 7003);
       `);
+      // pc_a was verified by doctor A during the morning shift. Its prior no-next-shift
+      // lease must be shortened to the newly published 11:00 handover, then lock exactly there.
+      const biometricWithHandover = await service.getKioskStatus(
+        "PK01",
+        "pc_a",
+        "https://hospital.test",
+      );
+      assert.equal(
+        biometricWithHandover.shiftEndMs,
+        Date.parse("2026-10-15T11:00:00+07:00"),
+      );
+      now = Date.parse("2026-10-15T11:00:00+07:00");
+      assert.equal(
+        (await service.getKioskStatus("PK01", "pc_a", "https://hospital.test"))
+          .isUnlocked,
+        false,
+      );
+      now = MORNING;
       const granted = await service.authorizeItOverride(
         "PK01",
         "pc_it_guard",

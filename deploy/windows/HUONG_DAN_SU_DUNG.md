@@ -73,7 +73,7 @@ Chờ cập nhật thành công. Không cài EXE v2 với backend cũ: bộ cài
 | Hạn QR (`kiosk.qrExpiresSeconds`) | Mặc định **15 giây**; cho phép 10–600 giây. |
 | Thời gian xác thực sau quét (`kiosk.faceVerifyBufferSeconds`) | Mặc định **60 giây**; cho phép 10–300 giây. |
 | Cho nhận ca sớm (`kiosk.earlyCheckinMinutes`) | Đặt theo quy định viện. |
-| Ân hạn hết ca (`kiosk.lateCheckoutMinutes`) | Đặt theo quy định viện. Ví dụ ca hết 11:00, ân hạn 60 phút thì mốc khoá là 12:00. |
+| Ân hạn hết ca (`kiosk.lateCheckoutMinutes`) | Đặt theo quy định viện cho thời điểm **nhận QR/face** quanh cuối ca. Sau khi QR/face đã mở máy, mốc khóa là giờ bắt đầu ca công bố kế tiếp; nếu chưa có ca kế tiếp thì không tự khóa chỉ vì quá giờ ca. PIN IT dùng mốc chặt riêng. |
 | Cho phép tự đổi ảnh xác thực | Bật/tắt theo chính sách. Bật không cấp quyền quản trị cho bác sĩ và không bỏ các kiểm tra nghiệp vụ khác. |
 
 Lưu cấu hình. Không đưa PIN lên hướng dẫn công khai, ảnh chụp màn hình hoặc bộ cài máy trạm.
@@ -203,7 +203,7 @@ Sau khi kiểm thử an toàn, đăng xuất/đăng nhập hoặc khởi động
 4. Trình duyệt lần đầu hỏi quyền camera: chọn **Cho phép**. Nhìn thẳng **camera trước điện thoại**, đủ ánh sáng. Không cần PIN bốn số, GPS, chớp mắt hay quay đầu.
 5. Khi server ghi nhận quét, PC bỏ nét QR và che bằng nền trắng đục; hiển thị đếm lùi xác thực, mặc định 60 giây. Reload/reconnect không kéo dài thời hạn này.
 6. Nhận diện/PAD và lịch hợp lệ: **mọi cửa sổ Kiosk ẩn, trả hoàn toàn Desktop**. Không taskbar/tray/dock/badge/màn trắng và không tự mở/giành focus HIS. Bác sĩ tự dùng phần mềm làm việc.
-7. Hết ca + ân hạn: tự khoá và đồng bộ ca tiếp theo. Ví dụ ca hết 11:00, grace 60 phút thì mốc khoá là 12:00.
+7. Sau khi QR/face mở máy: nếu phòng có ca công bố kế tiếp thì tự khóa đúng lúc ca đó bắt đầu để đối soát; nếu ngoài giờ chưa có ca kế tiếp thì không tự khóa chỉ vì ca cũ đã hết. Ân hạn chỉ quyết định cửa sổ QR/face ban đầu. PIN IT vẫn bị khóa ở ranh giới ca kế tiếp.
 
 Ứng dụng tiếp tục giám sát kín trong cùng tiến trình. Đồng hồ/thời hạn dùng **giờ server + bộ đếm monotonic**, không lấy giờ Windows người dùng chỉnh. Thay/xoá lịch, nghỉ phép hoặc giờ ca được đối soát lại; SSE là kênh chính, polling khoảng 3 giây là dự phòng cả khi đã mở Desktop.
 
@@ -339,7 +339,7 @@ Admins/SYSTEM ghi cấu hình, Users đọc. Log quay vòng khoảng 1 MB/tệp,
 | Zalo/ứng dụng scanner bị từ chối | Dùng Camera mặc định, mở bằng trình duyệt hệ thống phù hợp. Đây là hành vi chặn WebView chủ động. |
 | Đúng khuôn mặt nhưng không mở | Kiểm tra đăng ký sinh trắc học, tài khoản hoạt động, phòng/ca/ngày, lịch công bố/chốt, nghỉ phép, thời gian early/grace và kết quả PAD của AI. |
 | PC không có QR / đang đồng bộ | Kiểm tra URL, LAN/VLAN, firewall, API/AI, proxy/SSE, chứng chỉ và log. Có mạng lại tự đồng bộ; không dùng mã QR cache. |
-| Bị khoá sau khi đang làm việc | Kiểm tra hết ca/grace, đổi/xoá lịch, nghỉ phép, mất kết nối, API restart hoặc sleep/resume. Không chỉnh giờ PC để kéo dài ca. |
+| Bị khoá sau khi đang làm việc | Kiểm tra giờ bắt đầu ca công bố kế tiếp, đổi/xoá lịch hoặc nghỉ phép của bác sĩ đã mở, mất kết nối, API restart hoặc sleep/resume. Nếu chưa có ca kế tiếp, QR/face không tự khóa chỉ vì hết giờ ca. Không chỉnh giờ PC. |
 | Không gõ được PIN | Mở đúng hộp Hỗ trợ CNTT; thả Ctrl/Alt/Win sau hotkey, gõ lại. Kiểm tra lỗi phím còn giữ qua thời điểm khoá và báo IT nếu tái hiện. |
 | PIN sai/vượt lượt | Kiểm tra PIN đang cấu hình, chờ 10 phút hoặc IT cứu hộ bằng Administrator; không thử mã mặc định cũ. |
 | Sau cập nhật chưa tự chạy | Đăng xuất/đăng nhập; kiểm tra một mục HKLM Run, không thêm nhiều startup trùng. |
@@ -357,7 +357,7 @@ Admins/SYSTEM ghi cấu hình, Users đọc. Log quay vòng khoảng 1 MB/tệp,
 - [ ] Đúng/sai bác sĩ, không có ca, nghỉ phép, ca đêm qua ngày, sửa/xoá lịch đều đối soát đúng.
 - [ ] Hai PC: chỉ PC phát QR được mở. Test AI/PAD thật/giả và nhiều bác sĩ cùng xác thực trên VPS 2 thật.
 - [ ] Unlock không còn cửa sổ/badge/tray/taskbar/màn trắng; Desktop/HIS dùng bình thường, không tự giành focus HIS.
-- [ ] Hết ca + grace, restart API, rút/cắm LAN, boot chưa có mạng, sleep/resume tự khoá/đồng bộ đúng.
+- [ ] QR/face: hết ca nhưng chưa có ca kế tiếp vẫn mở; đến đúng giờ ca kế tiếp tự khóa. PIN IT vẫn khóa ở ranh giới ca. Kiểm thử thêm restart API, rút/cắm LAN, boot chưa có mạng, sleep/resume.
 - [ ] DPI 100/125/150%, nhiều màn hình và cắm/rút monitor.
 - [ ] PIN đúng/sai, rate limit, hotkey, giữ Ctrl/Alt/Win qua lock/unlock không kẹt; cứu hộ hai lần, gỡ/cài lại ngay không lỗi.
 - [ ] Toggle tự đổi ảnh đúng quyền; không cấp quyền ngoài chính sách khi bật.

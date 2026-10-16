@@ -35,7 +35,7 @@ sudo bash deploy/update.sh
 ### 2. Chuẩn bị trên web QLBV
 
 - Vào **Quản trị → Cấu hình hệ thống → Kiosk**, đặt **PIN IT riêng**; không dùng lại mã mặc định cũ.
-- QR mặc định **15 giây**; thời gian xác thực sau quét mặc định **60 giây**; kiểm tra thời gian ân hạn hết ca.
+- QR mặc định **15 giây**; thời gian xác thực sau quét mặc định **60 giây**. Ân hạn hết ca chỉ áp dụng khi nhận QR/face; sau khi đã mở bằng QR/face, Desktop chỉ tự khóa ở đầu ca công bố kế tiếp của phòng. Nếu chưa có ca kế tiếp thì không tự khóa chỉ vì đã hết giờ ca.
 - PIN IT không phải mở tự do: trong ca, phiên bị chặn ở đầu ca kế tiếp (không dùng grace để vượt giao ca); thay bác sĩ/phân công của ca đang mở hoặc không đối soát được lịch sẽ khoá lại. Ngoài ca, phiên không vượt đầu ca kế tiếp và tối đa 4 giờ.
 - Có mã phòng đang hoạt động, ví dụ `PK01`, và lịch đã công bố/chốt cho đúng bác sĩ.
 - Bác sĩ đã đăng ký khuôn mặt. Người có quyền có thể đăng ký trong **Quản trị → Người dùng → nút đăng ký sinh trắc học**.
@@ -86,7 +86,7 @@ Bấm **Kiểm tra kết nối** → khi hợp lệ bấm **Cài đặt máy tr�
 2. Dùng **Camera mặc định** quét QR trên PC; không quét trong Zalo/Messenger/ứng dụng scanner. iPhone khuyến nghị mở liên kết bằng Safari.
 3. Cho phép camera trước trên trang xác thực, nhìn thẳng camera điện thoại.
 4. PC che trắng QR, đếm lùi xác thực; thành công thì **ẩn toàn bộ Kiosk, trả Desktop**, không tự mở HIS.
-5. Hết ca + ân hạn, ứng dụng tự khoá lại và đối soát ca tiếp theo.
+5. Sau khi bác sĩ đã mở bằng QR/face, Kiosk đối soát ca kế tiếp: có ca công bố kế tiếp thì tự khóa đúng giờ bắt đầu ca đó; chưa có ca kế tiếp thì không tự khóa chỉ vì hết giờ ca. PIN IT vẫn dùng rule chặt riêng.
 
 ### 6. CNTT mở hỗ trợ / gỡ
 

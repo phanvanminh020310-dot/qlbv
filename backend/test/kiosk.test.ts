@@ -388,31 +388,92 @@ test("removing the unlocked doctor from the published roster immediately revokes
   assert.equal(status.isUnlocked, false);
 });
 
-test("edited shift end/grace is reflected in an existing biometric lease", async (t) => {
-  const { service } = serviceFor(t, { "kiosk.lateCheckoutMinutes": 60 });
-  const now = Date.now(),
-    date = bangkokToday(now);
+test("verified doctor remains unlocked after the shift when the room has no later published schedule", async (t) => {
+  let now = Date.parse("2026-10-15T16:45:00+07:00");
+  t.mock.method(Date, "now", () => now);
+  const { service } = serviceFor(t);
   const row = {
     userId: 7,
-    dutyDate: date,
-    shiftCode: "DAY",
-    shiftName: "Cả ngày",
-    startTime: "00:00",
-    endTime: "23:59",
+    dutyDate: "2026-10-15",
+    shiftCode: "C",
+    shiftName: "Ca chiều",
+    startTime: "12:00",
+    endTime: "17:00",
     crossesMidnight: false,
   };
   service.loadActiveRoster = async () => [row] as any;
-  unlock(service, "terminal_a", { doctor: { userId: 7 }, shift: row });
+  unlock(service, "terminal_a", {
+    doctor: { userId: 7 },
+    shift: row,
+    shiftEndMs: Date.parse("2026-10-15T17:00:00+07:00"),
+  });
+  now = Date.parse("2026-10-15T18:00:00+07:00");
   const status = await service.getKioskStatus(
     "PK01",
     "terminal_a",
     "https://hospital.test",
   );
   assert.equal(status.isUnlocked, true);
+  assert.equal(status.shiftEndMs, now + 24 * 60 * 60_000);
   assert.equal(
-    status.shiftEndMs,
-    shiftInterval(date, "00:00", "23:59", false).end + 60 * 60_000,
+    (service as any).activeRoomUnlocks.get(kioskTargetKey("PK01", "terminal_a"))
+      .leaseDeadlineKind,
+    "NO_NEXT_SCHEDULE",
   );
+});
+
+test("verified doctor locks exactly when a later published shift starts", async (t) => {
+  let now = Date.parse("2026-10-15T16:45:00+07:00");
+  t.mock.method(Date, "now", () => now);
+  const { service } = serviceFor(t);
+  const socket = new Socket();
+  service.registerSseClient("PK01", "terminal_a", socket as any);
+  const current = {
+    userId: 7,
+    dutyDate: "2026-10-15",
+    shiftCode: "C",
+    shiftName: "Ca chiều",
+    startTime: "12:00",
+    endTime: "17:00",
+    crossesMidnight: false,
+  };
+  const next = {
+    userId: 8,
+    dutyDate: "2026-10-16",
+    shiftCode: "S",
+    shiftName: "Ca sáng",
+    startTime: "06:30",
+    endTime: "11:00",
+    crossesMidnight: false,
+  };
+  service.loadActiveRoster = async () => [current, next] as any;
+  unlock(service, "terminal_a", {
+    doctor: { userId: 7 },
+    shift: current,
+    shiftEndMs: Date.parse("2026-10-15T17:00:00+07:00"),
+  });
+  const beforeHandover = await service.getKioskStatus(
+    "PK01",
+    "terminal_a",
+    "https://hospital.test",
+  );
+  assert.equal(beforeHandover.isUnlocked, true);
+  assert.equal(
+    beforeHandover.shiftEndMs,
+    Date.parse("2026-10-16T06:30:00+07:00"),
+  );
+  now = Date.parse("2026-10-16T06:30:00+07:00");
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    false,
+  );
+  assert.match(socket.messages.at(-1)!, /AUTO_LOCK_NEXT_SCHEDULE/);
 });
 
 test("IT authorization rejects old backdoors, throttles attempts, and writes audit without the PIN", async (t) => {

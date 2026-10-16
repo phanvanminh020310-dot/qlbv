@@ -87,6 +87,9 @@ export interface ActiveRoomUnlock {
   attendanceId?: string;
   /** Defined only for an IT-PIN lease; biometric leases retain their doctor guard. */
   itRosterGuard?: ItOverrideRosterGuard;
+  /** Why the current finite deadline exists. Standard doctor leases intentionally stay open between published shifts. */
+  leaseDeadlineKind?:
+    "SHIFT_GRACE" | "NEXT_SCHEDULE" | "NO_NEXT_SCHEDULE" | "IT";
 }
 
 @Injectable()
@@ -141,29 +144,43 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       }, 30 * 1000),
     );
 
-    // Tự động kiểm tra và khoá phòng khám khi ca trực kết thúc + quá thời gian ân hạn
+    // IT remains deadline-bound. A verified doctor may continue outside roster hours;
+    // only the start of a later published shift is an automatic lock boundary.
     this.timers.push(
       setInterval(() => {
         const now = Date.now();
         for (const [key, info] of this.activeRoomUnlocks.entries()) {
-          if (now >= info.shiftEndMs) {
-            const rCode = info.roomCode;
-            this.activeRoomUnlocks.delete(key);
-            this.emitToTarget(rCode, info.terminalId, "LOCK_EVENT", {
-              type: "AUTO_LOCK_SHIFT_EXPIRED",
-              roomCode: rCode,
-              reason:
-                "Ca trực đã kết thúc và quá thời gian ân hạn. Tự động khoá phòng khám cho ca tiếp theo.",
-              timestamp: new Date().toISOString(),
-            });
-            void this.audit.log({
-              action: "KIOSK_AUTO_LOCK",
-              module: "KIOSK",
-              entity: "duty_attendance",
-              description: `Hệ thống tự động khoá máy tính phòng khám ${rCode} do ca trực của ${info.doctor?.title || ""} ${info.doctor?.fullName || ""} đã kết thúc và quá thời gian ân hạn`,
-              entityId: rCode,
-            });
-          }
+          // No-next-schedule doctor leases are refreshed by status polling and intentionally do not
+          // auto-expire. This also safely migrates in-memory biometric leases created before this policy.
+          if (
+            info.doctor?.userId &&
+            !info.itRosterGuard &&
+            info.leaseDeadlineKind !== "NEXT_SCHEDULE"
+          )
+            continue;
+          if (now < info.shiftEndMs) continue;
+          const rCode = info.roomCode;
+          const nextSchedule = info.leaseDeadlineKind === "NEXT_SCHEDULE";
+          this.activeRoomUnlocks.delete(key);
+          this.emitToTarget(rCode, info.terminalId, "LOCK_EVENT", {
+            type: nextSchedule
+              ? "AUTO_LOCK_NEXT_SCHEDULE"
+              : "AUTO_LOCK_SHIFT_EXPIRED",
+            roomCode: rCode,
+            reason: nextSchedule
+              ? "Đã đến giờ ca trực được công bố kế tiếp. Tự động khoá phòng khám để đối soát lịch mới."
+              : "Phiên mở khoá đã hết hạn. Tự động khoá phòng khám.",
+            timestamp: new Date().toISOString(),
+          });
+          void this.audit.log({
+            action: "KIOSK_AUTO_LOCK",
+            module: "KIOSK",
+            entity: "duty_attendance",
+            description: nextSchedule
+              ? `Hệ thống tự động khoá máy tính phòng khám ${rCode} khi bắt đầu ca trực được công bố kế tiếp`
+              : `Hệ thống tự động khoá máy tính phòng khám ${rCode} do phiên của ${info.doctor?.title || ""} ${info.doctor?.fullName || ""} hết hạn`,
+            entityId: rCode,
+          });
         }
       }, 1000),
     );
@@ -751,8 +768,54 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       shiftEndMs: plan.shiftEndMs,
       terminalId,
       itRosterGuard: plan.guard,
+      leaseDeadlineKind: "IT",
     });
     return { itDoctor, shiftEndMs: plan.shiftEndMs };
+  }
+
+  /**
+   * Standard QR/face leases do not re-lock merely because the current shift ended.
+   * They lock exactly when a later published shift for the room begins. With no later
+   * published shift, use a rolling finite deadline so the native client never receives
+   * an invalid unlimited timestamp; each successful status reconciliation renews it.
+   */
+  private biometricLeasePlan(
+    rows: any[],
+    currentRow: any,
+    now: number,
+  ): {
+    shiftEndMs: number;
+    leaseDeadlineKind: "NEXT_SCHEDULE" | "NO_NEXT_SCHEDULE";
+  } {
+    const current = shiftInterval(
+      currentRow.dutyDate,
+      currentRow.startTime,
+      currentRow.endTime,
+      currentRow.crossesMidnight,
+    );
+    let nextStart: number | null = null;
+    for (const row of rows) {
+      const candidate = shiftInterval(
+        row.dutyDate,
+        row.startTime,
+        row.endTime,
+        row.crossesMidnight,
+      );
+      // Do not interrupt an overlapping/current shift. A handover starts at or after
+      // the verified doctor's own shift end; any person/role in that later shift locks.
+      if (candidate.start < current.end) continue;
+      if (nextStart === null || candidate.start < nextStart)
+        nextStart = candidate.start;
+    }
+    if (nextStart !== null)
+      return { shiftEndMs: nextStart, leaseDeadlineKind: "NEXT_SCHEDULE" };
+    // The native app requires a finite timestamp and will fail closed on a network loss.
+    // While online it polls every ~3 seconds, so this rolling value means no automatic
+    // lock solely due to an empty roster outside shift hours.
+    return {
+      shiftEndMs: now + 24 * 60 * 60 * 1000,
+      leaseDeadlineKind: "NO_NEXT_SCHEDULE",
+    };
   }
 
   async getKioskStatus(
@@ -900,13 +963,14 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     let shiftEndMs: number | null = null;
 
     if (activeUnlock) {
-      if (now >= activeUnlock.shiftEndMs) {
-        // Đã quá hạn ca trực + ân hạn -> Tự động xoá và khoá lại
+      const biometricLease =
+        !!activeUnlock.doctor?.userId && !activeUnlock.itRosterGuard;
+      if (!biometricLease && now >= activeUnlock.shiftEndMs) {
         this.activeRoomUnlocks.delete(targetKey);
         this.emitToTarget(code, tid, "LOCK_EVENT", {
           type: "AUTO_LOCK_SHIFT_EXPIRED",
           roomCode: code,
-          reason: "Ca trực đã kết thúc và quá thời gian ân hạn.",
+          reason: "Phiên mở khoá đã hết hạn.",
           timestamp: new Date().toISOString(),
         });
       } else {
@@ -957,18 +1021,22 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             "Phiên PIN IT cũ không có ràng buộc lịch trực; khóa an toàn và yêu cầu xác thực lại.",
           );
         } else {
-          // Biometric leases must still exist in the published roster.
-          const rows = await this.loadActiveRoster(room.code, [
-            ...candidateDutyDates(now),
-            addDays(bangkokToday(now), 1),
-          ]);
+          // A biometric lease must retain its original published assignment, but its end
+          // is governed by the next room schedule rather than the old shift's grace.
+          const dates = [
+            ...new Set([
+              ...candidateDutyDates(now),
+              addDays(bangkokToday(now), 1),
+              activeUnlock.shift.dutyDate,
+            ]),
+          ].filter(Boolean);
+          const rows = await this.loadActiveRoster(room.code, dates);
           const row = rows.find(
             (r) =>
               r.userId === activeUnlock.doctor.userId &&
               r.dutyDate === activeUnlock.shift.dutyDate &&
               r.shiftCode === activeUnlock.shift.shiftCode,
           );
-          const grace = await this.getLateCheckoutMinutes();
           const early = await this.getEarlyCheckinMinutes();
           const interval =
             row &&
@@ -978,11 +1046,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
               row.endTime,
               row.crossesMidnight,
             );
-          if (
-            !interval ||
-            now < interval.start - early * 60_000 ||
-            now >= interval.end + grace * 60_000
-          ) {
+          if (!interval || now < interval.start - early * 60_000) {
             this.revokeItOverride(
               code,
               tid,
@@ -991,7 +1055,18 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
               "Lịch trực đã thay đổi.",
             );
           } else {
-            activeUnlock.shiftEndMs = interval.end + grace * 60_000;
+            const plan = this.biometricLeasePlan(rows, row, now);
+            activeUnlock.shiftEndMs = plan.shiftEndMs;
+            activeUnlock.leaseDeadlineKind = plan.leaseDeadlineKind;
+            if (now >= plan.shiftEndMs) {
+              this.revokeItOverride(
+                code,
+                tid,
+                targetKey,
+                "AUTO_LOCK_NEXT_SCHEDULE",
+                "Đã đến giờ ca trực được công bố kế tiếp; khóa lại để đối soát lịch mới.",
+              );
+            }
           }
         }
         if (this.activeRoomUnlocks.get(targetKey) === activeUnlock) {
@@ -1747,11 +1822,15 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         shiftName: currentShift.shiftName || "Ca làm việc",
       };
 
-      // Tính toán mốc thời gian hết ca + thời gian ân hạn sau ca trực
-      const iv = matchedSlot.iv;
-      const shiftEndMs = iv.end + lateMinutes * 60 * 1000;
+      // After successful QR/face verification, a doctor may continue outside the
+      // shift if the room has no later published handover. A later shift is the lock boundary.
+      const biometricPlan = this.biometricLeasePlan(
+        allRosterRows,
+        currentShift,
+        now,
+      );
+      const shiftEndMs = biometricPlan.shiftEndMs;
 
-      // Lưu vào danh sách phòng khám đang mở khoá để tự động khoá khi hết ca
       this.activeRoomUnlocks.set(
         kioskTargetKey(session.roomCode, session.terminalId),
         {
@@ -1762,6 +1841,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           shiftEndMs,
           terminalId: session.terminalId,
           attendanceId,
+          leaseDeadlineKind: biometricPlan.leaseDeadlineKind,
         },
       );
 
@@ -1773,6 +1853,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         attendanceId,
         shiftEndMs,
         lateCheckoutMinutes: lateMinutes,
+        leaseDeadlineKind: biometricPlan.leaseDeadlineKind,
       };
 
       this.emitToTarget(
