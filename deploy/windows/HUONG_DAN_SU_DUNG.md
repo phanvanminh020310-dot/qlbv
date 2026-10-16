@@ -284,7 +284,7 @@ Có EXE cùng thư mục thì BAT ưu tiên EXE đó. Muốn tự biên dịch l
 
 Bấm **Hỗ trợ CNTT**, nhấp logo 5 lần hoặc **Ctrl + Alt + Shift + F12**, nhập Master PIN đã đặt trong cấu hình QLBV. Cho phép gõ PIN/backspace, vẫn chặn tổ hợp thoát hệ thống trong phiên khoá.
 
-Xác minh **online** trên server; không lưu PIN trong PC, không có mã bí mật dự phòng. Sai PIN bị giới hạn 5 lần/10 phút theo IP và đích, có audit. IT unlock có thời hạn: ca hiện tại + grace; ngoài ca không quá 4 giờ và không vượt giờ bắt đầu ca tiếp theo đã có lịch.
+Xác minh **online** trên server; không lưu PIN trong PC, không có mã bí mật dự phòng. Sai PIN bị giới hạn 5 lần/10 phút theo IP và đích, có audit. IT unlock có thời hạn và bị ràng buộc roster: trong ca, mốc khoá là **đầu ca kế tiếp** nếu ca mới bắt đầu trước khi hết grace; thay bác sĩ/phân công, sửa giờ/ca, hoặc không đối soát được lịch sẽ khoá ngay. Ngoài ca, phiên không quá 4 giờ và không vượt giờ bắt đầu ca tiếp theo đã có lịch. Sau khi cập nhật API, phiên PIN IT cũ không có ràng buộc roster bị khoá an toàn và cần nhập lại PIN.
 
 ### 8.2. Mất mạng, server lỗi hoặc quên PIN
 

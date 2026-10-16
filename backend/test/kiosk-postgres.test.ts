@@ -40,6 +40,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     "kiosk.faceVerifyBufferSeconds": 60,
     "kiosk.lateCheckoutMinutes": 60,
     "kiosk.earlyCheckinMinutes": 60,
+    "kiosk.itMasterPin": "fixture-it-pin-not-production",
   };
   const service = new KioskService(
     database as any,
@@ -145,6 +146,52 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         (await service.getKioskStatus("PK01", "pc_b", "https://hospital.test"))
           .isUnlocked,
         false,
+      );
+    },
+  );
+
+  await t.test(
+    "real published roster binds IT PIN: replacement doctor revokes immediately and next shift is a hard deadline",
+    async () => {
+      await pg.exec(`
+        INSERT INTO duty_shift_types (id, code, name, start_time, end_time, crosses_midnight) VALUES
+          (7005, 'FIXTURE_C', 'Ca chiều fixture', '11:00', '15:00', false);
+        INSERT INTO duty_slots (id, period_id, duty_date, room_id, shift_id, role_id) VALUES
+          (7005, 7001, '2026-10-15', 7001, 7005, 7001);
+        INSERT INTO duty_assignments (id, slot_id, user_id) VALUES (7005, 7005, 7003);
+      `);
+      const granted = await service.authorizeItOverride(
+        "PK01",
+        "pc_it_guard",
+        "fixture-it-pin-not-production",
+        "10.1.1.2",
+      );
+      assert.equal(granted.shiftEndMs, Date.parse("2026-10-15T11:00:00+07:00"));
+      assert.equal(
+        (
+          await service.getKioskStatus(
+            "PK01",
+            "pc_it_guard",
+            "https://hospital.test",
+          )
+        ).isUnlocked,
+        true,
+      );
+      await pg.exec(
+        "UPDATE duty_assignments SET user_id = 7002 WHERE id = 7001",
+      );
+      assert.equal(
+        (
+          await service.getKioskStatus(
+            "PK01",
+            "pc_it_guard",
+            "https://hospital.test",
+          )
+        ).isUnlocked,
+        false,
+      );
+      await pg.exec(
+        "UPDATE duty_assignments SET user_id = 7001 WHERE id = 7001; DELETE FROM duty_assignments WHERE id = 7005; DELETE FROM duty_slots WHERE id = 7005; DELETE FROM duty_shift_types WHERE id = 7005",
       );
     },
   );

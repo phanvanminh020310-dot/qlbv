@@ -302,7 +302,19 @@ test("offline target unlock NEVER falls back to broadcasting to another PC in th
 
 test("status snapshots cannot unlock another PC through shared room state", async (t) => {
   const { service } = serviceFor(t);
-  unlock(service, "terminal_a");
+  const date = bangkokToday();
+  const row = {
+    slotId: 1,
+    userId: 7,
+    dutyDate: date,
+    shiftCode: "DAY",
+    shiftName: "Cả ngày",
+    startTime: "00:00",
+    endTime: "23:59",
+    crossesMidnight: false,
+  };
+  service.loadActiveRoster = async () => [row] as any;
+  unlock(service, "terminal_a", { doctor: { userId: 7 }, shift: row });
   const a = await service.getKioskStatus(
     "PK01",
     "terminal_a",
@@ -458,4 +470,155 @@ test("system face self-update toggle handles stored boolean and legacy string va
     const { service } = serviceFor(t, { "kiosk.allowSelfUpdate": value });
     assert.equal(await service.getAllowSelfUpdate(), false);
   }
+});
+
+test("unbound IT leases from before roster-guard policy fail closed after server update", async (t) => {
+  const { service } = serviceFor(t);
+  unlock(service, "terminal_a"); // no userId and no itRosterGuard = old IT record
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    false,
+  );
+});
+
+test("IT PIN lease stops at the next shift boundary, never using late-checkout grace to span handover", async (t) => {
+  let now = Date.parse("2026-10-15T10:45:00+07:00");
+  t.mock.method(Date, "now", () => now);
+  const { service } = serviceFor(t, {
+    "kiosk.itMasterPin": "private-hospital-pin",
+    "kiosk.lateCheckoutMinutes": 30,
+  });
+  const date = "2026-10-15";
+  const rows = [
+    {
+      slotId: 11,
+      userId: 7,
+      dutyDate: date,
+      shiftCode: "S",
+      shiftName: "Ca sáng",
+      startTime: "07:00",
+      endTime: "11:00",
+      crossesMidnight: false,
+    },
+    {
+      slotId: 12,
+      userId: 8,
+      dutyDate: date,
+      shiftCode: "C",
+      shiftName: "Ca chiều",
+      startTime: "11:00",
+      endTime: "15:00",
+      crossesMidnight: false,
+    },
+  ];
+  service.loadActiveRoster = async () => rows as any;
+  const granted = await service.authorizeItOverride(
+    "PK01",
+    "terminal_a",
+    "private-hospital-pin",
+    "10.1.1.2",
+  );
+  assert.equal(granted.shiftEndMs, Date.parse("2026-10-15T11:00:00+07:00"));
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    true,
+  );
+  now = Date.parse("2026-10-15T11:00:00+07:00");
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    false,
+  );
+});
+
+test("IT PIN lease is revoked immediately when the doctor/assignment of its active shift changes", async (t) => {
+  const now = Date.parse("2026-10-15T08:00:00+07:00");
+  t.mock.method(Date, "now", () => now);
+  const { service } = serviceFor(t, {
+    "kiosk.itMasterPin": "private-hospital-pin",
+    "kiosk.lateCheckoutMinutes": 30,
+  });
+  const socket = new Socket();
+  service.registerSseClient("PK01", "terminal_a", socket as any);
+  const common = {
+    slotId: 11,
+    dutyDate: "2026-10-15",
+    shiftCode: "S",
+    shiftName: "Ca sáng",
+    startTime: "07:00",
+    endTime: "11:00",
+    crossesMidnight: false,
+  };
+  let rows = [{ ...common, userId: 7 }];
+  service.loadActiveRoster = async () => rows as any;
+  await service.authorizeItOverride(
+    "PK01",
+    "terminal_a",
+    "private-hospital-pin",
+    "10.1.1.2",
+  );
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    true,
+  );
+  rows = [{ ...common, userId: 8 }]; // same slot/time, replacement doctor
+  const afterReplacement = await service.getKioskStatus(
+    "PK01",
+    "terminal_a",
+    "https://hospital.test",
+  );
+  assert.equal(afterReplacement.isUnlocked, false);
+  assert.match(socket.messages.at(-1)!, /IT_ROSTER_CHANGED/);
+  assert.match(socket.messages.at(-1)!, /bác sĩ.*thay đổi/i);
+});
+
+test("IT PIN fails closed rather than creating an unbound lease when roster cannot be read", async (t) => {
+  const { service } = serviceFor(t, {
+    "kiosk.itMasterPin": "private-hospital-pin",
+  });
+  service.loadActiveRoster = async () => {
+    throw new Error("database unavailable");
+  };
+  await assert.rejects(
+    service.authorizeItOverride(
+      "PK01",
+      "terminal_a",
+      "private-hospital-pin",
+      "10.1.1.2",
+    ),
+    /Không thể xác minh lịch trực/,
+  );
+  assert.equal(
+    (
+      await service.getKioskStatus(
+        "PK01",
+        "terminal_a",
+        "https://hospital.test",
+      )
+    ).isUnlocked,
+    false,
+  );
 });

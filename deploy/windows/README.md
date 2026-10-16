@@ -36,6 +36,7 @@ sudo bash deploy/update.sh
 
 - Vào **Quản trị → Cấu hình hệ thống → Kiosk**, đặt **PIN IT riêng**; không dùng lại mã mặc định cũ.
 - QR mặc định **15 giây**; thời gian xác thực sau quét mặc định **60 giây**; kiểm tra thời gian ân hạn hết ca.
+- PIN IT không phải mở tự do: trong ca, phiên bị chặn ở đầu ca kế tiếp (không dùng grace để vượt giao ca); thay bác sĩ/phân công của ca đang mở hoặc không đối soát được lịch sẽ khoá lại. Ngoài ca, phiên không vượt đầu ca kế tiếp và tối đa 4 giờ.
 - Có mã phòng đang hoạt động, ví dụ `PK01`, và lịch đã công bố/chốt cho đúng bác sĩ.
 - Bác sĩ đã đăng ký khuôn mặt. Người có quyền có thể đăng ký trong **Quản trị → Người dùng → nút đăng ký sinh trắc học**.
 

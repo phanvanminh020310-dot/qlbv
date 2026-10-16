@@ -71,6 +71,12 @@ export interface KioskSession {
   verifiedDoctor?: any;
 }
 
+/** Snapshot of the published people covering the shift when IT opened a terminal.
+ * An IT PIN is never a blanket bypass: a roster/doctor change invalidates it. */
+export interface ItOverrideRosterGuard {
+  signature: string;
+}
+
 export interface ActiveRoomUnlock {
   roomCode: string;
   doctor: any;
@@ -79,6 +85,8 @@ export interface ActiveRoomUnlock {
   shiftEndMs: number;
   terminalId?: string;
   attendanceId?: string;
+  /** Defined only for an IT-PIN lease; biometric leases retain their doctor guard. */
+  itRosterGuard?: ItOverrideRosterGuard;
 }
 
 @Injectable()
@@ -95,7 +103,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
   private readonly pinAttempts = new KioskAttemptLimiter();
   // Lưu danh sách terminal theo từng roomCode
   private readonly roomTerminals = new Map<string, Set<string>>();
-  // Lưu trạng thái phòng khám đã mở khoá và thời điểm hết hạn ca trực (+ ân hạn)
+  // Lưu trạng thái mở khoá theo terminal; IT PIN còn bị ràng buộc bởi roster/ranh giới ca.
   private readonly activeRoomUnlocks = new Map<string, ActiveRoomUnlock>();
 
   // Thư mục lưu ảnh khuôn mặt bác sĩ
@@ -596,89 +604,155 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** A stable, fail-closed identity for everyone covering the current published shift(s). */
+  private itRosterSignature(
+    rows: Array<{
+      slotId: number;
+      userId: number;
+      dutyDate: string;
+      shiftCode: string;
+      startTime: string;
+      endTime: string;
+      crossesMidnight: boolean;
+    }>,
+  ) {
+    return rows
+      .map(
+        (r) =>
+          `${r.slotId}:${r.userId}:${r.dutyDate}:${r.shiftCode}:${r.startTime}:${r.endTime}:${r.crossesMidnight ? 1 : 0}`,
+      )
+      .sort()
+      .join("|");
+  }
+
   /**
-   * Mở khoá khẩn cấp bằng mã PIN IT (ghi nhận trạng thái mở khoá cho phòng khám).
-   * Tự động gắn mốc hết hạn theo ca trực hiện tại của phòng (+ thời gian ân hạn lateCheckoutMinutes).
-   * Khi qua ca tiếp theo hoặc ngày hôm sau, hệ thống sẽ tự động khoá máy lại để đón bác sĩ mới.
+   * Calculate the bounded IT lease from the published roster.
+   * The next shift's START is a hard boundary: normal late-checkout grace never crosses it.
+   * A current-roster signature lets status polling revoke an IT lease when a doctor is replaced.
+   */
+  private async itOverrideLeasePlan(
+    roomCode: string,
+    now: number,
+    lateMinutes: number,
+  ): Promise<{
+    shiftEndMs: number;
+    shiftName: string;
+    guard?: ItOverrideRosterGuard;
+  }> {
+    const dates = [...candidateDutyDates(now), addDays(bangkokToday(now), 1)];
+    const rows = await this.loadActiveRoster(roomCode, dates);
+    const entries = rows.map((row) => ({
+      row,
+      interval: shiftInterval(
+        row.dutyDate,
+        row.startTime,
+        row.endTime,
+        row.crossesMidnight,
+      ),
+    }));
+    const active = entries.filter(
+      (entry) => entry.interval.start <= now && now < entry.interval.end,
+    );
+    const nextStart = entries.reduce<number | null>((minimum, entry) => {
+      if (entry.interval.start <= now) return minimum;
+      return minimum === null || entry.interval.start < minimum
+        ? entry.interval.start
+        : minimum;
+    }, null);
+    const fallback = now + 4 * 3600 * 1000;
+
+    if (active.length) {
+      // If parallel roles have different boundaries, lock at the earliest one: never span a handover.
+      const endWithGrace = Math.min(
+        ...active.map((entry) => entry.interval.end + lateMinutes * 60_000),
+      );
+      return {
+        shiftEndMs: Math.min(
+          endWithGrace,
+          nextStart ?? Number.POSITIVE_INFINITY,
+        ),
+        shiftName: `${active[0].row.shiftName} (Mở IT)`,
+        guard: {
+          signature: this.itRosterSignature(active.map((entry) => entry.row)),
+        },
+      };
+    }
+
+    // Between shifts there is no doctor to bind. Keep the old bounded maintenance window,
+    // but never let it cross the next published shift start.
+    const recentEnds = entries
+      .filter(
+        (entry) =>
+          now >= entry.interval.end &&
+          now < entry.interval.end + lateMinutes * 60_000,
+      )
+      .map((entry) => entry.interval.end + lateMinutes * 60_000);
+    const recentDeadline = recentEnds.length
+      ? Math.min(...recentEnds)
+      : Number.POSITIVE_INFINITY;
+    return {
+      shiftEndMs: Math.min(
+        fallback,
+        recentDeadline,
+        nextStart ?? Number.POSITIVE_INFINITY,
+      ),
+      shiftName: "Mở khoá Khẩn cấp (IT)",
+    };
+  }
+
+  private revokeItOverride(
+    roomCode: string,
+    terminalId: string | undefined,
+    targetKey: string,
+    type: string,
+    reason: string,
+  ) {
+    this.activeRoomUnlocks.delete(targetKey);
+    this.emitToTarget(roomCode, terminalId, "LOCK_EVENT", {
+      type,
+      roomCode,
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Mở khoá khẩn cấp bằng PIN IT, bound to the active published roster.
+   * It never crosses a new shift; a change of doctor/assignment fails closed immediately.
    */
   async recordItOverrideUnlock(roomCode: string, terminalId?: string) {
     const code = roomCode.toUpperCase().trim();
     const now = Date.now();
     const lateMinutes = await this.getLateCheckoutMinutes();
-    const GRACE_BUFFER_MS = lateMinutes * 60 * 1000;
-
-    let shiftEndMs = now + 4 * 3600 * 1000; // Mặc định an toàn 4 tiếng nếu ngoài giờ ca
-    let currentShiftName = "Mở khoá Khẩn cấp (IT)";
-
+    let plan: Awaited<ReturnType<KioskService["itOverrideLeasePlan"]>>;
     try {
-      // 1. Kiểm tra xem phòng có ca nào đang trực chính thức không
-      const onDutyRes = await this.integrationDuty.onDuty({ room: code }, now);
-      if (onDutyRes?.onDuty && onDutyRes.onDuty.length > 0) {
-        const item = onDutyRes.onDuty[0];
-        const iv = shiftInterval(
-          item.dutyDate,
-          item.shift.startTime,
-          item.shift.endTime,
-          item.shift.crossesMidnight,
-        );
-        shiftEndMs = iv.end + GRACE_BUFFER_MS;
-        currentShiftName = `${item.shift.name} (Mở IT)`;
-      } else {
-        // 2. Nếu không có ca chính thức lúc này, tìm ca sắp bắt đầu hoặc ca kế tiếp trong ngày
-        const candidateDates = [
-          ...candidateDutyDates(now),
-          addDays(bangkokToday(now), 1),
-        ];
-        const allRosterRows = await this.loadActiveRoster(code, candidateDates);
-        allRosterRows.sort(
-          (a, b) =>
-            shiftInterval(a.dutyDate, a.startTime, a.endTime, a.crossesMidnight)
-              .start -
-            shiftInterval(b.dutyDate, b.startTime, b.endTime, b.crossesMidnight)
-              .start,
-        );
-        for (const row of allRosterRows) {
-          const iv = shiftInterval(
-            row.dutyDate,
-            row.startTime,
-            row.endTime,
-            row.crossesMidnight,
-          );
-          if (now >= iv.start && now < iv.end + GRACE_BUFFER_MS) {
-            shiftEndMs = iv.end + GRACE_BUFFER_MS;
-            currentShiftName = `${row.shiftName} (Mở IT)`;
-            break;
-          }
-          if (now < iv.start) {
-            // Outside a shift, IT maintenance must end before the next doctor starts.
-            shiftEndMs = Math.min(shiftEndMs, iv.start);
-            break;
-          }
-        }
-      }
+      plan = await this.itOverrideLeasePlan(code, now, lateMinutes);
     } catch (e: any) {
-      console.warn(
-        "[KioskService] Lỗi tra cứu ca khi mở IT override:",
-        e?.message || e,
+      this.logger.warn(
+        `Không thể kiểm tra lịch trước khi mở IT ${code}: ${e?.message || e}`,
+      );
+      // Do not create an unbound emergency lease when the mandatory roster guard is unavailable.
+      throw new HttpException(
+        "Không thể xác minh lịch trực để mở PIN IT an toàn. Máy vẫn khóa; thử lại khi máy chủ lịch trực hoạt động.",
+        503,
       );
     }
 
     const itDoctor = {
       fullName: "Kỹ thuật viên IT",
       title: "IT Support",
-      shiftName: currentShiftName,
+      shiftName: plan.shiftName,
     };
-
     this.activeRoomUnlocks.set(kioskTargetKey(code, terminalId), {
       roomCode: code,
       doctor: itDoctor,
-      shift: { shiftName: currentShiftName },
+      shift: { shiftName: plan.shiftName },
       unlockedAt: now,
-      shiftEndMs,
+      shiftEndMs: plan.shiftEndMs,
       terminalId,
+      itRosterGuard: plan.guard,
     });
-
-    return { itDoctor, shiftEndMs };
+    return { itDoctor, shiftEndMs: plan.shiftEndMs };
   }
 
   async getKioskStatus(
@@ -836,8 +910,54 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           timestamp: new Date().toISOString(),
         });
       } else {
-        // IT lease has its own bounded deadline. Biometric leases must still exist in the published roster.
-        if (activeUnlock.doctor?.userId) {
+        if (activeUnlock.itRosterGuard) {
+          try {
+            const plan = await this.itOverrideLeasePlan(
+              code,
+              now,
+              await this.getLateCheckoutMinutes(),
+            );
+            if (
+              !plan.guard ||
+              plan.guard.signature !== activeUnlock.itRosterGuard.signature
+            ) {
+              this.revokeItOverride(
+                code,
+                tid,
+                targetKey,
+                "IT_ROSTER_CHANGED",
+                "Ca trực hoặc bác sĩ được phân công đã thay đổi; khóa lại để xác thực theo lịch mới.",
+              );
+            } else {
+              // Do not ever extend a PIN lease. A newly inserted next shift can only shorten it.
+              activeUnlock.shiftEndMs = Math.min(
+                activeUnlock.shiftEndMs,
+                plan.shiftEndMs,
+              );
+            }
+          } catch (e: any) {
+            this.logger.warn(
+              `Không thể đối soát lịch của phiên IT ${code}: ${e?.message || e}`,
+            );
+            this.revokeItOverride(
+              code,
+              tid,
+              targetKey,
+              "IT_ROSTER_UNVERIFIED",
+              "Không xác minh được lịch trực hiện tại; khóa an toàn và yêu cầu xác thực lại.",
+            );
+          }
+        } else if (!activeUnlock.doctor?.userId) {
+          // Pre-policy IT records are deliberately fail-closed after an API update/restart.
+          this.revokeItOverride(
+            code,
+            tid,
+            targetKey,
+            "IT_ROSTER_GUARD_MISSING",
+            "Phiên PIN IT cũ không có ràng buộc lịch trực; khóa an toàn và yêu cầu xác thực lại.",
+          );
+        } else {
+          // Biometric leases must still exist in the published roster.
           const rows = await this.loadActiveRoster(room.code, [
             ...candidateDutyDates(now),
             addDays(bangkokToday(now), 1),
@@ -863,11 +983,13 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             now < interval.start - early * 60_000 ||
             now >= interval.end + grace * 60_000
           ) {
-            this.activeRoomUnlocks.delete(targetKey);
-            this.emitToTarget(code, tid, "LOCK_EVENT", {
-              type: "ROSTER_REVOKED",
-              reason: "Lịch trực đã thay đổi.",
-            });
+            this.revokeItOverride(
+              code,
+              tid,
+              targetKey,
+              "ROSTER_REVOKED",
+              "Lịch trực đã thay đổi.",
+            );
           } else {
             activeUnlock.shiftEndMs = interval.end + grace * 60_000;
           }
