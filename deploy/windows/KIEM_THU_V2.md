@@ -1,3 +1,24 @@
+# QLBS Kiosk 2.0.1 — bổ sung sửa lỗi (16/10/2026)
+
+## Bằng chứng cho bản sửa mới
+
+- Backend: production migrations + Drizzle/PGlite kiểm tra pending không đổi phân công/QR/lease, duyệt đầy đủ người thay, rollback nguyên giao dịch, scope/tự duyệt, stale/double review, lịch cũ, ca qua đêm và ranh giới nửa đêm. AI trong các bài này là fixture, không phải AI/VPS thật.
+- Updater: kiểm thử CLI giả lập cho dump lỗi/rỗng/không đọc được, snapshot riêng tư và giữ .env/certificate, xung đột stash và env cũ thiếu port. Không thay thế dump/restore thật.
+- Native: kiểm thử raw TOKEN_GROUPS có SID Administrators dạng DENY_ONLY; chữ/số/numpad/PIN và các escape bị chặn. Build C# 5/Mono trong sandbox chỉ là tiền kiểm, không được gắn nhãn bản Windows CI chính thức.
+- Gate Windows mới biên dịch **fixture riêng**, chạy production KioskContext/WH_KEYBOARD_LL/modal/timer, dùng Win32 SendInput để click nút IT, mở bằng Ctrl+Alt+Shift+F12, gõ số/numpad/backspace/Ctrl+A, thử escape và kiểm tra phím còn gõ được sau đó. Chỉ tắt worker mạng trong build fixture qua symbol compile-time; **EXE phân phối không có symbol này**, không bỏ qua hook/kiểm tra TLS.
+- Trạng thái Windows của **đúng bản EXE** phải đọc từ workflow/release-notes và commit trong BUILD_INFO; không lấy kết quả lịch sử bên dưới thay cho gate 2.0.1. Fixture SendInput không thay thế bàn phím vật lý, UAC hay đăng nhập Administrator token bị UAC lọc trên PC viện.
+
+### Nghiệm thu bổ sung bắt buộc tại viện
+
+1. Cài qua hai BAT bằng UAC. Đăng nhập Administrator (cả Run as administrator và token thường): không có khóa/hook/cửa sổ Kiosk. Đăng nhập User tiêu chuẩn: Kiosk tự chạy.
+2. Với User thường, mở PIN bằng nút CNTT rồi bằng hotkey, thả modifier và nhập bằng hàng số/numpad; thử backspace/đổi focus/AltTab/AltF4/WinD/CtrlShiftEsc. PIN sai vẫn khóa, PIN đúng server xác nhận mới mở; không sót cửa sổ.
+3. Báo nghỉ: ca và PC đã mở vẫn có hiệu lực khi chờ; thiếu người thay/đụng lịch thì không duyệt. Duyệt hợp lệ mới thay ca và thu hồi lease cũ. Thử cả ca qua đêm.
+4. Nâng VPS cũ theo điều kiện và backup trong [hướng dẫn nâng VPS](https://github.com/pvminh94/qlbv/blob/main/deploy/NANG_CAP_VPS_CU_VA_HTTPS.md); profile P2 không được dùng cho certificate VPS3 khác.
+
+---
+
+## Hồ sơ lịch sử 2.0.0 — giữ để tham chiếu, KHÔNG phải kết quả 2.0.1
+
 # QLBS Kiosk 2.0.0 — Kết quả kiểm thử và bàn giao
 
 **Cập nhật: 16/10/2026 · Native WinForms 2.0.0 · Nền mã trước thay đổi: `5848d1a`**

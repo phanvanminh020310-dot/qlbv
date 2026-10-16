@@ -10,13 +10,20 @@ on:
       release_tag:
         description: Component release tag matching the package version
         type: string
-        default: kiosk-v2.0.0
+        default: kiosk-v2.0.1
         required: true
   push:
     branches: [main]
     paths:
       - "deploy/windows/**"
       - "backend/src/modules/kiosk/**"
+      - "backend/src/modules/duty/**"
+      - "backend/drizzle/**"
+      - "backend/test/duty*.test.ts"
+      - "frontend/src/components/duty/**"
+      - "frontend/src/app/(app)/lich-truc/**"
+      - "deploy/update.sh"
+      - "deploy/test_update.py"
       - "backend/src/modules/settings/**"
       - "backend/test/kiosk*.test.ts"
       - "backend/scripts/verify-kiosk-qr.cjs"
@@ -32,6 +39,13 @@ on:
       - "backend/scripts/test_prepare_kiosk_release.py"
       - "deploy/windows/**"
       - "backend/src/modules/kiosk/**"
+      - "backend/src/modules/duty/**"
+      - "backend/drizzle/**"
+      - "backend/test/duty*.test.ts"
+      - "frontend/src/components/duty/**"
+      - "frontend/src/app/(app)/lich-truc/**"
+      - "deploy/update.sh"
+      - "deploy/test_update.py"
       - "backend/test/kiosk*.test.ts"
       - "frontend/src/app/kiosk/**"
       - "frontend/src/app/scan/**"
@@ -58,6 +72,8 @@ jobs:
       - name: Test release validation without network or credentials
         run: python3 -m unittest discover -s scripts -p 'test_prepare_kiosk_release.py' -v
         working-directory: backend
+      - name: Verify upgrade backup failure and config preservation
+        run: python3 -m unittest discover -s deploy -p 'test_update.py' -v
       - run: npm run typecheck && npm test && npm run build
         working-directory: backend
 
@@ -113,7 +129,7 @@ jobs:
           & $csc @compileArgs
           if ($LASTEXITCODE -ne 0) { throw 'Windows compilation failed' }
           Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/go_bo_kiosk.bat,deploy/windows/README.md,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
-          "QLBS Kiosk 2.0.0`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
+          "QLBS Kiosk 2.0.1`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
       - name: Native self-tests and off-screen WinForms rendering
         run: |
           $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
@@ -132,6 +148,23 @@ jobs:
             $p = Start-Process "$package\QLBS_Kiosk.exe" -ArgumentList $args -Wait -PassThru
             if ($p.ExitCode -ne 0) { throw "Rendering failed: $state" }
           }
+      - name: Real keyboard input through the IT button and hotkey, with the production hook and modal
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $qa = Join-Path $env:RUNNER_TEMP 'kiosk-qa'
+          $fixture = Join-Path $qa 'PinInputTest.exe'
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $source = (Resolve-Path -LiteralPath 'deploy\windows\QLBS_Kiosk.cs').ProviderPath
+          $testSource = (Resolve-Path -LiteralPath 'deploy\windows\tests\PinInputTest.cs').ProviderPath
+          & $csc '/nologo' '/codepage:65001' '/langversion:5' '/warnaserror+' '/target:exe' '/platform:anycpu' '/define:KIOSK_INPUT_TEST' '/main:QLBS.Kiosk.PinInputTests' "/out:$fixture" '/reference:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll' $source $testSource
+          if ($LASTEXITCODE -ne 0) { throw 'PIN integration fixture did not compile' }
+          $p = Start-Process $fixture -ArgumentList @($qa) -RedirectStandardOutput "$qa\pin-input.stdout.log" -RedirectStandardError "$qa\pin-input.stderr.log" -PassThru
+          if (-not $p.WaitForExit(35000)) { $p.Kill(); throw 'PIN fixture hung; do not ship this build' }
+          if ($p.ExitCode -ne 0) {
+            Get-Content "$qa\pin-input.stdout.log", "$qa\pin-input.stderr.log" -ErrorAction SilentlyContinue
+            throw 'Actual keyboard input / shortcut protection test failed'
+          }
+          Get-Content "$qa\pin-input.txt"
       - name: Parse the embedded recovery script without executing destructive operations
         run: |
           $text = [IO.File]::ReadAllText((Resolve-Path deploy/windows/go_bo_kiosk.bat))
@@ -154,13 +187,14 @@ jobs:
           Get-ChildItem $package -File | Sort-Object Name | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
           } | Set-Content "$package\SHA256SUMS.txt" -Encoding ascii
-          Compress-Archive -Path "$package\*" -DestinationPath "$env:RUNNER_TEMP\QLBS_Kiosk_2.0.0.zip" -Force
+          Compress-Archive -Path "$package\*" -DestinationPath "$env:RUNNER_TEMP\QLBS_Kiosk_2.0.1.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: QLBS-Kiosk-Windows-2.0.0
+          name: QLBS-Kiosk-Windows-2.0.1
           path: |
-            ${{ runner.temp }}/QLBS_Kiosk_2.0.0.zip
+            ${{ runner.temp }}/QLBS_Kiosk_2.0.1.zip
             ${{ runner.temp }}/kiosk-qa/self-test.txt
+            ${{ runner.temp }}/kiosk-qa/pin-input.txt
             ${{ runner.temp }}/kiosk-qa/qr.png
             ${{ runner.temp }}/kiosk-qa/scanned.png
           if-no-files-found: error
@@ -182,7 +216,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v5
         with:
-          name: QLBS-Kiosk-Windows-2.0.0
+          name: QLBS-Kiosk-Windows-2.0.1
           path: release-artifact
       - name: Verify the exact CI build and prepare release assets
         env:

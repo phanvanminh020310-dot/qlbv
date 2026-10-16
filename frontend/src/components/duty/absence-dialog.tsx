@@ -10,7 +10,7 @@ import { ABSENCE_REASON_LABEL, bkkTodayYmd, dutyApi } from "@/lib/duty";
 import { errorText } from "./duty-shared";
 import { useRefreshDuty } from "./duty-dialogs";
 
-/** Báo nghỉ phép / bận: ca trực trong khoảng ngày này sẽ không được xếp và Điều phối được thông báo */
+/** Báo nghỉ/bận chỉ là yêu cầu; lịch chính thức giữ nguyên đến khi duyệt và thay người. */
 export function AbsenceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const refresh = useRefreshDuty();
   const today = bkkTodayYmd();
@@ -20,12 +20,8 @@ export function AbsenceDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [note, setNote] = useState("");
   const save = useMutation({
     mutationFn: () => dutyApi.createAbsence({ startDate, endDate, reason, note: note.trim() }),
-    onSuccess: (res) => {
-      if (res.affected?.length) {
-        toast.warning(`Đã ghi nhận. Có ${res.affected.length} ca trực bị ảnh hưởng — Điều phối sẽ sắp xếp người thay.`);
-      } else {
-        toast.success("Đã ghi nhận nghỉ phép / bận");
-      }
+    onSuccess: () => {
+      toast.success("Đã gửi yêu cầu chờ duyệt. Ca trực hiện tại vẫn giữ nguyên.");
       refresh();
       onClose();
     },
@@ -36,7 +32,7 @@ export function AbsenceDialog({ open, onClose }: { open: boolean; onClose: () =>
       open={open}
       onClose={onClose}
       title="Báo nghỉ / bận"
-      description="Ca trực trong khoảng ngày này sẽ không được xếp cho bạn. Nếu đã có ca trực, Điều phối sẽ được thông báo."
+      description="Đây là yêu cầu chờ quản lý duyệt. Bạn vẫn chịu trách nhiệm ca đã phân công cho đến khi quản lý duyệt và bố trí đủ bác sĩ thay thế."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
@@ -47,7 +43,7 @@ export function AbsenceDialog({ open, onClose }: { open: boolean; onClose: () =>
               save.mutate();
             }}
           >
-            Ghi nhận
+            Gửi yêu cầu
           </Button>
         </>
       }

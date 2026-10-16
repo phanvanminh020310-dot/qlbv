@@ -28,6 +28,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     "0017_lich_truc_mau_ca.sql",
     "0019_kiosk_duty_attendance.sql",
     "0020_them_avatar_data_sinh_trac_hoc.sql",
+    "0021_duty_absence_approval.sql",
   ]) {
     await pg.exec(
       readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"),

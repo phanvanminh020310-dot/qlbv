@@ -1180,7 +1180,8 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             where ${dutyAbsences.userId} = ${users.id}
               and ${dutyAbsences.endDate} >= ${dutySlots.dutyDate}
               and ${dutyAbsences.startDate} <= ${dutySlots.dutyDate} +
-                case when ${dutyShiftTypes.crossesMidnight} or ${dutyShiftTypes.endTime} <= ${dutyShiftTypes.startTime} then 1 else 0 end
+                case when (${dutyShiftTypes.crossesMidnight} or ${dutyShiftTypes.endTime} <= ${dutyShiftTypes.startTime})
+                  and ${dutyShiftTypes.endTime}::time > time '00:00' then 1 else 0 end
           )`,
         ),
       )

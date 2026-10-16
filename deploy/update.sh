@@ -18,7 +18,7 @@
 #    --all        Dựng lại cả api và web dù không đổi
 #    --api        Chỉ dựng lại api        --web   Chỉ dựng lại web
 #    --no-pull    Bỏ qua git pull (dùng khi đã sửa code trực tiếp trên máy chủ)
-#    --backup     Sao lưu CSDL trước khi cập nhật (data/backups/pre-update-*.dump)
+#    --backup     Sao lưu .env, compose, SSL và CSDL trước pull/build (data/upgrade-backups/)
 # ==============================================================================
 set -Eeuo pipefail
 
@@ -57,6 +57,38 @@ export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 # git có thể từ chối thư mục do root sở hữu khi chạy bằng sudo
 git config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
 
+# Snapshot BEFORE git pull, builds and migrations. Never use an API-visible backup
+# directory for .env/private keys; keep the whole upgrade snapshot owner-only.
+# A failed or empty dump MUST stop the upgrade, not merely skip an && log line.
+if [[ $DO_BACKUP -eq 1 && -z "${QLBS_UPDATE_BACKUP_DIR:-}" ]]; then
+  step "Sao lưu cấu hình, chứng thư và CSDL trước khi cập nhật"
+  umask 077
+  mkdir -p data/upgrade-backups
+  chmod 700 data/upgrade-backups
+  SNAPSHOT=$(mktemp -d "$ROOT/data/upgrade-backups/pre-update-$(date +%F_%H%M%S)-XXXXXX")
+  chmod 700 "$SNAPSHOT"
+  cp -pL .env "$SNAPSHOT/.env"
+  chmod 600 "$SNAPSHOT/.env"
+  for config in docker-compose.yml docker-compose.yaml docker-compose.override.yml docker-compose.override.yaml compose.yml compose.yaml compose.override.yml compose.override.yaml; do
+    [[ ! -f "$config" ]] || cp -pL "$config" "$SNAPSHOT/"
+  done
+  if [[ -d data/ssl ]]; then cp -aL data/ssl "$SNAPSHOT/ssl"; chmod -R go-rwx "$SNAPSHOT/ssl"; fi
+  printf '%s\n' "${QLBS_OLD_COMMIT:-$(git rev-parse HEAD)}" > "$SNAPSHOT/source-commit.txt"
+  F="$SNAPSHOT/database.dump"
+  if ! "${DC[@]}" exec -T postgres sh -c 'exec pg_dump -U "${POSTGRES_USER:-qlbs}" -d "${POSTGRES_DB:-qlbs}" -Fc' > "$F.partial"; then
+    rm -f "$F.partial"
+    die "pg_dump thất bại. Chưa pull/build/khởi động lại. Cấu hình gốc giữ trong $SNAPSHOT"
+  fi
+  if [[ ! -s "$F.partial" ]] || ! "${DC[@]}" exec -T postgres pg_restore --list < "$F.partial" > /dev/null; then
+    rm -f "$F.partial"
+    die "Bản sao CSDL rỗng/không đọc được. Dừng cập nhật; xem $SNAPSHOT"
+  fi
+  mv "$F.partial" "$F"
+  chmod 600 "$F"
+  export QLBS_UPDATE_BACKUP_DIR="$SNAPSHOT"
+  ok "Đã lưu cấu hình/SSL/CSDL trong $SNAPSHOT ($(du -h "$F" | cut -f1)); không thay đổi .env hay chứng thư"
+fi
+ENV_BEFORE=$(sha256sum .env | cut -d' ' -f1)
 OLD="${QLBS_OLD_COMMIT:-$(git rev-parse HEAD)}"
 if [[ $DO_PULL -eq 1 ]]; then
   step "Lấy code mới (git pull)"
@@ -67,13 +99,17 @@ if [[ $DO_PULL -eq 1 ]]; then
   fi
   git pull --ff-only || die "git pull thất bại (nhánh bị lệch?). Kiểm tra bằng: git status"
   if [[ ${STASHED:-0} -eq 1 ]]; then
-    git stash pop >/dev/null 2>&1 && ok "Đã áp lại thay đổi cục bộ" || warn "Không áp lại được thay đổi cục bộ — xem: git stash list"
+    if ! git stash pop >/dev/null 2>&1; then
+      die "Xung đột khi áp lại thay đổi cục bộ. DỪNG trước build/migrate; giữ nguyên git stash, không git reset/clean. Xem git status và git stash list."
+    fi
+    ok "Đã áp lại thay đổi cục bộ"
   fi
 fi
 NEW=$(git rev-parse HEAD)
+[[ "$ENV_BEFORE" == "$(sha256sum .env | cut -d' ' -f1)" ]] || die ".env đã thay đổi trong lúc pull. Dừng trước build; đối chiếu bản sao nâng cấp, không tự ghi đè cấu hình máy chủ."
 
 # Bản thân update.sh vừa được cập nhật → chạy lại bằng bản mới (bash đang đọc bản cũ)
-if [[ "$OLD" != "$NEW" && -z "${QLBS_UPDATE_REEXEC:-}" ]] && git diff --name-only "$OLD" "$NEW" | grep -qx 'deploy/update.sh'; then
+if [[ "$OLD" != "$NEW" && -z "${QLBS_UPDATE_REEXEC:-}" ]] && ! git diff --quiet "$OLD" "$NEW" -- deploy/update.sh; then
   ok "update.sh có phiên bản mới — chạy lại bằng bản mới"
   export QLBS_UPDATE_REEXEC=1
   export QLBS_OLD_COMMIT="$OLD"
@@ -85,7 +121,7 @@ if [[ "$OLD" == "$NEW" ]]; then
   CHANGED=""
 else
   ok "$(git rev-list --count "$OLD..$NEW") commit mới: ${OLD:0:7} → ${NEW:0:7}"
-  git --no-pager log --format='    %h %s' "$OLD..$NEW" | head -20
+  git --no-pager log --max-count=20 --format='    %h %s' "$OLD..$NEW"
   CHANGED=$(git diff --name-only "$OLD" "$NEW")
 fi
 
@@ -111,13 +147,6 @@ if [[ ${#BUILD[@]} -eq 0 && $COMPOSE_CHANGED -eq 0 ]]; then
   exit 0
 fi
 
-if [[ $DO_BACKUP -eq 1 ]]; then
-  step "Sao lưu CSDL trước khi cập nhật"
-  mkdir -p data/backups
-  F="data/backups/pre-update-$(date +%F_%H%M%S).dump"
-  "${DC[@]}" exec -T postgres pg_dump -U qlbs -d qlbs -Fc > "$F" && ok "Đã lưu $F ($(du -h "$F" | cut -f1))"
-fi
-
 START=$(date +%s)
 if [[ ${#BUILD[@]} -gt 0 ]]; then
   step "Dựng lại: ${BUILD[*]} (có cache — tuần tự để tối ưu RAM VPS)"
@@ -134,7 +163,7 @@ if [[ $COMPOSE_CHANGED -eq 1 ]]; then
 fi
 
 # ---------------------------------------------------------------- kiểm tra
-env_get() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '"'"'" ; }
+env_get() { sed -n "s/^$1=//p" .env | tail -1 | tr -d '"'"'" ; }
 API_PORT=$(env_get API_PORT); API_PORT=${API_PORT:-4000}
 WEB_PORT=$(env_get WEB_PORT); WEB_PORT=${WEB_PORT:-3000}
 

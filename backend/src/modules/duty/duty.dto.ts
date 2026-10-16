@@ -574,6 +574,18 @@ export class AbsenceQueryDto {
   userId?: number;
 }
 
+export class AbsenceReplacementDto {
+  @IsInt() @Min(1) slotId!: number;
+  @IsInt() @Min(1) assignmentId!: number;
+  @IsInt() @Min(1) replacementUserId!: number;
+}
+
+export class AbsenceReviewDto {
+  @IsOptional() @IsString() @MaxLength(1000) note?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(1000) @ValidateNested({ each: true }) @Type(() => AbsenceReplacementDto)
+  replacements?: AbsenceReplacementDto[];
+}
+
 /* ------------------------------------------------------------------ Yêu cầu đổi trực */
 
 export class RequestCreateDto {

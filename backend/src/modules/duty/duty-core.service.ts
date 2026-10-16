@@ -338,7 +338,8 @@ export class DutyCoreService {
     const slotIds = [...new Set(pairs.map((p) => p.slot.id))];
 
     const duties = await this.loadDuties(c, userIds, addDays(from, -7), addDays(to, 7), exclude);
-    const absences = await this.loadAbsences(c, userIds, from, to);
+    // Load the following day as well: an overnight slot can overlap its absence.
+    const absences = await this.loadAbsences(c, userIds, from, addDays(to, 1));
     const counts = await this.loadPeriodCounts(c, periodIds, userIds, exclude);
     const assigned = await this.loadAssignedSet(c, slotIds, userIds);
 

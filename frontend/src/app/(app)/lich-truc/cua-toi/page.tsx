@@ -142,9 +142,9 @@ export default function LichCuaToiPage() {
     onError: (e) => toast.error(errorText(e)),
   });
   const deleteAbsence = useMutation({
-    mutationFn: (id: number) => dutyApi.deleteAbsence(id),
+    mutationFn: (id: number) => dutyApi.cancelAbsence(id),
     onSuccess: () => {
-      toast.success("Đã xoá ghi nhận nghỉ");
+      toast.success("Đã rút yêu cầu nghỉ/bận; lịch trực không thay đổi");
       actions.refresh();
     },
     onError: (e) => toast.error(errorText(e)),
@@ -184,7 +184,7 @@ export default function LichCuaToiPage() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <KpiTile label="Ca sắp tới" value={upcoming.length} hint={upcoming[0] ? `Tiếp theo: ${dayOf(upcoming[0].dutyDate)} ${fmtDm(upcoming[0].dutyDate)}` : "Chưa có ca"} tone="info" />
             <KpiTile label="Đề nghị chờ bạn" value={pendingIncoming} tone={pendingIncoming ? "warning" : "default"} hint="Nhường / đổi ca đến bạn" />
-            <KpiTile label="Nghỉ / bận sắp tới" value={absences.data?.length ?? 0} hint="Ngày đã báo nghỉ" />
+            <KpiTile label="Nghỉ / bận sắp tới" value={absences.data?.length ?? 0} hint="Yêu cầu chờ duyệt và nghỉ đã duyệt" />
             <KpiTile label="Kỳ đang mở" value={openPeriods.length} hint={curPeriod ? curPeriod.name : "Chưa có kỳ mở"} />
           </div>
 
@@ -327,14 +327,14 @@ export default function LichCuaToiPage() {
 
           <div className="grid items-start gap-5 xl:grid-cols-2">
             <Card>
-              <CardHeader title="Nghỉ phép / bận sắp tới" description="Ca trực trong khoảng này sẽ không xếp cho bạn." />
+              <CardHeader title="Nghỉ phép / bận sắp tới" description="Chờ duyệt không hủy ca. Chỉ sau khi quản lý duyệt và bố trí người thay mới thay đổi lịch." />
               <CardBody>
                 {(absences.data ?? []).length === 0 ? (
                   <EmptyState title="Chưa báo nghỉ" description="Báo nghỉ sớm giúp Điều phối sắp xếp người thay." />
                 ) : (
                   <ul className="divide-y rounded-lg border">
                     {(absences.data ?? []).map((a) => (
-                      <li key={a.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                      <li key={`${a.kind ?? "APPROVED"}:${a.id}`} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
                         <div>
                           <div className="font-medium">
                             {fmtDate(a.startDate)} → {fmtDate(a.endDate)}
@@ -342,11 +342,15 @@ export default function LichCuaToiPage() {
                           <div className="text-xs text-[var(--muted-foreground)]">
                             {ABSENCE_REASON_LABEL[a.reason] ?? a.reason}
                             {a.note ? ` · ${a.note}` : ""}
+                            {a.responseNote ? ` · Xử lý: ${a.responseNote}` : ""}
                           </div>
                         </div>
-                        <Button size="sm" variant="ghost" onClick={() => deleteAbsence.mutate(a.id)} title="Xoá">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge tone={a.status === "CHO_DUYET" ? "warning" : a.status === "TU_CHOI" ? "danger" : a.status === "DA_DUYET" ? "success" : "muted"}>
+                            {a.status === "CHO_DUYET" ? "Chờ duyệt · Giữ nguyên ca" : a.status === "TU_CHOI" ? "Từ chối" : a.status === "HUY" ? "Đã rút yêu cầu" : "Đã duyệt"}
+                          </Badge>
+                          {a.actions?.canCancel ? <Button size="sm" variant="ghost" onClick={() => deleteAbsence.mutate(a.id)} title="Rút yêu cầu đang chờ"><Trash2 className="h-4 w-4" /></Button> : null}
+                        </div>
                       </li>
                     ))}
                   </ul>

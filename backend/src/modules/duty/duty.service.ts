@@ -20,6 +20,7 @@ import {
 } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
 import { DutyCoreService, type PairCtx, type SlotRow } from './duty-core.service';
+import { DutyAbsenceService } from './duty-absence.service';
 import {
   DEFAULT_DUTY_RULES,
   bangkokToday,
@@ -88,6 +89,7 @@ export class DutyService {
   constructor(
     private readonly db: DbService,
     readonly core: DutyCoreService,
+    private readonly absenceWorkflow: DutyAbsenceService,
   ) {}
 
   /* ================================================================ Kỳ lịch */
@@ -1339,27 +1341,7 @@ export class DutyService {
   /* ================================================================ Nghỉ phép */
 
   async listAbsences(user: AccessContext, q: AbsenceQueryDto) {
-    const where: SQL[] = [];
-    if (!this.core.canManageAny(user)) where.push(eq(dutyAbsences.userId, user.id));
-    else if (q.userId) where.push(eq(dutyAbsences.userId, q.userId));
-    if (q.from) where.push(gte(dutyAbsences.endDate, q.from));
-    if (q.to) where.push(lte(dutyAbsences.startDate, q.to));
-    return this.db.db
-      .select({
-        id: dutyAbsences.id,
-        userId: dutyAbsences.userId,
-        fullName: users.fullName,
-        startDate: dutyAbsences.startDate,
-        endDate: dutyAbsences.endDate,
-        reason: dutyAbsences.reason,
-        note: dutyAbsences.note,
-        createdBy: dutyAbsences.createdBy,
-      })
-      .from(dutyAbsences)
-      .innerJoin(users, eq(users.id, dutyAbsences.userId))
-      .where(where.length ? and(...where) : undefined)
-      .orderBy(desc(dutyAbsences.startDate))
-      .limit(500);
+    return this.absenceWorkflow.list(user, q);
   }
 
   /** Ca trực của người này bị ảnh hưởng bởi khoảng nghỉ (từ hôm nay trở đi) */
@@ -1380,65 +1362,11 @@ export class DutyService {
   }
 
   async createAbsence(user: AccessContext, dto: AbsenceDto) {
-    const userId = dto.userId ?? user.id;
-    if (dto.startDate > dto.endDate) throw new BadRequestException('Ngày bắt đầu phải trước hoặc trùng ngày kết thúc');
-    if (!this.core.canManageAny(user) && dto.endDate < bangkokToday()) {
-      throw new BadRequestException('Chỉ ghi nhận nghỉ phép từ hôm nay trở đi; ngày đã qua do quản lý lịch điều chỉnh');
-    }
-    if (userId !== user.id) {
-      if (!this.core.canManageAny(user)) throw new ForbiddenException('Bạn chỉ được ghi nhận nghỉ phép của chính mình');
-      const target = (await this.core.loadUsers(this.db.db, [userId])).get(userId);
-      if (!target) throw new NotFoundException('Không tìm thấy nhân viên');
-      if (!this.core.isAll(user)) this.core.ensureManageDept(user, target.departmentId, `Nhân viên ${target.fullName}`);
-    }
-    const [overlap] = await this.db.db
-      .select({ startDate: dutyAbsences.startDate, endDate: dutyAbsences.endDate })
-      .from(dutyAbsences)
-      .where(and(eq(dutyAbsences.userId, userId), lte(dutyAbsences.startDate, dto.endDate), gte(dutyAbsences.endDate, dto.startDate)))
-      .limit(1);
-    if (overlap) {
-      throw new ConflictException(
-        `Đã có khoảng nghỉ phép trùng (${fmtDm(overlap.startDate)} – ${fmtDm(overlap.endDate)}). Xoá bản ghi cũ trước khi nhập lại.`,
-      );
-    }
-    const [row] = await this.db.db
-      .insert(dutyAbsences)
-      .values({ userId, startDate: dto.startDate, endDate: dto.endDate, reason: dto.reason, note: dto.note ?? '', createdBy: user.id })
-      .returning();
-    const affected = await this.affectedByAbsence(userId, dto.startDate, dto.endDate);
-    if (affected.length) {
-      const holders = await this.core.holderIds(['duty.manage', 'duty.manage-all']);
-      const who = (await this.core.loadUsers(this.db.db, [userId])).get(userId)?.fullName ?? 'Nhân viên';
-      this.core.notifyAfterCommit(holders.filter((id) => id !== userId), {
-        title: 'Nghỉ phép ảnh hưởng ca trực',
-        body: `${who} nghỉ ${fmtDate(dto.startDate)} → ${fmtDate(dto.endDate)}: ${affected.length} ca trực cần sắp xếp lại.`,
-        level: 'WARNING',
-        link: '/lich-truc',
-        module: 'DUTY',
-        entityId: String(row.id),
-      });
-    }
-    await this.core.log(this.db.db, {
-      action: 'ABSENCE',
-      actorId: user.id,
-      userId,
-      detail: { startDate: dto.startDate, endDate: dto.endDate, reason: dto.reason, affected: affected.length },
-    });
-    this.core.emit('absence', affected[0]?.periodId ?? null);
-    return { ...row, affected };
+    return this.absenceWorkflow.create(user, dto);
   }
 
   async deleteAbsence(user: AccessContext, id: number) {
-    const [row] = await this.db.db.select().from(dutyAbsences).where(eq(dutyAbsences.id, id)).limit(1);
-    if (!row) throw new NotFoundException('Không tìm thấy bản ghi nghỉ phép');
-    if (row.userId !== user.id) {
-      if (!this.core.canManageAny(user)) throw new ForbiddenException('Không có quyền xoá bản ghi này');
-      const target = (await this.core.loadUsers(this.db.db, [row.userId])).get(row.userId);
-      if (!this.core.isAll(user) && target) this.core.ensureManageDept(user, target.departmentId, `Nhân viên ${target.fullName}`);
-    }
-    await this.db.db.delete(dutyAbsences).where(eq(dutyAbsences.id, id));
-    this.core.emit('absence', null);
-    return { ok: true };
+    return this.absenceWorkflow.deleteLegacy(user, id);
   }
 
   /** Danh bạ nhân viên đang hoạt động (chỉ tên, chức danh, khoa) — để chọn người nhận khi nhường/đổi ca */

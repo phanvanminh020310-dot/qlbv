@@ -38,6 +38,8 @@ export interface NavItem {
   icon: LucideIcon;
   /** Quyền tối thiểu để hiện mục này (bỏ trống = ai cũng thấy) */
   permission?: string;
+  /** Một trong các quyền thay thế cũng được mở mục này (OR). */
+  anyPermissions?: string[];
   /** Menu con (thu gọn/mở rộng được). Mục cha tự ẩn khi không có quyền xem mục con nào. */
   children?: NavItem[];
 }
@@ -102,7 +104,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/lich-truc', label: 'Lịch trực tuần', icon: CalendarDays, permission: 'duty.view' },
       { href: '/lich-truc/cua-toi', label: 'Lịch của tôi', icon: UserCheck, permission: 'duty.register' },
-      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu đổi trực', icon: ArrowLeftRight, permission: 'duty.register' },
+      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch trực', icon: ArrowLeftRight, permission: 'duty.register', anyPermissions: ['duty.manage', 'duty.manage-all'] },
       { href: '/lich-truc/ky-lich', label: 'Kỳ lịch & công bố', icon: CalendarRange, permission: 'duty.period.manage' },
       { href: '/lich-truc/danh-muc', label: 'Danh mục trực', icon: Settings2, permission: 'duty.catalog.manage' },
     ],

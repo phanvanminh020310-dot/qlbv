@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, ShieldAlert } from "lucide-react";
 import { useState } from "react";
+import { AbsenceInbox } from "@/components/duty/absence-inbox";
 import { OverrideDialog, ReviewDialog, useDutyActions } from "@/components/duty/duty-dialogs";
 import { errorText, RequestStatusBadge } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
@@ -22,7 +23,9 @@ export default function YeuCauPage() {
   const actions = useDutyActions();
   const canApprove = can("duty.swap.approve") || can("duty.exception.resolve");
   const isKhth = can("duty.exception.resolve");
-  const [tab, setTab] = useState(canApprove ? "approval" : "incoming");
+  const canManageAbsence = can("duty.manage") || can("duty.manage-all");
+  const [selectedTab, setTab] = useState<string>();
+  const tab = selectedTab ?? (canManageAbsence ? "absences" : canApprove ? "approval" : "incoming");
   const [review, setReview] = useState<{ row: RequestRow; kind: "approve" | "reject" | "decline" } | null>(null);
   const [override, setOverride] = useState(false);
 
@@ -126,6 +129,7 @@ export default function YeuCauPage() {
   };
 
   const items = [
+    ...(canManageAbsence ? [{ key: "absences", label: "Nghỉ / bận chờ duyệt", content: <AbsenceInbox /> }] : []),
     ...(canApprove
       ? [
           {
@@ -150,8 +154,8 @@ export default function YeuCauPage() {
   return (
     <>
       <PageHeader
-        title="Yêu cầu đổi trực"
-        description="Duyệt nhường/đổi ca và xử lý ngoại lệ sau khi chốt. Theo dõi các đề nghị đến và đi của bạn."
+        title="Yêu cầu lịch trực"
+        description="Duyệt nghỉ/bận và bố trí người thay, nhường/đổi ca và xử lý ngoại lệ sau khi chốt."
         actions={
           isKhth ? (
             <Button variant="outline" onClick={() => setOverride(true)}>

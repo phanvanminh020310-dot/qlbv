@@ -79,7 +79,16 @@ export interface GridSlot {
   past: boolean;
   assignments: GridAssignment[];
 }
-export interface AbsenceRow { id: number; userId: number; fullName: string; startDate: string; endDate: string; reason: string; note?: string }
+export interface AbsenceRow {
+  id: number; userId: number; fullName: string; startDate: string; endDate: string; reason: string; note?: string;
+  kind?: 'REQUEST' | 'APPROVED'; status?: 'CHO_DUYET' | 'DA_DUYET' | 'TU_CHOI' | 'HUY'; responseNote?: string;
+  actions?: { canCancel: boolean; canApprove: boolean };
+}
+export interface AbsenceReview extends AbsenceRow {
+  canApprove: boolean;
+  approvalBlockReason: string | null;
+  affected: Array<{ slotId: number; assignmentId: number; periodName: string; dutyDate: string; roomCode: string; shiftCode: string; roleName: string; candidates: Array<{ userId: number; fullName: string; title: string }> }>;
+}
 export interface GridResponse {
   period: DutyPeriod;
   rooms: GridRoom[];
@@ -405,6 +414,11 @@ export const dutyApi = {
   },
   createAbsence: (body: Json) => post<AbsenceRow & { affected: Array<{ slotId: number; dutyDate: string; roomCode: string; shiftCode: string }> }>('/duty/absences', body),
   deleteAbsence: (id: number) => del<{ ok: boolean }>(`/duty/absences/${id}`),
+  absenceRequests: (box: 'mine' | 'approval' | 'all' = 'mine') => get<AbsenceRow[]>(`/duty/absence-requests?box=${box}`),
+  absenceReview: (id: number) => get<AbsenceReview>(`/duty/absence-requests/${id}`),
+  approveAbsence: (id: number, body: Json) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/approve`, body),
+  rejectAbsence: (id: number, note: string) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/reject`, { note }),
+  cancelAbsence: (id: number) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/cancel`, {}),
   requests: (box: 'mine' | 'incoming' | 'approval' | 'all', periodId?: number) =>
     get<RequestRow[]>(`/duty/requests?box=${box}${periodId ? `&periodId=${periodId}` : ''}`),
   createRequest: (body: Json) => post<RequestRow>('/duty/requests', body),
@@ -432,6 +446,7 @@ export const DUTY_KEYS = {
   me: ['duty-me'] as const,
   staff: ['duty-staff'] as const,
   absences: ['duty-absences'] as const,
+  absenceRequests: ['duty-absence-requests'] as const,
   requests: ['duty-requests'] as const,
   rooms: ['duty-rooms'] as const,
 };

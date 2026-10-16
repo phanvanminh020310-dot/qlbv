@@ -207,6 +207,27 @@ export const dutyAbsences = pgTable(
   (t) => [index('duty_absences_user_idx').on(t.userId, t.startDate, t.endDate)],
 );
 
+/** Workflow-only records. Only approval may insert an operational dutyAbsences row. */
+export const dutyAbsenceRequests = pgTable(
+  'duty_absence_requests',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    startDate: date('start_date', { mode: 'string' }).notNull(),
+    endDate: date('end_date', { mode: 'string' }).notNull(),
+    reason: text('reason').default('KHAC').notNull(),
+    note: text('note').default('').notNull(),
+    status: text('status').$type<'CHO_DUYET' | 'DA_DUYET' | 'TU_CHOI' | 'HUY'>().default('CHO_DUYET').notNull(),
+    createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+    resolvedBy: integer('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    responseNote: text('response_note').default('').notNull(),
+    approvedAbsenceId: integer('approved_absence_id').references(() => dutyAbsences.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('duty_absence_requests_user_idx').on(t.userId, t.startDate, t.endDate), index('duty_absence_requests_status_idx').on(t.status, t.createdAt)],
+);
+
 export const dutyRequests = pgTable(
   'duty_requests',
   {

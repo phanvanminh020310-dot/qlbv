@@ -299,7 +299,8 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
     err('TITLE', `Chức danh "${u.title || 'chưa khai báo'}" không khớp vai trò ${s.roleName} (yêu cầu: ${s.requiredTitle})`);
   }
 
-  const absence = i.absences.find((a) => a.startDate <= s.dutyDate && s.dutyDate <= a.endDate);
+  // Absences are whole hospital days, including the second day of overnight shifts.
+  const absence = i.absences.find((a) => dayStartMs(a.startDate) < s.end && s.start < dayStartMs(addDays(a.endDate, 1)));
   if (absence) err('ABSENT', `Đang nghỉ/bận ${fmtDate(absence.startDate)} → ${fmtDate(absence.endDate)}`);
 
   if (s.roomDepartmentId && u.departmentId !== s.roomDepartmentId) {

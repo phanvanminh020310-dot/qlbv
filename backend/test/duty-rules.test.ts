@@ -261,3 +261,12 @@ test('tính số tuần ISO và khoảng ngày tuần tự động', () => {
   assert.equal(smartPeriodTitle('2026-10-19', '2026-10-25'), 'Tuần 43 (19/10 – 25/10/2026) - Tháng 10');
   assert.equal(defaultLockAt('2026-10-19'), '2026-10-16T17:00:00+07:00');
 });
+
+
+test('Nghỉ/bận ngày thứ hai chặn ca qua đêm; ca kết thúc đúng nửa đêm không trùng ngày kế', () => {
+  const overnight = slotOf(800, '2026-10-15', 'D');
+  const result = evaluateCandidate(input({slot: overnight, absences: [{startDate:'2026-10-16',endDate:'2026-10-16',reason:'PHEP_NAM'}]}));
+  assert.ok(result.errors.some(e => e.code === 'ABSENT'));
+  const endsAtMidnight = {...overnight, end: shiftInterval('2026-10-15','17:00','00:00',true).end};
+  assert.ok(!evaluateCandidate(input({slot: endsAtMidnight, absences:[{startDate:'2026-10-16',endDate:'2026-10-16',reason:'PHEP_NAM'}]})).errors.some(e => e.code === 'ABSENT'));
+});

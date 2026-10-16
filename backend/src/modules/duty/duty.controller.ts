@@ -53,15 +53,15 @@ export class DutyController {
   }
 
   @Post('absences')
-  @RequirePermissions('duty.register')
-  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_absence', description: 'Ghi nhận nghỉ phép / bận trực' })
-  @ApiOperation({ summary: 'Ghi nhận nghỉ phép (chặn xếp trực trong khoảng ngày)' })
+  @RequirePermissions(['duty.register', 'duty.manage', 'duty.manage-all'], 'any')
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_absence_request', description: 'Gửi nghỉ/bận chờ quản lý duyệt và bố trí người thay' })
+  @ApiOperation({ summary: 'Gửi yêu cầu nghỉ/bận; giữ nguyên lịch đến khi quản lý duyệt và bố trí người thay' })
   createAbsence(@CurrentUser() user: AccessContext, @Body() dto: AbsenceDto) {
     return this.service.createAbsence(user, dto);
   }
 
   @Delete('absences/:id')
-  @RequirePermissions('duty.register')
+  @RequirePermissions(['duty.manage', 'duty.manage-all'], 'any')
   @Audit({ module: 'DUTY', action: 'DELETE', entity: 'duty_absence', description: 'Xoá ghi nhận nghỉ phép' })
   deleteAbsence(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.deleteAbsence(user, id);
