@@ -32,8 +32,6 @@ export default function YeuCauPage() {
   useRealtimeInvalidate({ duty: [["duty-requests"], ["duty-grid"], ["duty-me"], ["duty-options"]] });
 
   const approval = useQuery({ queryKey: [...DUTY_KEYS.requests, "approval"], queryFn: () => dutyApi.requests("approval"), enabled: canApprove });
-  const incoming = useQuery({ queryKey: [...DUTY_KEYS.requests, "incoming"], queryFn: () => dutyApi.requests("incoming"), enabled: can("duty.register") });
-  const mine = useQuery({ queryKey: [...DUTY_KEYS.requests, "mine"], queryFn: () => dutyApi.requests("mine"), enabled: can("duty.register") });
   const all = useQuery({ queryKey: [...DUTY_KEYS.requests, "all"], queryFn: () => dutyApi.requests("all"), enabled: isKhth });
 
   const approve = useMutation({
@@ -140,12 +138,6 @@ export default function YeuCauPage() {
           },
         ]
       : []),
-    {
-      key: "incoming",
-      label: "Đến tôi",
-      content: <List rows={incoming.data} loading={incoming.isLoading} empty="Không có đề nghị nào gửi tới bạn" />,
-    },
-    { key: "mine", label: "Của tôi", content: <List rows={mine.data} loading={mine.isLoading} empty="Bạn chưa gửi yêu cầu nào" /> },
     ...(isKhth
       ? [{ key: "all", label: "Tất cả", content: <List rows={all.data} loading={all.isLoading} empty="Chưa có yêu cầu nào" /> }]
       : []),

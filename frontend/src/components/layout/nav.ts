@@ -103,8 +103,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Lịch trực',
     items: [
       { href: '/lich-truc', label: 'Lịch trực tuần', icon: CalendarDays, permission: 'duty.view' },
-      { href: '/lich-truc/cua-toi', label: 'Lịch của tôi', icon: UserCheck, permission: 'duty.register' },
-      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch trực', icon: ArrowLeftRight, permission: 'duty.register', anyPermissions: ['duty.manage', 'duty.manage-all'] },
+      { href: '/lich-truc/cua-toi', label: 'Lịch của tôi', icon: UserCheck, permission: 'duty.view' },
+      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch trực', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },
       { href: '/lich-truc/ky-lich', label: 'Kỳ lịch & công bố', icon: CalendarRange, permission: 'duty.period.manage' },
       { href: '/lich-truc/danh-muc', label: 'Danh mục trực', icon: Settings2, permission: 'duty.catalog.manage' },
     ],

@@ -5,15 +5,15 @@ import { CalendarDays, ChevronLeft, ChevronRight, Download, Printer, Settings2, 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AssignDialog, CellDialog, QuickCreateNextPeriodDialog, RequestDialog } from "@/components/duty/duty-dialogs";
-import { CurrentWeekBadge, errorText, KpiTile, PhaseBadge, PhaseBanner, ShiftChip, SourceTag } from "@/components/duty/duty-shared";
+import { AssignDialog, CellDialog, QuickCreateNextPeriodDialog } from "@/components/duty/duty-dialogs";
+import { CurrentWeekBadge, errorText, KpiTile, PhaseBadge, PhaseBanner, ShiftChip } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, EmptyState, Skeleton } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { useRealtimeInvalidate } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
-import { bkkTodayYmd, DUTY_KEYS, dutyApi, fmtDate, fmtDm, type GridSlot, type RequestType, weekdayLabel } from "@/lib/duty";
+import { bkkTodayYmd, DUTY_KEYS, dutyApi, fmtDate, fmtDm, type GridSlot } from "@/lib/duty";
 import { downloadFile } from "@/lib/api";
 
 type CellKey = string;
@@ -70,9 +70,9 @@ export default function LichTrucPage() {
   const can = useAuth((s) => s.can);
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [roomFilter, setRoomFilter] = useState<string>("ALL");
+  const [mobileDate, setMobileDate] = useState<string | null>(null);
   const [cell, setCell] = useState<{ key: CellKey; title: string; subtitle: string } | null>(null);
   const [assignSlotId, setAssignSlotId] = useState<number | null>(null);
-  const [request, setRequest] = useState<{ mode: RequestType; slotId: number } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
@@ -110,12 +110,11 @@ export default function LichTrucPage() {
     enabled: canView && !!periodId,
   });
   const g = grid.data;
-  const canRegister = !!g?.viewer.canRegister && !g.period.locked && g.period.status !== "NHAP";
-  const myOpts = useQuery({
-    queryKey: DUTY_KEYS.myOptions(periodId ?? 0),
-    queryFn: () => dutyApi.myOptions(periodId as number),
-    enabled: canRegister,
-  });
+  useEffect(() => {
+    if (!g?.days.length) return;
+    if (mobileDate && g.days.some((day) => day.date === mobileDate)) return;
+    setMobileDate(g.days.find((day) => day.date === today)?.date ?? g.days[0].date);
+  }, [g?.days, mobileDate, today]);
 
   useRealtimeInvalidate({
     duty: [["duty-grid"], ["duty-periods"], ["duty-options"], ["duty-me"], ["duty-requests"], ["duty-candidates"]],
@@ -134,8 +133,6 @@ export default function LichTrucPage() {
   }, [g]);
 
   const rooms = useMemo(() => (g?.rooms ?? []).filter((r) => roomFilter === "ALL" || String(r.id) === roomFilter), [g, roomFilter]);
-  const myOptMap = useMemo(() => new Map((myOpts.data?.items ?? []).map((i) => [i.slotId, i])), [myOpts.data]);
-  const mySlots = useMemo(() => (g?.slots ?? []).filter((s) => g?.viewer.mySlotIds.includes(s.id) && !s.past), [g]);
   const assignSlot = useMemo(() => g?.slots.find((s) => s.id === assignSlotId) ?? null, [g, assignSlotId]);
 
   const openCell = (roomId: number, date: string) => {
@@ -169,11 +166,11 @@ export default function LichTrucPage() {
     <>
       <PageHeader
         title="Lịch trực khám bệnh"
-        description="Lịch trực theo tuần: phòng khám × ngày × ca. Nhân viên xem và đăng ký ca; quản lý phân công và theo dõi thiếu người."
+        description="Lịch trực theo tuần: phòng khám × ngày × ca. Nhân viên xem lịch; Người xếp lịch trực khoa phân công và theo dõi thiếu người."
         actions={
-          <div className="flex flex-wrap items-center gap-2 print:hidden">
-            {/* Thanh điều hướng tuần thông minh */}
-            <div className="flex items-center gap-1 bg-[var(--card)] p-1 rounded-xl border shadow-sm">
+          <div className="grid w-full gap-2 print:hidden sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+            {/* Thanh điều hướng tuần: chọn nhanh trên điện thoại, đầy đủ trên desktop */}
+            <div className="grid w-full grid-cols-[auto_auto_auto] items-center gap-1 rounded-xl border bg-[var(--card)] p-1 shadow-sm sm:flex sm:w-auto">
               <Button
                 size="sm"
                 variant="ghost"
@@ -225,7 +222,7 @@ export default function LichTrucPage() {
               </Button>
 
               <Select
-                className="h-8 min-w-[16rem] text-xs font-medium border-0 bg-transparent shadow-none focus:ring-0"
+                className="order-last col-span-3 h-9 w-full border-0 bg-transparent text-xs font-medium shadow-none focus:ring-0 sm:order-none sm:col-auto sm:h-8 sm:min-w-[16rem] sm:w-auto"
                 aria-label="Chọn kỳ lịch"
                 value={periodId ? String(periodId) : ""}
                 onChange={(e) => {
@@ -252,7 +249,7 @@ export default function LichTrucPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 border-emerald-400 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 font-semibold shadow-xs dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
+                className="h-9 w-full border-emerald-400 bg-emerald-50/80 text-emerald-800 shadow-xs hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60 sm:w-auto"
                 onClick={() => setQuickCreateOpen(true)}
               >
                 <Sparkles className="h-4 w-4 mr-1 text-emerald-600 dark:text-emerald-400" /> Tạo tuần tiếp theo
@@ -260,16 +257,16 @@ export default function LichTrucPage() {
             ) : null}
 
             {g?.viewer.canExport ? (
-              <Button variant="outline" size="sm" className="h-9" onClick={onExport} disabled={exporting}>
+              <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={onExport} disabled={exporting}>
                 <Download className="h-4 w-4" /> Xuất Excel
               </Button>
             ) : null}
-            <Button variant="outline" size="sm" className="h-9" onClick={() => window.print()}>
+            <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> In
             </Button>
             {can("duty.period.manage") ? (
               <Link href="/lich-truc/ky-lich">
-                <Button variant="outline" size="sm" className="h-9">
+                <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto">
                   <Settings2 className="h-4 w-4" /> Quản lý kỳ
                 </Button>
               </Link>
@@ -354,7 +351,7 @@ export default function LichTrucPage() {
                 </span>
               }
               actions={
-                <Select className="h-8 w-44 text-xs print:hidden" aria-label="Lọc theo phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
+                <Select className="h-9 w-full text-xs print:hidden sm:h-8 sm:w-44" aria-label="Lọc theo phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
                   <option value="ALL">Tất cả phòng</option>
                   {g.rooms.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -422,40 +419,120 @@ export default function LichTrucPage() {
                 </table>
               </div>
 
-              {/* Danh sách theo ngày trên điện thoại / máy tính bảng */}
-              <div className="divide-y md:hidden">
-                {g.days.map((d) => {
-                  const rowsOfDay = rooms.filter((r) => (slotsByCell.get(cellKey(r.id, d.date)) ?? []).length > 0);
+              {/* Mobile: chọn một ngày để tránh danh sách 7 ngày × nhiều phòng quá dài, rối. */}
+              <div className="md:hidden">
+                <div className="sticky top-0 z-10 border-b bg-[var(--card)] px-2 py-2 shadow-sm">
+                  <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]">
+                    {g.days.map((day) => {
+                      const selected = day.date === mobileDate;
+                      const count = rooms.filter(
+                        (room) =>
+                          (slotsByCell.get(cellKey(room.id, day.date)) ?? [])
+                            .length > 0,
+                      ).length;
+                      return (
+                        <button
+                          key={day.date}
+                          type="button"
+                          onClick={() => setMobileDate(day.date)}
+                          className={`min-w-[4.15rem] shrink-0 rounded-lg border px-2 py-1.5 text-center transition-colors ${
+                            selected
+                              ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
+                              : day.date === today
+                                ? "border-[var(--primary)]/40 bg-[var(--accent)]"
+                                : "bg-[var(--card)]"
+                          }`}
+                          aria-pressed={selected}
+                        >
+                          <span className="block text-[11px] font-semibold">
+                            {day.label}
+                          </span>
+                          <span
+                            className={`block text-[10px] ${selected ? "text-[var(--primary-foreground)]/80" : "text-[var(--muted-foreground)]"}`}
+                          >
+                            {fmtDm(day.date)}
+                          </span>
+                          <span
+                            className={`block text-[9px] ${selected ? "text-[var(--primary-foreground)]/80" : "text-[var(--muted-foreground)]"}`}
+                          >
+                            {count} phòng
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {(() => {
+                  const day =
+                    g.days.find((item) => item.date === mobileDate) ??
+                    g.days[0];
+                  const rowsOfDay = rooms.filter(
+                    (room) =>
+                      (slotsByCell.get(cellKey(room.id, day.date)) ?? [])
+                        .length > 0,
+                  );
                   return (
-                    <section key={d.date} className={`px-3 py-3 ${d.date === today ? "bg-[var(--accent)]/40" : ""}`}>
-                      <header className="mb-2 flex items-center justify-between">
+                    <section
+                      className={`px-3 py-3 ${day.date === today ? "bg-[var(--accent)]/40" : ""}`}
+                    >
+                      <header className="mb-3 flex items-center justify-between gap-3">
                         <div>
-                          <div className="text-sm font-semibold">
-                            {d.label} <span className="font-normal text-[var(--muted-foreground)]">{fmtDate(d.date)}</span>
+                          <div className="text-base font-semibold">
+                            {day.label}{" "}
+                            <span className="font-normal text-[var(--muted-foreground)]">
+                              {fmtDate(day.date)}
+                            </span>
                           </div>
-                          {d.closed ? <div className="text-xs text-rose-600">Nghỉ · {d.closedName}</div> : null}
+                          {day.closed ? (
+                            <div className="mt-0.5 text-xs text-rose-600">
+                              Nghỉ · {day.closedName}
+                            </div>
+                          ) : (
+                            <div className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+                              {rowsOfDay.length} phòng có ca trực
+                            </div>
+                          )}
                         </div>
-                        {d.date === today ? (
-                          <span className="rounded-full bg-[var(--primary)] px-2 py-0.5 text-[10px] font-semibold text-[var(--primary-foreground)]">Hôm nay</span>
+                        {day.date === today ? (
+                          <span className="shrink-0 rounded-full bg-[var(--primary)] px-2 py-0.5 text-[10px] font-semibold text-[var(--primary-foreground)]">
+                            Hôm nay
+                          </span>
                         ) : null}
                       </header>
                       {rowsOfDay.length === 0 ? (
-                        <p className="text-xs text-[var(--muted-foreground)]">{d.closed ? "Không có ca trực." : "Chưa có ca trực."}</p>
+                        <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-[var(--muted-foreground)]">
+                          {day.closed
+                            ? "Không có ca trực trong ngày nghỉ."
+                            : "Chưa có ca trực trong ngày này."}
+                        </p>
                       ) : (
-                        <div className="space-y-2">
-                          {rowsOfDay.map((r) => {
-                            const list = slotsByCell.get(cellKey(r.id, d.date)) ?? [];
+                        <div className="space-y-2.5">
+                          {rowsOfDay.map((room) => {
+                            const slots =
+                              slotsByCell.get(cellKey(room.id, day.date)) ?? [];
                             return (
                               <button
-                                key={r.id}
+                                key={room.id}
                                 type="button"
-                                onClick={() => openCell(r.id, d.date)}
-                                className="w-full rounded-xl border bg-[var(--card)] p-2.5 text-left shadow-sm active:scale-[0.99]"
+                                onClick={() => openCell(room.id, day.date)}
+                                className="w-full rounded-xl border bg-[var(--card)] p-3 text-left shadow-sm transition active:scale-[0.99]"
                               >
-                                <div className="mb-1.5 text-sm font-semibold">
-                                  {r.code} <span className="font-normal text-[var(--muted-foreground)]">· {r.name}</span>
+                                <div className="mb-2 flex items-start justify-between gap-2">
+                                  <div className="min-w-0 text-sm font-semibold">
+                                    {room.code}{" "}
+                                    <span className="font-normal text-[var(--muted-foreground)]">
+                                      · {room.name}
+                                    </span>
+                                  </div>
+                                  <span className="shrink-0 text-[11px] text-[var(--primary)]">
+                                    Xem ca
+                                  </span>
                                 </div>
-                                <CellPreview slots={list} meId={g.viewer.userId} />
+                                <CellPreview
+                                  slots={slots}
+                                  meId={g.viewer.userId}
+                                />
                               </button>
                             );
                           })}
@@ -463,46 +540,10 @@ export default function LichTrucPage() {
                       )}
                     </section>
                   );
-                })}
+                })()}
               </div>
             </CardBody>
           </Card>
-
-          {/* Ca của tôi trong kỳ */}
-          {mySlots.length > 0 ? (
-            <Card>
-              <CardHeader title="Ca của bạn trong kỳ này" description="Bấm để nhường hoặc đổi ca" />
-              <CardBody>
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {mySlots.map((s) => (
-                    <li key={s.id} className="flex items-center justify-between gap-3 rounded-lg border p-2.5">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <ShiftChip code={s.shiftCode} color={s.shiftColor} />
-                        <div className="min-w-0 text-sm">
-                          <div className="font-medium">
-                            {weekdayLabel(new Date(`${s.dutyDate}T00:00:00Z`).getUTCDay() || 7)} · {fmtDate(s.dutyDate)}
-                          </div>
-                          <div className="truncate text-xs text-[var(--muted-foreground)]">
-                            {s.roomCode} · {s.startTime}–{s.endTime} · {s.roleName}
-                            <SourceTag source={s.assignments.find((a) => a.userId === g.viewer.userId)?.source ?? ""} />
-                          </div>
-                        </div>
-                      </div>
-                      {!g.period.locked ? (
-                        <Button size="sm" variant="outline" onClick={() => setRequest({ mode: "NHUONG", slotId: s.id })}>
-                          Nhường / đổi
-                        </Button>
-                      ) : (
-                        <Button size="sm" variant="ghost" onClick={() => setRequest({ mode: "NGOAI_LE", slotId: s.id })}>
-                          Ngoại lệ
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </CardBody>
-            </Card>
-          ) : null}
 
           {g.viewer.canManage && g.summary.missing > 0 ? (
             <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100 print:hidden">
@@ -524,14 +565,9 @@ export default function LichTrucPage() {
           subtitle={cell.subtitle}
           slots={slotsByCell.get(cell.key) ?? []}
           grid={g}
-          myOptions={myOptMap}
           onAssign={(s) => {
             setCell(null);
             setAssignSlotId(s.id);
-          }}
-          onRequest={(s, mode) => {
-            setCell(null);
-            setRequest({ mode, slotId: s.id });
           }}
         />
       ) : null}
@@ -543,18 +579,6 @@ export default function LichTrucPage() {
           slot={assignSlot}
           canManageAll={g.viewer.canManageAll}
           locked={g.period.locked}
-        />
-      ) : null}
-
-      {g && request ? (
-        <RequestDialog
-          key={`${request.mode}-${request.slotId}`}
-          open={!!request}
-          onClose={() => setRequest(null)}
-          mode={request.mode}
-          initialSlotId={request.slotId}
-          slotChoices={mySlots.map((s) => ({ id: s.id, label: `${fmtDm(s.dutyDate)} · ${s.roomCode} · ${s.shiftCode} · ${s.roleName}` }))}
-          grid={g}
         />
       ) : null}
 

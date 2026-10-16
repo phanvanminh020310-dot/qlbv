@@ -47,4 +47,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s \
 
 ENTRYPOINT ["/sbin/tini", "--"]
 # Chạy migration + dữ liệu nền rồi mới khởi động API (idempotent, an toàn khi chạy lại)
-CMD ["sh", "-c", "npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts && node dist/main.js"]
+CMD ["sh", "-c", "npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts && npx tsx scripts/sync-system-roles.ts --apply && node dist/main.js"]

@@ -82,6 +82,8 @@ async function main(): Promise<void> {
       if (existing.description !== seed.description) diffs.push('cập nhật mô tả');
       if (existing.dataScope !== seed.dataScope) diffs.push(`phạm vi: ${existing.dataScope} → ${seed.dataScope}`);
       if (existing.priority !== seed.priority) diffs.push(`ưu tiên: ${existing.priority} → ${seed.priority}`);
+      if (existing.color !== seed.color) diffs.push(`màu: ${existing.color} → ${seed.color}`);
+      if (existing.isSystem !== true) diffs.push('đánh dấu vai trò hệ thống');
       if (diffs.length > 0) {
         console.log(`\n▸ ${seed.code}: ${diffs.join(' · ')}`);
         if (APPLY) {

@@ -146,17 +146,16 @@ Toàn bộ quyền ngầm — không cần liệt kê; chỉ Quản trị tối 
 phạm vi dữ liệu thực tế, danh sách khoa, và với từng quyền biết rõ **đến từ vai trò nào**.
 
 ### Đồng bộ vai trò hệ thống sau khi nâng cấp phiên bản
-Khi bản seed mới thay đổi ma trận chuẩn (thêm vai trò `LANH_DAO`, rà soát lại quyền `ADMIN`…),
-máy chủ đang chạy **không tự đổi** dữ liệu hiện có. Chạy:
+Khi bản seed mới thay đổi ma trận chuẩn, API container sẽ tự chạy đồng bộ sau migration/seed trước khi khởi động.
+Việc này chỉ cập nhật **vai trò hệ thống**; vai trò do đơn vị tự tạo giữ nguyên. Có thể kiểm tra thủ công:
 
 ```bash
 cd backend
 npx tsx scripts/sync-system-roles.ts            # xem trước thay đổi
-npx tsx scripts/sync-system-roles.ts --apply    # áp dụng
+npx tsx scripts/sync-system-roles.ts --apply    # áp dụng ngay khi không chạy bằng container
 ```
 
-Script chỉ đụng vào **vai trò hệ thống**; vai trò do đơn vị tự tạo giữ nguyên. Mọi quyền sắp bị gỡ
-đều được in ra để kiểm soát trước khi xác nhận.
+Mọi quyền bị gỡ vẫn được script in ra trong log để kiểm soát.
 
 ## 7. Tái sinh mục 3–4 khi seed thay đổi
 
@@ -168,24 +167,24 @@ cd backend && npx tsx -e " /* xem state.md §5 hoặc lịch sử git để lấ
 
 ## 8. Lịch trực khám bệnh (`duty.*`)
 
-Chín quyền và hai vai trò mới (tạo bởi migration `0015_lich_truc.sql` và seed; mục 3–4 sẽ được sinh lại theo seed ở lần tái sinh tiếp theo).
+Các quyền lịch trực được tạo bởi migration `0015_lich_truc.sql`; migration `0022_nguoi_xep_lich_truc_khoa.sql` bổ sung vai trò điều phối theo khoa và xoá quyền tự phục vụ cũ `duty.register`, kể cả khỏi vai trò tự tạo.
 
 | Quyền | Ý nghĩa | Vai trò mặc định |
 |---|---|---|
-| `duty.view` | Xem lịch trực đã công bố, danh mục, lưới lịch | Mọi vai trò trực, `LANH_DAO`, `ADMIN` |
-| `duty.register` | Tự đăng ký ca trống, nhường/đổi ca, báo nghỉ, báo sự cố của chính mình | `NHAN_VIEN_TRUC`, `KHTB`, `TRUONG_KHOA`, `DIEU_PHOI_TRUC` |
-| `duty.manage` | Sinh ô, xếp và gỡ người trực **trong khoa được giao**; xem tổng hợp giờ trực và nhật ký | `KHTB`, `TRUONG_KHOA`, `DIEU_PHOI_TRUC` |
+| `duty.view` | Xem lịch trực đã công bố, danh mục, lưới lịch | Bác sĩ/điều dưỡng và các vai trò lịch trực |
+| `duty.manage` | Sinh ô, xếp và gỡ người trực; ghi nhận, duyệt hoặc từ chối nghỉ/bận **trong khoa được giao** | `NGUOI_XEP_LICH_TRUC_KHOA`, `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.manage-all` | Xếp trực mọi phòng khám; bỏ qua ràng buộc khi có lý do | `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.period.manage` | Tạo, cấu hình, công bố, chốt sớm, mở chốt và xoá cả kỳ lịch | `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.catalog.manage` | Danh mục phòng khám, ca trực, vai trò trực, ngày nghỉ | `ADMIN`, `DIEU_PHOI_TRUC` |
-| `duty.swap.approve` | Duyệt đổi/nhường ca trước khi chốt (**trong khoa**) | `KHTB`, `TRUONG_KHOA`, `DIEU_PHOI_TRUC` |
+| `duty.swap.approve` | Duyệt đổi/nhường ca trước khi chốt (**trong khoa**) | `NGUOI_XEP_LICH_TRUC_KHOA`, `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.exception.resolve` | Duyệt ngoại lệ sau khi chốt; điều chỉnh người trực trực tiếp (**tài khoản đổi trực của KHTH**) | `KHTB`, `DIEU_PHOI_TRUC` |
-| `duty.export` | Xuất Excel lịch và bảng giờ trực | `KHTB`, `TRUONG_KHOA`, `DIEU_PHOI_TRUC` |
+| `duty.export` | Xuất Excel lịch và bảng giờ trực | `NGUOI_XEP_LICH_TRUC_KHOA`, `KHTB`, `DIEU_PHOI_TRUC` |
 
-**Hai vai trò mới**
+**Vai trò lịch trực**
 
-- `DIEU_PHOI_TRUC` — *Điều phối lịch trực (KHTH)*. Phạm vi toàn viện, 9 quyền. Đây là **tài khoản đổi trực** để xử lý ngoại lệ và điều chỉnh khẩn.
-- `NHAN_VIEN_TRUC` — *Nhân viên trực khám*. Phạm vi cá nhân, 2 quyền (`duty.view`, `duty.register`). Gán cho bác sĩ, điều dưỡng tham gia trực. Chỉ thấy lịch chung và thao tác trên ca của mình; không xem tổng hợp giờ trực, nhật ký, trang Kỳ lịch và trang Danh mục.
+- `DIEU_PHOI_TRUC` — *Điều phối lịch trực (KHTH)*. Phạm vi toàn viện; lập/công bố/chốt kỳ, quản lý danh mục và xử lý ngoại lệ sau khi chốt.
+- `NGUOI_XEP_LICH_TRUC_KHOA` — *Người xếp lịch trực khoa*. Gán thêm cho Hành chính khoa, Chủ nhiệm khoa hoặc Phó chủ nhiệm khoa; phạm vi `DEPT`. Vai trò chỉ xếp, gỡ, duyệt nghỉ/bận và duyệt đổi/nhường tại các khoa đã gán, không lập/công bố kỳ và không can thiệp khoa khác.
+- `NHAN_VIEN_TRUC` — *Nhân viên trực khám*. Bác sĩ, điều dưỡng chỉ có `duty.view`: chỉ xem lịch đã công bố. Không được tự đăng ký, nhường/đổi ca hoặc tự báo nghỉ/bận.
 
 **Quy tắc phạm vi**
 
@@ -193,4 +192,4 @@ Chín quyền và hai vai trò mới (tạo bởi migration `0015_lich_truc.sql`
 - `duty.exception.resolve` là quyền toàn viện. Mỗi lần dùng đều ghi nhật ký kèm lý do.
 - Bỏ qua ràng buộc khi xếp người (`force`) chỉ dành cho `duty.manage-all` và bắt buộc ghi lý do.
 - Bản nháp kỳ lịch và nhật ký thay đổi chỉ người quản lý (`duty.manage` hoặc `duty.manage-all`) thấy.
-- Danh bạ nhân viên (`/duty/staff`) chỉ hiển thị họ tên, chức danh, khoa của người đang hoạt động, cho người có `duty.register`.
+- Danh sách ứng viên khi xếp trực chỉ hiển thị cho người có quyền quản lý lịch; phạm vi phòng và khoa luôn được kiểm tra lại ở máy chủ.

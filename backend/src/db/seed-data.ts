@@ -178,7 +178,6 @@ export const PERMISSIONS: PermissionSeed[] = [
 
   // Lịch trực khám bệnh
   P('duty', 'view', 'Xem lịch trực', 'Xem lịch trực các phòng khám và kỳ lịch đã công bố'),
-  P('duty', 'register', 'Đăng ký / nhường / đổi ca của mình', 'Tự đăng ký ca trống, nhường hoặc đổi ca, báo nghỉ phép của chính mình'),
   P('duty', 'manage', 'Phân công trực (trong khoa)', 'Tạo ô trực, phân công/gỡ người trực, ghi nhận nghỉ phép — trong phạm vi khoa được giao'),
   P('duty', 'manage-all', 'Điều phối toàn viện', 'Phân công mọi phòng khám; bỏ qua ràng buộc khi có lý do (ghi nhật ký)'),
   P('duty', 'period.manage', 'Lập, chốt và công bố kỳ lịch', 'Tạo kỳ lịch, cấu hình ràng buộc, công bố, chốt sớm và mở chốt'),
@@ -300,7 +299,7 @@ export const ROLES: RoleSeed[] = [
     color: '#2563eb',
     isSystem: true,
     permissions: [
-      'duty.view', 'duty.register', 'duty.manage', 'duty.manage-all', 'duty.period.manage', 'duty.swap.approve', 'duty.exception.resolve', 'duty.export',
+      'duty.view', 'duty.manage', 'duty.manage-all', 'duty.period.manage', 'duty.swap.approve', 'duty.exception.resolve', 'duty.export',
       'dashboard.view', 'dashboard.view-all',
       'studio.dashboard.view', 'studio.report.view',
       'hsba.request.view', 'hsba.request.view-all',
@@ -384,7 +383,7 @@ export const ROLES: RoleSeed[] = [
     color: '#7c3aed',
     isSystem: true,
     permissions: [
-      'duty.view', 'duty.register', 'duty.manage', 'duty.swap.approve', 'duty.export',
+      'duty.view',
       'dashboard.view',
       'studio.dashboard.view', 'studio.report.view',
       // Báo cáo của khoa mình
@@ -466,20 +465,31 @@ export const ROLES: RoleSeed[] = [
     color: '#0891b2',
     isSystem: true,
     permissions: [
-      'duty.view', 'duty.register', 'duty.manage', 'duty.manage-all', 'duty.period.manage',
+      'duty.view', 'duty.manage', 'duty.manage-all', 'duty.period.manage',
       'duty.catalog.manage', 'duty.swap.approve', 'duty.exception.resolve', 'duty.export',
     ],
+  },
+  {
+    code: 'NGUOI_XEP_LICH_TRUC_KHOA',
+    name: 'Người xếp lịch trực khoa',
+    description:
+      'Giao cho Hành chính khoa, Chủ nhiệm khoa hoặc Phó chủ nhiệm khoa để phân công, gỡ phân công, duyệt nghỉ/bận và duyệt đổi/nhường ca trong đúng các khoa được gán',
+    dataScope: 'DEPT',
+    priority: 35,
+    color: '#0f766e',
+    isSystem: true,
+    permissions: ['duty.view', 'duty.manage', 'duty.swap.approve', 'duty.export'],
   },
   {
     code: 'NHAN_VIEN_TRUC',
     name: 'Nhân viên trực khám',
     description:
-      'Bác sĩ, điều dưỡng tham gia trực phòng khám: xem lịch chung, tự đăng ký ca trống, nhường/đổi ca và báo nghỉ phép',
+      'Bác sĩ, điều dưỡng tham gia trực phòng khám: chỉ xem lịch trực đã công bố; việc xếp, đổi/nhường ca và ghi nhận nghỉ/bận do người xếp lịch trực khoa xử lý',
     dataScope: 'OWN',
     priority: 90,
     color: '#16a34a',
     isSystem: true,
-    permissions: ['duty.view', 'duty.register'],
+    permissions: ['duty.view'],
   },
 ];
 

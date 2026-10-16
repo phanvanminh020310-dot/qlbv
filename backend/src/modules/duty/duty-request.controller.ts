@@ -12,8 +12,8 @@ export class DutyRequestController {
   constructor(private readonly service: DutyRequestService) {}
 
   @Get('requests')
-  @RequirePermissions('duty.register')
-  @ApiOperation({ summary: 'Hộp yêu cầu: mine | incoming | approval | all' })
+  @RequirePermissions(['duty.manage', 'duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'], 'any')
+  @ApiOperation({ summary: 'Hộp yêu cầu đổi/nhường ca dành cho người xếp lịch, trong phạm vi được giao' })
   list(@CurrentUser() user: AccessContext, @Query() q: RequestQueryDto) {
     return this.service.list(user, q);
   }

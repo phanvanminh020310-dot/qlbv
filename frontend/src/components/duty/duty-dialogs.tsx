@@ -241,9 +241,7 @@ export function CellDialog({
   subtitle,
   slots,
   grid,
-  myOptions,
   onAssign,
-  onRequest,
 }: {
   open: boolean;
   onClose: () => void;
@@ -251,11 +249,8 @@ export function CellDialog({
   subtitle: string;
   slots: GridSlot[];
   grid: GridResponse;
-  myOptions: Map<number, { canRegister: boolean; errors: string[]; warnings: string[]; mine: boolean }>;
   onAssign: (slot: GridSlot) => void;
-  onRequest: (slot: GridSlot, mode: RequestType) => void;
 }) {
-  const actions = useDutyActions();
   const v = grid.viewer;
   const locked = grid.period.locked;
   return (
@@ -264,8 +259,6 @@ export function CellDialog({
         {slots.length === 0 ? <div className="py-8 text-center text-sm text-[var(--muted-foreground)]">Không có ca trực</div> : null}
         {slots.map((s) => {
           const mine = s.assignments.some((a) => a.userId === v.userId);
-          const opt = myOptions.get(s.id);
-          const canRegister = !!opt?.canRegister && !mine && !locked && !s.past && s.filled < s.requiredCount;
           return (
             <div key={s.id} className="rounded-xl border bg-[var(--card)] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -304,27 +297,6 @@ export function CellDialog({
                   </Button>
                 ) : null}
                 {v.canManage && locked ? <span className="text-xs text-[var(--muted-foreground)]">Đã chốt — không đổi người trực tại đây</span> : null}
-                {mine && !s.past ? (
-                  <>
-                    <Button size="sm" variant="outline" disabled={locked} onClick={() => onRequest(s, "NHUONG")} title={locked ? "Đã chốt: dùng yêu cầu ngoại lệ" : undefined}>
-                      Nhường ca
-                    </Button>
-                    <Button size="sm" variant="outline" disabled={locked} onClick={() => onRequest(s, "DOI")}>
-                      Đổi ca
-                    </Button>
-                    <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => onRequest(s, "NGOAI_LE")}>
-                      Báo sự cố / thay trực
-                    </Button>
-                  </>
-                ) : null}
-                {canRegister && v.canRegister ? (
-                  <Button size="sm" disabled={actions.register.isPending} onClick={() => actions.register.mutate({ slotId: s.id })}>
-                    Đăng ký ca này
-                  </Button>
-                ) : null}
-                {!mine && !canRegister && opt && opt.errors.length ? (
-                  <span className="text-[11px] text-[var(--muted-foreground)]">Chưa đăng ký được: {opt.errors[0]}</span>
-                ) : null}
               </div>
             </div>
           );
