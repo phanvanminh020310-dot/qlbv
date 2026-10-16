@@ -38,8 +38,13 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 
+# Git/worktree trên VPS có thể để file migration mới ở mode 0600. API chạy user node,
+# vì vậy luôn chuẩn hoá quyền đọc sau COPY để migration không crash vì EACCES.
+RUN chmod -R a+rX /app/drizzle /app/scripts /app/src \
+    && mkdir -p /app/uploads /app/backups \
+    && chown -R node:node /app/uploads /app/backups
+
 # Thư mục dữ liệu người dùng tải lên & sao lưu (gắn volume khi chạy thật)
-RUN mkdir -p /app/uploads /app/backups && chown -R node:node /app/uploads /app/backups
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s \
