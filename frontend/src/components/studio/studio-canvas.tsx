@@ -6,7 +6,7 @@
  *  - Chỉnh sửa: kéo-thả đổi vị trí (kéo từ tay cầm ⠿), đổi rộng [−]/[+],
  *    đổi cao S/M/L, cấu hình ⚙, nhân bản ⧉, xoá ✕.
  */
-import { useState, type DragEvent } from 'react';
+import { useState, type CSSProperties, type DragEvent } from 'react';
 import {
   Copy,
   GripVertical,
@@ -72,7 +72,7 @@ export function StudioCanvas({ widgets, editing, onChange, onConfig }: StudioCan
   }
 
   return (
-    <div className="grid grid-cols-12 gap-3" data-testid="studio-canvas">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-12" data-testid="studio-canvas">
       {widgets.map((widget) => {
         const height = WIDGET_HEIGHTS[widget.h] ?? WIDGET_HEIGHTS.M;
         const showHeader = widget.type !== 'kpi' && widget.type !== 'text';
@@ -81,8 +81,8 @@ export function StudioCanvas({ widgets, editing, onChange, onConfig }: StudioCan
           <div
             key={widget.id}
             data-widget-id={widget.id}
-            className="min-w-0"
-            style={{ gridColumn: `span ${widget.w} / span ${widget.w}` }}
+            className="col-span-1 min-w-0 sm:[grid-column:span_var(--studio-span)_/_span_var(--studio-span)]"
+            style={{ '--studio-span': widget.w } as CSSProperties}
             onDragOver={(e) => {
               if (!editing || !dragId) return;
               e.preventDefault();

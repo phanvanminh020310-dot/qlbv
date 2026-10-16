@@ -217,9 +217,9 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
   return (
     <div className="space-y-4">
       {/* Thanh công cụ trang */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 sm:items-center">
         <Select
-          className="max-w-64"
+          className="w-full sm:max-w-64"
           value={String(page.id)}
           onChange={(e) => navigate(Number(e.target.value))}
           title="Chọn trang"
@@ -233,7 +233,7 @@ export function StudioPageFrame({ page, pages, sources, vocabulary, onNavigate, 
         {scopeBadge(page.scope)}
         {page.isDefault ? <Badge tone="warning">Mặc định</Badge> : null}
         <RealtimeDot className="ml-1" />
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
 
         <Button
           variant="outline"

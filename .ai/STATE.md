@@ -15,11 +15,12 @@
 3. **GitHub token (PAT)**: người dùng gửi trong chat. **Không ghi token vào tệp nào, không để trong `git remote`.**
    Push bằng: `git push "https://x-access-token:<PAT>@github.com/pvminh94/qlbv.git" HEAD:main 2>&1 | sed 's/ghp_[A-Za-z0-9]*/***/g'`.
    Không có token → xin lại. Nhắc người dùng thu hồi token sau khi dùng.
-4. **Mỗi khi báo cáo xong việc phải kèm lệnh cập nhật VPS**:
-   `cd /opt/qlbs && sudo bash deploy/update.sh --backup`
-   (update.sh tự `git pull`, tự chạy lại bằng bản mới nếu chính nó đổi, tự cài font TNR — **không** hướng dẫn `git pull` riêng).
+4. **Mỗi khi báo cáo xong việc phải kèm đúng một lệnh cập nhật VPS**:
+   `cd /opt/qlbs && sudo bash deploy/update.sh`
+   (update.sh tự `git pull`, tự chạy lại bằng bản mới nếu chính nó đổi, tự cài font TNR — **không** hướng dẫn `git pull` riêng hoặc thêm đối số triển khai).
 5. Git identity trong repo: `git config user.name "QLBS Bot"; git config user.email bot@qlbs.local` (mất sau reset vì `.git/config` không được lưu).
-6. Giữ bit thực thi: `chmod +x deploy/*.sh && git update-index --chmod=+x deploy/*.sh` trước khi commit.
+6. Chỉ stage các tệp thật sự thuộc yêu cầu đang thực hiện. Không stage/commit thay đổi mode-only hoặc thay đổi có sẵn ngoài phạm vi (đặc biệt `deploy/*.sh`) nếu người dùng không yêu cầu.
+7. **Bắt buộc kiểm thử hồi quy kỹ trước mỗi push:** chạy tuần tự (không chạy song song các tác vụ nặng) `npm test && npm run build` trong `backend`, `npm run typecheck && npm run build` trong `frontend`, `git diff --check`, và Playwright xác thực desktop + mobile cho phần UI thay đổi (đăng nhập, luồng chính, không lỗi console/pageerror, không tràn ngang). Chỉ commit/push khi tất cả đạt; sau push phải kiểm tra GitHub Actions quality gate thành công.
 
 ## 2. Dự án
 
