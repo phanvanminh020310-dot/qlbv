@@ -1,22 +1,22 @@
-# Cài QLBS Kiosk 2.0.1 — WinForms mới
+# Cài QLBS Kiosk 2.0.2 — WinForms mới
 
-> **Chính sách 2.0.1:** cài/gỡ phải có quyền Administrator, nhưng Kiosk chỉ chạy cho tài khoản User tiêu chuẩn. Tài khoản thuộc nhóm Administrators được bỏ qua kể cả token UAC chưa nâng quyền; không kiểm tra theo tên đăng nhập. Cài khi đang đăng nhập Administrator thì Desktop vẫn bình thường; đăng nhập User thường để nghiệm thu Kiosk.
+> **Bản 2.0.2 theo đúng gói cũ đã chốt:** Kiosk áp dụng cho **mọi tài khoản Windows, bao gồm Administrator**, không có nhánh bỏ qua tài khoản/nhóm quản trị viên. Không dùng hành vi chỉ khóa User của 2.0.1 trong bản này.
 >
-> Nút CNTT/hotkey giữ hook bảo vệ khi nhập PIN. Báo nghỉ/bận trên web chỉ tạo yêu cầu chờ duyệt; quản lý phải bố trí người thay hợp lệ. Xem [hướng dẫn nâng VPS cũ và HTTPS riêng](https://github.com/pvminh94/qlbv/blob/main/deploy/NANG_CAP_VPS_CU_VA_HTTPS.md).
+> Chỉ đưa bản sửa nhập PIN CNTT vào nền mã 2.0.0: giữ focus hộp PIN, không để cửa sổ khóa giành focus và xử lý modifier/key-up. Hook bảo vệ vẫn hoạt động; xác minh PIN/mở khóa phía server giữ nguyên. Cài/gỡ vẫn cần UAC/Administrator.
 >
-> Bản 2.0.0 đã phát hành giữ nguyên; 2.0.1 là tài sản phiên bản mới. Chỉ sử dụng EXE 2.0.1 khi nó xuất hiện ở Assets cùng checksum và CI của chính commit ghi trong BUILD_INFO; không coi kết quả CI 2.0.0 là bằng chứng cho EXE mới.
+> Nếu API v2 của gói cũ đang hoạt động thì sửa PIN này **không yêu cầu thay cấu hình hoặc nâng backend**, không đổi URL/phòng/certificate/port và không cần sinh lại HTTPS. Bộ P2 một-lần vẫn dùng đúng hai BAT. Các bản phát hành cũ giữ nguyên để đối chiếu.
 
 
 **Đây là bản native một `QLBS_Kiosk.exe`. Không dùng Edge Kiosk, WebView hay `QLBS_Kiosk_Agent.exe` cũ.**
 
 ## Tải đúng bộ cài
 
-- **[Tải QLBS_Kiosk_2.0.1.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.1/QLBS_Kiosk_2.0.1.zip)**
-- [Trang phát hành và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.1)
+- **[Tải QLBS_Kiosk_2.0.2.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.2/QLBS_Kiosk_2.0.2.zip)**
+- [Trang phát hành và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2)
 - **[Hướng dẫn chi tiết từ đầu đến cuối](HUONG_DAN_SU_DUNG.md)**
 - [Kết quả kiểm thử Windows và các mục còn phải nghiệm thu](KIEM_THU_V2.md)
 
-> Trong trang Releases, chọn tài sản **`QLBS_Kiosk_2.0.1.zip`** ở mục **Assets**. Không chọn **Source code (zip)** nếu cần EXE có sẵn. `Code → Download ZIP` chỉ tải mã nguồn; các file EXE/ZIP phát hành không được commit vào thư mục này.
+> Trong trang Releases, chọn tài sản **`QLBS_Kiosk_2.0.2.zip`** ở mục **Assets**. Không chọn **Source code (zip)** nếu cần EXE có sẵn. `Code → Download ZIP` chỉ tải mã nguồn; các file EXE/ZIP phát hành không được commit vào thư mục này.
 >
 > Artifacts trong Actions là đầu ra kiểm thử có thời hạn lưu. Releases là nơi tải bộ cài chính thức. Nếu tải gói chỉ chứa `.cs` và hai BAT, đó là gói nguồn; BAT vẫn biên dịch được nhưng không phải cách tải EXE khuyến nghị.
 
@@ -27,7 +27,7 @@
 Trong thư mục repository QLBV đang vận hành, sau khi kiểm tra sao lưu theo quy trình viện:
 
 ```bash
-sudo bash deploy/update.sh --all --backup
+sudo bash deploy/update.sh
 ```
 
 **Phải cập nhật API v2 trước khi cài EXE mới.** VPS 2 tiếp tục chạy AI hiện có; kiểm tra `AI_SERVICE_URL` của VPS 1 trỏ đúng VPS 2.
@@ -77,7 +77,7 @@ Nếu web chạy HTTPS cổng 3000, phải nhập cả cổng: **`https://qlbv.b
 
 **Không nhập** `/login`, `/kiosk/PK01`, `/api`, cổng backend `4000`, cổng AI `8001` hay `localhost`.
 
-Bấm **Kiểm tra kết nối** → khi hợp lệ bấm **Cài đặt máy trạm** → chấp nhận **UAC/Administrator**. Không cần tự tạo Task Scheduler hay file Startup. Cài xong chỉ tự chạy nếu tài khoản Desktop là User thường; lần đăng nhập User thường sau cũng tự chạy. Administrator không bị khóa.
+Bấm **Kiểm tra kết nối** → khi hợp lệ bấm **Cài đặt máy trạm** → chấp nhận **UAC/Administrator**. Không cần tự tạo Task Scheduler hay file Startup. Cài xong ứng dụng tự chạy; lần đăng nhập Windows sau cũng tự chạy.
 
 ### 5. Thử bằng điện thoại của bác sĩ
 
@@ -118,6 +118,6 @@ QLBS_Kiosk.exe /install /server https://qlbv.benhvien.vn:3000 /room PK02 /quiet 
 
 ## Dành cho người phát hành phiên bản
 
-Trong **Actions → Kiosk standalone quality gate → Run workflow**, chọn nhánh **main**, bật **publish_release**, nhập tag đúng phiên bản gói, ví dụ `kiosk-v2.0.1`.
+Trong **Actions → Kiosk standalone quality gate → Run workflow**, chọn nhánh **main**, bật **publish_release**, nhập tag đúng phiên bản gói, ví dụ `kiosk-v2.0.2`.
 
 Workflow phải chạy đạt backend, frontend và Windows trước; sau đó kiểm tra checksum/commit nguồn của artifact, tạo draft Release, tải đủ ZIP/EXE và checksum lên rồi mới công bố. Dùng `GITHUB_TOKEN` ngắn hạn của Actions, không lưu PAT cá nhân trong source. Nếu Release đã tồn tại, workflow từ chối thay thế asset; phiên bản mới phải có version/tag riêng.

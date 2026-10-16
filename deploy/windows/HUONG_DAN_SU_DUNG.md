@@ -1,10 +1,10 @@
 # QLBS Kiosk 2.0 — Hướng dẫn cài mới, cập nhật và vận hành
 
-> **Chính sách 2.0.1:** cài/gỡ phải có quyền Administrator, nhưng Kiosk chỉ chạy cho tài khoản User tiêu chuẩn. Tài khoản thuộc nhóm Administrators được bỏ qua kể cả token UAC chưa nâng quyền; không kiểm tra theo tên đăng nhập. Cài khi đang đăng nhập Administrator thì Desktop vẫn bình thường; đăng nhập User thường để nghiệm thu Kiosk.
+> **Bản 2.0.2 theo đúng gói cũ đã chốt:** Kiosk áp dụng cho **mọi tài khoản Windows, bao gồm Administrator**, không có nhánh bỏ qua tài khoản/nhóm quản trị viên. Không dùng hành vi chỉ khóa User của 2.0.1 trong bản này.
 >
-> Nút CNTT/hotkey giữ hook bảo vệ khi nhập PIN. Báo nghỉ/bận trên web chỉ tạo yêu cầu chờ duyệt; quản lý phải bố trí người thay hợp lệ. Xem [hướng dẫn nâng VPS cũ và HTTPS riêng](https://github.com/pvminh94/qlbv/blob/main/deploy/NANG_CAP_VPS_CU_VA_HTTPS.md).
+> Chỉ đưa bản sửa nhập PIN CNTT vào nền mã 2.0.0: giữ focus hộp PIN, không để cửa sổ khóa giành focus và xử lý modifier/key-up. Hook bảo vệ vẫn hoạt động; xác minh PIN/mở khóa phía server giữ nguyên. Cài/gỡ vẫn cần UAC/Administrator.
 >
-> Bản 2.0.0 đã phát hành giữ nguyên; 2.0.1 là tài sản phiên bản mới. Chỉ sử dụng EXE 2.0.1 khi nó xuất hiện ở Assets cùng checksum và CI của chính commit ghi trong BUILD_INFO; không coi kết quả CI 2.0.0 là bằng chứng cho EXE mới.
+> Nếu API v2 của gói cũ đang hoạt động thì sửa PIN này **không yêu cầu thay cấu hình hoặc nâng backend**, không đổi URL/phòng/certificate/port và không cần sinh lại HTTPS. Bộ P2 một-lần vẫn dùng đúng hai BAT. Các bản phát hành cũ giữ nguyên để đối chiếu.
 
 
 **Cập nhật: 16/10/2026 · WinForms native · Một EXE · Bệnh viện quân y 4**
@@ -29,11 +29,11 @@
 
 ### 1.1. Đường tải
 
-- **[Tải QLBS_Kiosk_2.0.1.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.1/QLBS_Kiosk_2.0.1.zip)**.
-- [Trang GitHub Release và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.1).
+- **[Tải QLBS_Kiosk_2.0.2.zip](https://github.com/pvminh94/qlbv/releases/download/kiosk-v2.0.2/QLBS_Kiosk_2.0.2.zip)**.
+- [Trang GitHub Release và checksum](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2).
 - [README cài nhanh ngay trong thư mục Windows](README.md).
 
-Trong **Releases → Assets**, tải đúng **`QLBS_Kiosk_2.0.1.zip`**. Không nhầm với **Source code (zip)** mà GitHub tự tạo. `Code → Download ZIP` tải cả repository mã nguồn, không phải gói EXE đã build. Artifacts trong Actions là bản build kiểm thử có thời hạn lưu, còn Releases là nơi phân phối bộ cài.
+Trong **Releases → Assets**, tải đúng **`QLBS_Kiosk_2.0.2.zip`**. Không nhầm với **Source code (zip)** mà GitHub tự tạo. `Code → Download ZIP` tải cả repository mã nguồn, không phải gói EXE đã build. Artifacts trong Actions là bản build kiểm thử có thời hạn lưu, còn Releases là nơi phân phối bộ cài.
 
 Gói phát hành có EXE được biên dịch bằng compiler .NET Framework trên **Windows CI**, không phải bản Mono dùng trong vòng thử nghiệm Linux trước đây. Xem `BUILD_INFO.txt` để biết commit nguồn. `SHA256SUMS.txt` chứa checksum các tệp trong gói; checksum ZIP được phát hành cạnh ZIP ở Releases.
 
@@ -56,7 +56,7 @@ Gói phát hành có EXE được biên dịch bằng compiler .NET Framework tr
 Kiểm tra sao lưu và quy trình bảo trì của viện. SSH vào **VPS 1**, chuyển vào thư mục repository QLBV đang vận hành rồi chạy:
 
 ```bash
-sudo bash deploy/update.sh --all --backup
+sudo bash deploy/update.sh
 ```
 
 Chờ cập nhật thành công. Không cài EXE v2 với backend cũ: bộ cài cần API v2 và sẽ từ chối giao thức/phòng/URL không phù hợp. Việc tải EXE không tự cập nhật VPS.
@@ -126,7 +126,7 @@ Chứng chỉ HTTPS phải khớp tên miền/IP đang nhập. Không dùng ch�
 
 ### Bước 1 — Tải và giải nén
 
-Tải ZIP từ [Releases](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.1), giải nén vào một thư mục cục bộ, ví dụ `C:\BoCai\QLBS_Kiosk_2.0.1`. Không mở EXE trực tiếp bên trong cửa sổ ZIP.
+Tải ZIP từ [Releases](https://github.com/pvminh94/qlbv/releases/tag/kiosk-v2.0.2), giải nén vào một thư mục cục bộ, ví dụ `C:\BoCai\QLBS_Kiosk_2.0.2`. Không mở EXE trực tiếp bên trong cửa sổ ZIP.
 
 Trong cùng thư mục phải thấy ít nhất:
 
@@ -153,7 +153,7 @@ Mở PowerShell tại thư mục vừa giải nén:
 Get-FileHash .\QLBS_Kiosk.exe -Algorithm SHA256
 ```
 
-Mở `SHA256SUMS.txt`, đối chiếu hash của `QLBS_Kiosk.exe`. Có thể kiểm tra ZIP với file `QLBS_Kiosk_2.0.1.zip.sha256` tải cạnh ZIP trên Releases. Nếu khác hash, dừng cài và tải/kiểm tra lại.
+Mở `SHA256SUMS.txt`, đối chiếu hash của `QLBS_Kiosk.exe`. Có thể kiểm tra ZIP với file `QLBS_Kiosk_2.0.2.zip.sha256` tải cạnh ZIP trên Releases. Nếu khác hash, dừng cài và tải/kiểm tra lại.
 
 ### Bước 3 — Mở trình thiết lập
 
@@ -187,13 +187,13 @@ Phải có thông báo kết nối hợp lệ/đúng tên phòng mới tiếp t�
 
 Bấm **Cài đặt máy trạm**, xác nhận quyền **Administrator** khi Windows hỏi. Không cấp UAC hoặc preflight thất bại thì cấu hình đang chạy không bị thay thế.
 
-Bộ cài chép EXE vào Program Files, lưu cấu hình có ACL bảo vệ và đăng ký **một** mục tự chạy HKLM. Cài tương tác sẽ khởi động ứng dụng qua Explorer; hằng ngày ứng dụng chạy bằng tài khoản người dùng, không phải tác vụ Administrator.
+Bộ cài chép EXE vào Program Files, lưu cấu hình có ACL bảo vệ và đăng ký **một** mục tự chạy HKLM. Cài tương tác sẽ khởi động ứng dụng qua Explorer; khi vận hành, mọi tài khoản đăng nhập đều bị áp dụng Kiosk, kể cả Administrator.
 
 Nếu Explorer không khởi chạy được ngay, cấu hình đã lưu; đăng xuất/đăng nhập Windows để mục tự chạy hoạt động. Không tạo thêm mục Startup để “sửa” bằng cách chạy trùng.
 
 ### Bước 7 — Kiểm tra khởi động lại
 
-Sau khi kiểm thử an toàn và có phương án IT cứu hộ, đăng nhập **User tiêu chuẩn** hoặc khởi động lại PC vào tài khoản đó. Ứng dụng phải tự kết nối máy chủ, hiện trạng thái khoá/QR hoặc khôi phục lease còn hợp lệ do server xác nhận. Nếu chưa có mạng, hiển thị đang đồng bộ và tự phục hồi khi mạng có lại; không dùng QR giả hoặc dữ liệu lịch cache như lịch hiện tại.
+Sau khi kiểm thử an toàn và có phương án IT cứu hộ, đăng xuất/đăng nhập hoặc khởi động lại PC. Cả User và Administrator đều phải tự chạy Kiosk khi cấu hình đã cài; ứng dụng tự kết nối máy chủ, hiện trạng thái khoá/QR hoặc khôi phục lease còn hợp lệ do server xác nhận. Nếu chưa có mạng, hiển thị đang đồng bộ và tự phục hồi khi mạng có lại; không dùng QR giả hoặc dữ liệu lịch cache như lịch hiện tại.
 
 ## 5. Kiểm thử nhận ca bằng điện thoại
 
@@ -331,7 +331,7 @@ Admins/SYSTEM ghi cấu hình, Users đọc. Log quay vòng khoảng 1 MB/tệp,
 
 | Triệu chứng | Kiểm tra / xử lý |
 |---|---|
-| GitHub không thấy EXE trong `deploy/windows` | Đây là thư mục mã nguồn. Tải **Assets → QLBS_Kiosk_2.0.1.zip** ở Releases, không chọn Source code ZIP. |
+| GitHub không thấy EXE trong `deploy/windows` | Đây là thư mục mã nguồn. Tải **Assets → QLBS_Kiosk_2.0.2.zip** ở Releases, không chọn Source code ZIP. |
 | Sai giao thức API / không tìm thấy trang quét | Cập nhật VPS 1; nhập URL **web gốc**, không phải backend 4000/AI 8001; kiểm tra proxy `/api` và trang `/scan`. |
 | Không nhận mã phòng | Kiểm tra đúng mã phòng đang hoạt động; không nhập tên phòng; `PK01` khác `PK010`. |
 | HTTPS/chứng chỉ lỗi | Kiểm tra tên miền/IP/SAN, ngày hết hạn, chuỗi chứng chỉ và trust trên PC/điện thoại. Không tắt SSL validation. |

@@ -27,8 +27,8 @@ using Net.Codecrete.QrCodeGenerator;
 [assembly: AssemblyDescription("Xác thực ca trực — Bệnh viện quân y 4")]
 [assembly: AssemblyCompany("Bệnh viện quân y 4")]
 [assembly: AssemblyProduct("QLBS Kiosk")]
-[assembly: AssemblyVersion("2.0.1.0")]
-[assembly: AssemblyFileVersion("2.0.1.0")]
+[assembly: AssemblyVersion("2.0.2.0")]
+[assembly: AssemblyFileVersion("2.0.2.0")]
 [assembly: AssemblyCopyright(QLBS.Kiosk.ThirdParty.Notice)]
 
 namespace QLBS.Kiosk
@@ -45,7 +45,7 @@ namespace QLBS.Kiosk
 
     internal static class Program
     {
-        internal const string Version = "2.0.1";
+        internal const string Version = "2.0.2";
         internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "QLBS Kiosk");
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QLBS", "Kiosk");
         internal static readonly string ConfigPath = Path.Combine(DataDirectory, "config.ini");
@@ -70,13 +70,8 @@ namespace QLBS.Kiosk
                 try { Native.SetProcessDPIAware(); } catch (EntryPointNotFoundException) { }
                 if (options.Has("uninstall")) return Installer.Uninstall(options);
                 if (options.Has("install")) return Installer.InstallFromOptions(options);
-                bool explicitSetup = options.Has("setup") ||
-                    (args.Length == 0 && !String.Equals(Path.GetFullPath(Application.ExecutablePath), Path.Combine(InstallDirectory, "QLBS_Kiosk.exe"), StringComparison.OrdinalIgnoreCase));
-                // HKLM Run is machine-wide, but runtime policy is per logged-on account.
-                // UAC-filtered admin tokens still carry the Administrators SID (deny-only).
-                // Skip BEFORE mutex, networking, forms and hooks; never rely on the username.
-                if (!explicitSetup && AccountPolicy.IsAdministratorAccount()) return 0;
-                if (explicitSetup || !File.Exists(ConfigPath))
+                if (options.Has("setup") || !File.Exists(ConfigPath) ||
+                    (args.Length == 0 && !String.Equals(Path.GetFullPath(Application.ExecutablePath), Path.Combine(InstallDirectory, "QLBS_Kiosk.exe"), StringComparison.OrdinalIgnoreCase)))
                 {
                     Application.Run(new SetupForm());
                     return 0;
@@ -99,52 +94,6 @@ namespace QLBS.Kiosk
             finally
             {
                 if (mutex != null) { mutex.Close(); mutex = null; }
-            }
-        }
-    }
-
-    internal static class AccountPolicy
-    {
-        internal const string AdministratorsSid = "S-1-5-32-544";
-        internal static bool HasAdministratorSid(IEnumerable<string> groupSids)
-        {
-            foreach (string sid in groupSids) if (String.Equals(sid, AdministratorsSid, StringComparison.OrdinalIgnoreCase)) return true;
-            return false;
-        }
-        // TOKEN_GROUPS has a DWORD count, alignment padding, then SID_AND_ATTRIBUTES[].
-        // Pointer-size alignment is essential: SID_AND_ATTRIBUTES is 16 bytes on x64, 8 on x86.
-        internal static bool HasAdministratorInTokenGroups(IntPtr buffer, int byteCount)
-        {
-            if (buffer == IntPtr.Zero || byteCount < 4) throw new InvalidDataException("TOKEN_GROUPS bị thiếu.");
-            int count = Marshal.ReadInt32(buffer), offset = IntPtr.Size, stride = IntPtr.Size == 8 ? 16 : 8;
-            if (count == 0) return false;
-            if (count < 0 || byteCount < offset || count > (byteCount - offset) / stride)
-                throw new InvalidDataException("TOKEN_GROUPS không hợp lệ.");
-            for (int i = 0; i < count; i++)
-            {
-                IntPtr sid = Marshal.ReadIntPtr(buffer, offset + i * stride);
-                if (sid != IntPtr.Zero && String.Equals(new SecurityIdentifier(sid).Value, AdministratorsSid, StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            return false;
-        }
-        internal static bool IsAdministratorAccount()
-        {
-            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
-            {
-                if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) return true;
-                // WindowsIdentity.Groups may omit deny-only SIDs on .NET Framework.
-                // Read the raw token groups and deliberately keep ALL group attributes.
-                int needed;
-                Native.GetTokenInformation(identity.Token, 2, IntPtr.Zero, 0, out needed);
-                if (needed <= 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Không đọc được nhóm tài khoản Windows.");
-                IntPtr buffer = Marshal.AllocHGlobal(needed);
-                try
-                {
-                    if (!Native.GetTokenInformation(identity.Token, 2, buffer, needed, out needed))
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Không đọc được token tài khoản Windows.");
-                    return HasAdministratorInTokenGroups(buffer, needed);
-                }
-                finally { Marshal.FreeHGlobal(buffer); }
             }
         }
     }
@@ -853,7 +802,6 @@ namespace QLBS.Kiosk
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool UnhookWindowsHookEx(IntPtr hook);
         [DllImport("user32.dll")] internal static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)] internal static extern IntPtr GetModuleHandle(string name);
-        [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GetTokenInformation(IntPtr token, int tokenInformationClass, IntPtr buffer, int bufferLength, out int returnLength);
         [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
         [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool SetForegroundWindow(IntPtr handle);
@@ -1214,7 +1162,7 @@ namespace QLBS.Kiosk
             using (ApiClient api = new ApiClient(config)) api.Preflight();
             bool launch = !options.Has("no-start") && !options.Has("quiet") && Process.GetCurrentProcess().SessionId != 0;
             Install(config, launch);
-            if (!options.Has("quiet") && !launch) MessageBox.Show("Đã cài QLBS Kiosk cho " + config.RoomCode + ".\nChỉ tự chạy cho tài khoản User thường, không khóa tài khoản thuộc Administrators.\n\n" + (launch ? "Máy trạm đang khởi động qua Windows Explorer." : "Ứng dụng sẽ chạy ở lần đăng nhập tiếp theo."), "QLBS Kiosk", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!options.Has("quiet")) MessageBox.Show("Đã cài QLBS Kiosk cho " + config.RoomCode + ".\nTự chạy một lần khi người dùng đăng nhập Windows.\n\n" + (launch ? "Máy trạm đang khởi động qua Windows Explorer." : "Ứng dụng sẽ chạy ở lần đăng nhập tiếp theo."), "QLBS Kiosk", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         internal static void Install(KioskConfig config, bool launch)
@@ -1513,24 +1461,6 @@ namespace QLBS.Kiosk
     internal static class SelfTests
     {
         private static void Assert(bool condition, string message) { if (!condition) throw new Exception("SELF-TEST FAILED: " + message); }
-        private static void TestRawAdminTokenGroups()
-        {
-            int offset = IntPtr.Size, stride = IntPtr.Size == 8 ? 16 : 8;
-            foreach (bool admin in new bool[] { false, true })
-            {
-                SecurityIdentifier sid = new SecurityIdentifier(admin ? AccountPolicy.AdministratorsSid : "S-1-5-32-545");
-                byte[] bytes = new byte[sid.BinaryLength]; sid.GetBinaryForm(bytes, 0);
-                IntPtr sidBuffer = Marshal.AllocHGlobal(bytes.Length), groups = Marshal.AllocHGlobal(offset + stride);
-                try
-                {
-                    Marshal.Copy(bytes, 0, sidBuffer, bytes.Length);
-                    Marshal.WriteInt32(groups, 1); Marshal.WriteIntPtr(groups, offset, sidBuffer);
-                    Marshal.WriteInt32(groups, offset + IntPtr.Size, admin ? 0x10 : 0x4); // DENY_ONLY vs ENABLED
-                    Assert(AccountPolicy.HasAdministratorInTokenGroups(groups, offset + stride) == admin, "raw TOKEN_GROUPS deny-only classification " + admin);
-                }
-                finally { Marshal.FreeHGlobal(groups); Marshal.FreeHGlobal(sidBuffer); }
-            }
-        }
         internal static int Run(string output)
         {
             try
@@ -1575,14 +1505,6 @@ namespace QLBS.Kiosk
                 view.MarkLocked("offline", true); Assert(view.Locked && !view.Connected && view.Qr == null, "offline fail closed");
                 payload["shiftEndMs"] = 0; bool noDeadline = false; try { KioskSnapshot.Parse(payload, config); } catch (InvalidDataException) { noDeadline = true; }
                 Assert(noDeadline, "no unlimited unlock lease");
-                TestRawAdminTokenGroups();
-                Assert(AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-545", AccountPolicy.AdministratorsSid }), "admin token group including deny-only bypasses runtime");
-                Assert(!AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-545", "S-1-5-11" }), "standard user never bypasses runtime");
-                Assert(!AccountPolicy.HasAdministratorSid(new string[] { "S-1-5-32-5440" }), "admin SID is exact, not prefix or username");
-                foreach (int key in new int[] { 0x30, 0x39, 0x41, 0x5A, 0x60, 0x69, 0x08, 0x0D, 0x09, 0x25, 0x27, 0x2E, 0xA0, 0xA1 })
-                    Assert(KeyboardPolicy.PermitsPinKey(key, false, false, false), "PIN text/navigation/shift " + key);
-                Assert(KeyboardPolicy.PermitsPinKey(0x41, true, false, false), "Ctrl+A can select PIN");
-                Assert(!KeyboardPolicy.PermitsPinKey(0x1B, false, true, false) && !KeyboardPolicy.PermitsPinKey(0x20, false, true, false), "Alt+Esc and Alt+Space stay blocked");
                 Assert(KeyboardPolicy.PermitsPinKey(0x39, false, false, false) && KeyboardPolicy.PermitsPinKey(0x08, false, false, false), "PIN typing and backspace");
                 Assert(!KeyboardPolicy.PermitsPinKey(0x5B, false, false, false) && !KeyboardPolicy.PermitsPinKey(0x09, false, true, false) && !KeyboardPolicy.PermitsPinKey(0x73, false, true, false) && !KeyboardPolicy.PermitsPinKey(0x1B, true, false, false), "system escape keys blocked inside PIN dialog");
                 Assert(!KeyboardPolicy.PermitsPinKey(0x44, false, false, true), "Win+D is blocked with Win already held");
@@ -1629,7 +1551,7 @@ namespace QLBS.Kiosk
                     RunRemovalFixture(removalScript);
                     Assert(!Directory.Exists(removalFixture), "own pending uninstall removes its test directory");
                 }
-                File.WriteAllText(Path.Combine(directory, "self-test.txt"), "PASS: config, strict JSON, server clock, SSE framing/limits, terminal targeting, scan overlay/state transitions, bounded desktop lease, raw TOKEN_GROUPS including deny-only Administrators, PIN keyboard policy, all 40 QR versions\n", Encoding.UTF8);
+                File.WriteAllText(Path.Combine(directory, "self-test.txt"), "PASS: config, strict JSON, server clock, SSE framing/limits, terminal targeting, scan overlay/state transitions, bounded desktop lease, keyboard policy, all 40 QR versions\n", Encoding.UTF8);
                 Console.WriteLine("QLBS Kiosk self-tests passed: " + directory); return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.ToString()); return 1; }

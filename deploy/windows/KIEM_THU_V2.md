@@ -1,23 +1,23 @@
-# QLBS Kiosk 2.0.1 — bổ sung sửa lỗi (16/10/2026)
+# QLBS Kiosk 2.0.2 — gói cũ chỉ sửa nhập PIN CNTT
 
-## Bằng chứng cho bản sửa mới
+## Phạm vi theo yêu cầu chốt lại
 
-- Backend: production migrations + Drizzle/PGlite kiểm tra pending không đổi phân công/QR/lease, duyệt đầy đủ người thay, rollback nguyên giao dịch, scope/tự duyệt, stale/double review, lịch cũ, ca qua đêm và ranh giới nửa đêm. AI trong các bài này là fixture, không phải AI/VPS thật.
-- Updater: kiểm thử CLI giả lập cho dump lỗi/rỗng/không đọc được, snapshot riêng tư và giữ .env/certificate, xung đột stash và env cũ thiếu port. Không thay thế dump/restore thật.
-- Native: kiểm thử raw TOKEN_GROUPS có SID Administrators dạng DENY_ONLY; chữ/số/numpad/PIN và các escape bị chặn. Build C# 5/Mono trong sandbox chỉ là tiền kiểm, không được gắn nhãn bản Windows CI chính thức.
-- Gate Windows mới biên dịch **fixture riêng**, chạy production KioskContext/WH_KEYBOARD_LL/modal/timer, dùng Win32 SendInput để click nút IT, mở bằng Ctrl+Alt+Shift+F12, gõ số/numpad/backspace/Ctrl+A, thử escape và kiểm tra phím còn gõ được sau đó. Chỉ tắt worker mạng trong build fixture qua symbol compile-time; **EXE phân phối không có symbol này**, không bỏ qua hook/kiểm tra TLS.
-- Trạng thái Windows của **đúng bản EXE** phải đọc từ workflow/release-notes và commit trong BUILD_INFO; không lấy kết quả lịch sử bên dưới thay cho gate 2.0.1. Fixture SendInput không thay thế bàn phím vật lý, UAC hay đăng nhập Administrator token bị UAC lọc trên PC viện.
+- Lấy **mã nguồn trong gói P2 MotLan 2.0.0 đã chấp nhận**, không lấy bản bỏ qua Administrator làm nền. Giữ khóa mọi tài khoản, cả Administrator.
+- Chỉ thay phần focus/modal/modifier liên quan nhập PIN trong KioskContext, KeyboardGuard, ItDialog. Giữ nguyên phần xác minh PIN/mở khóa server, hook chặn phím thoát, mạng/lease/desktop, installer, QR, UI và toàn bộ mã khác; chỉ đổi metadata phiên bản thành 2.0.2 để không thay tài sản đã phát hành.
+- `tests/test_pin_scope.py` dùng digest nguồn 2.0.0 để kiểm chứng phần không đổi, startup không có miễn trừ Administrator, logic xác minh PIN/hook/mạng/lease không bị sửa. Không phụ thuộc file riêng của viện hoặc mạng.
+- Gate Windows biên dịch đúng C# 5/.NET Framework, self-test và đối chiếu 40 phiên bản QR; fixture SendInput chạy production KioskContext/modal/WH_KEYBOARD_LL qua cả nút IT và Ctrl+Alt+Shift+F12, thử số/numpad/backspace/Ctrl+A và các escape bị chặn. Fixture chỉ tắt worker mạng bằng symbol compile-time; EXE phân phối không có symbol này.
+- Bằng chứng của **chính EXE 2.0.2** nằm trong CI/release-notes và commit ở BUILD_INFO. Kết quả 2.0.0/2.0.1 không được dùng thay cho kiểm thử 2.0.2.
 
-### Nghiệm thu bổ sung bắt buộc tại viện
+## Nghiệm thu tại viện
 
-1. Cài qua hai BAT bằng UAC. Đăng nhập Administrator (cả Run as administrator và token thường): không có khóa/hook/cửa sổ Kiosk. Đăng nhập User tiêu chuẩn: Kiosk tự chạy.
-2. Với User thường, mở PIN bằng nút CNTT rồi bằng hotkey, thả modifier và nhập bằng hàng số/numpad; thử backspace/đổi focus/AltTab/AltF4/WinD/CtrlShiftEsc. PIN sai vẫn khóa, PIN đúng server xác nhận mới mở; không sót cửa sổ.
-3. Báo nghỉ: ca và PC đã mở vẫn có hiệu lực khi chờ; thiếu người thay/đụng lịch thì không duyệt. Duyệt hợp lệ mới thay ca và thu hồi lease cũ. Thử cả ca qua đêm.
-4. Nâng VPS cũ theo điều kiện và backup trong [hướng dẫn nâng VPS](https://github.com/pvminh94/qlbv/blob/main/deploy/NANG_CAP_VPS_CU_VA_HTTPS.md); profile P2 không được dùng cho certificate VPS3 khác.
+1. Dùng User và Administrator: cả hai đều áp dụng Kiosk. Không coi đăng nhập Administrator là đường bỏ qua khóa.
+2. Nhấn nút IT, gõ PIN bằng bàn phím thật, thử sửa/xóa/numpad; làm lại qua hotkey. PIN đúng server xác nhận mới mở Desktop; PIN sai/hủy vẫn khóa, các phím thoát vẫn bị chặn.
+3. Giữ đúng quy trình cũ giải nén → một BAT → UAC → Enter. Cài/gỡ cần Administrator; có phương án cứu hộ theo hướng dẫn trước triển khai hàng loạt.
+4. CI không thay thế thử UAC/ACL, bàn phím vật lý, nhiều màn hình, mạng, camera điện thoại hay AI/PAD thật. Không đổi cấu hình VPS/HTTPS chỉ để sửa PIN.
 
 ---
 
-## Hồ sơ lịch sử 2.0.0 — giữ để tham chiếu, KHÔNG phải kết quả 2.0.1
+## Hồ sơ 2.0.0 để tham chiếu lịch sử — không phải kết quả 2.0.2
 
 # QLBS Kiosk 2.0.0 — Kết quả kiểm thử và bàn giao
 
