@@ -16,12 +16,18 @@ const current = (userId = 7): Row => ({ slotId: 1, userId, dutyDate: "2026-10-15
 function serviceFor(t: TestContext, values: Record<string, unknown> = {}) {
   const query: any = {}; for (const method of ["from", "where", "limit", "orderBy"]) query[method] = () => query;
   query.then = (resolve: (value: unknown) => unknown) => Promise.resolve([{ id: 1, code: "PK01", name: "Phòng khám 01" }]).then(resolve);
+  const insertedAttendance: any[] = [];
   const audit: any = { entries: [] as any[], async log(entry: any) { this.entries.push(entry); } };
   const integration = { result: { onDuty: [] as any[] }, failure: null as Error | null, async onDuty() { if (this.failure) throw this.failure; return this.result; } };
-  const service = new KioskService({ db: { select: () => query } } as any, integration as any, { get: async (key: string) => values[key] ?? null } as any, audit);
+  const service = new KioskService({
+    db: {
+      select: () => query,
+      insert: () => ({ values: async (rows: any[]) => { insertedAttendance.push(...rows); } }),
+    },
+  } as any, integration as any, { get: async (key: string) => values[key] ?? null } as any, audit);
   service.loadActiveRoster = async () => [];
   t.after(() => service.onModuleDestroy());
-  return { service, audit, integration };
+  return { service, audit, integration, insertedAttendance };
 }
 function qr(service: KioskService, terminalId = "terminal_a") { return service.createQrSession("PK01", "Phòng khám 01", terminalId, "https://hospital.test", undefined, "https", 15); }
 function unlock(service: KioskService, terminalId: string, extra: Partial<ActiveRoomUnlock> = {}) {
@@ -78,11 +84,11 @@ test("a newly confirmed current shift is the only state that locks again after r
 
 test("IT PIN is online/current-shift-only, audit-safe, and revokes on roster change", async (t) => {
   let now = Date.parse("2026-10-15T08:00:00+07:00"); t.mock.method(Date, "now", () => now);
-  const { service, audit, integration } = serviceFor(t, { "kiosk.itMasterPin": "private-hospital-pin" });
+  const { service, audit, integration, insertedAttendance } = serviceFor(t, { "kiosk.itMasterPin": "private-hospital-pin" });
   await assert.rejects(service.authorizeItOverride("PK01", "terminal_a", "private-hospital-pin", "10.1.1.1"), /Không có ca trực đang diễn ra/);
   const row: Row = { ...current(), shiftCode: "S", shiftName: "Ca sáng", startTime: "07:00", endTime: "11:00" }; let rows = [row]; integration.result = { onDuty: [active(row)] }; service.loadActiveRoster = async () => rows as any;
   for (const pin of ["888888", "bvqy4@it", "wrong"]) await assert.rejects(service.authorizeItOverride("PK01", "terminal_a", pin, "10.1.1.1"), /không chính xác/);
-  const granted = await service.authorizeItOverride("PK01", "terminal_a", "private-hospital-pin", "10.1.1.2"); assert.equal(granted.success, true); assert.match(audit.entries.at(-1).action, /KIOSK_IT_OVERRIDE/); assert.ok(!JSON.stringify(audit.entries).includes("private-hospital-pin"));
+  const granted = await service.authorizeItOverride("PK01", "terminal_a", "private-hospital-pin", "10.1.1.2"); assert.equal(granted.success, true); assert.equal(insertedAttendance.length, 1); assert.equal(insertedAttendance[0]?.method, "IT_EMERGENCY_PIN"); assert.equal(insertedAttendance[0]?.status, "EMERGENCY_OVERRIDE"); assert.equal(insertedAttendance[0]?.confidenceScore, 0); assert.match(audit.entries.at(-1).action, /KIOSK_IT_OVERRIDE/); assert.ok(!JSON.stringify(audit.entries).includes("private-hospital-pin"));
   assert.equal((await service.getKioskStatus("PK01", "terminal_a", "https://hospital.test")).isUnlocked, true);
   rows = [{ ...row, userId: 8 }]; integration.result = { onDuty: [active(rows[0])] };
   assert.equal((await service.getKioskStatus("PK01", "terminal_a", "https://hospital.test")).isUnlocked, false);

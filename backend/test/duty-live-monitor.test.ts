@@ -84,7 +84,7 @@ test("live monitor shows only exact-active, published roster and preserves depar
 
   const scoped = await service.liveMonitor(manager(["duty.view", "duty.manage"], [1]));
   assert.equal(scoped.scope, "DEPT");
-  assert.deepEqual(scoped.summary, { rooms: 1, slots: 1, expected: 1, verified: 1, pending: 0, unassigned: 1 });
+  assert.deepEqual(scoped.summary, { rooms: 1, slots: 1, expected: 1, verified: 1, itOverrides: 0, pending: 0, unassigned: 1 });
   assert.equal(scoped.rooms[0]?.code, "PK01");
   assert.equal(scoped.rooms[0]?.slots[0]?.doctors[0]?.fullName, "Bác sĩ Một");
   assert.equal(scoped.rooms[0]?.slots[0]?.doctors[0]?.verified, true);
@@ -95,11 +95,17 @@ test("live monitor shows only exact-active, published roster and preserves depar
   assert.equal(all.summary.rooms, 2, "only exact-active published slots are included");
   assert.equal(all.summary.expected, 2);
   assert.equal(all.summary.verified, 1, "PIN unlock never masquerades as biometric attendance");
+  assert.equal(all.summary.itOverrides, 1, "PIN IT is exposed as a distinct technical event");
+  assert.equal(all.summary.pending, 0, "the recorded IT event is not shown as a generic waiting state");
+  const itDoctor = all.rooms.find((room) => room.code === "PK02")?.slots[0]?.doctors[0];
+  assert.equal(itDoctor?.verified, false, "IT PIN must never set verified=true");
+  assert.ok(itDoctor?.itOverrideAt, "monitor returns the IT event timestamp");
   assert.ok(!all.rooms.flatMap((room) => room.slots).some((slot) => slot.shiftCode === "C"), "future shift is excluded");
 
   await pg.exec("INSERT INTO duty_absences (user_id, start_date, end_date, reason) VALUES (2, '2026-10-15', '2026-10-15', 'OM_DAU')");
   const withApprovedAbsence = await service.liveMonitor(manager(["duty.manage-all"], [], "ALL"));
   assert.equal(withApprovedAbsence.summary.expected, 1, "approved absence is not treated as waiting for a biometric scan");
+  assert.equal(withApprovedAbsence.summary.itOverrides, 0);
   assert.equal(withApprovedAbsence.summary.pending, 0);
   assert.equal(withApprovedAbsence.rooms.find((room) => room.code === "PK02")?.slots[0]?.doctors[0]?.absent, true);
 

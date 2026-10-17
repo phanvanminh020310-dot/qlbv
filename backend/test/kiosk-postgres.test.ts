@@ -191,6 +191,17 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         "10.1.1.2",
       );
       assert.equal(granted.shiftEndMs, Date.parse("2026-10-15T11:00:00+07:00"));
+      const itRecords = (await database.db.select().from(schema.dutyAttendance))
+        .filter((row) => row.method === "IT_EMERGENCY_PIN");
+      assert.equal(itRecords.length, 1, "a successful IT unlock must leave a durable monitor record");
+      assert.equal(itRecords[0].slotId, 7001);
+      assert.equal(itRecords[0].userId, 7001, "the record is attached to the affected duty assignment, not an IT identity");
+      assert.equal(itRecords[0].status, "EMERGENCY_OVERRIDE");
+      assert.equal(itRecords[0].confidenceScore, 0, "PIN IT is never biometric confidence");
+      assert.ok(
+        realtimeEvents.some((event) => event.topic === "duty-attendance" && event.type === "it-override" && event.data?.roomCode === "PK01"),
+        "màn hình điều phối được làm mới ngay khi IT mở khoá",
+      );
       assert.equal(
         (
           await service.getKioskStatus(

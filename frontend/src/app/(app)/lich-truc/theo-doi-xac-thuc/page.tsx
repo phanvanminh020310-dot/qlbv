@@ -12,6 +12,7 @@ import {
   TriangleAlert,
   UserRoundCheck,
   Users,
+  Wrench,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PageHeader, StatCard } from "@/components/shared/page-header";
@@ -29,6 +30,10 @@ function roomHealth(room: LiveMonitorRoom): "success" | "warning" | "danger" {
   if (unassigned > 0) return "danger";
   if (doctors.some((doctor) => doctor.absent)) return "warning";
   return doctors.length > 0 && doctors.every((doctor) => doctor.verified) ? "success" : "warning";
+}
+
+function hasItOverride(room: LiveMonitorRoom): boolean {
+  return room.slots.some((slot) => slot.doctors.some((doctor) => !!doctor.itOverrideAt));
 }
 
 function initials(name: string): string {
@@ -75,7 +80,7 @@ function RoomCard({ room }: { room: LiveMonitorRoom }) {
 
       <CardBody className="space-y-3 p-3">
         <div className="flex items-center justify-between rounded-lg bg-[var(--muted)]/55 px-3 py-2 text-xs">
-          <span className="text-[var(--muted-foreground)]">Đã xác thực</span>
+          <span className="text-[var(--muted-foreground)]">Xác thực khuôn mặt</span>
           <span className={`font-semibold tabular-nums ${verified === doctors.length && !unassigned ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
             {verified}/{activeDoctors.length} bác sĩ
           </span>
@@ -100,7 +105,7 @@ function RoomCard({ room }: { room: LiveMonitorRoom }) {
             <div className="space-y-2">
               {slot.doctors.map((doctor) => (
                 <div key={doctor.userId} className="flex items-center gap-2.5 rounded-lg bg-[var(--muted)]/45 px-2.5 py-2">
-                  <div className={`flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${doctor.verified ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
+                  <div className={`flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${doctor.verified ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : doctor.itOverrideAt ? "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
                     {initials(doctor.fullName)}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -113,6 +118,16 @@ function RoomCard({ room }: { room: LiveMonitorRoom }) {
                     <div className="shrink-0 text-right">
                       <Badge tone="success" className="px-1.5 py-0 text-[10px]"><ShieldCheck className="size-3" /> Đã xác thực</Badge>
                       <div className="mt-1 text-[10px] text-[var(--muted-foreground)]">{fmtDateTime(doctor.verifiedAt).split(", ").at(-1)}</div>
+                      {doctor.itOverrideAt ? (
+                        <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-violet-700 dark:text-violet-300" title="Đã có lần mở khoá kỹ thuật trong ca này; không phải xác thực khuôn mặt.">
+                          <Wrench className="size-3" /> Đã ghi nhận mở IT
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : doctor.itOverrideAt ? (
+                    <div className="shrink-0 text-right">
+                      <Badge tone="info" className="px-1.5 py-0 text-[10px]"><Wrench className="size-3" /> Mở khẩn cấp IT</Badge>
+                      <div className="mt-1 max-w-28 text-[10px] leading-tight text-violet-700 dark:text-violet-300">{fmtDateTime(doctor.itOverrideAt).split(", ").at(-1)} · Chưa xác thực khuôn mặt</div>
                     </div>
                   ) : (
                     <Badge tone="warning" className="px-1.5 py-0 text-[10px]"><Clock3 className="size-3" /> Chờ xác thực</Badge>
@@ -136,7 +151,7 @@ function RoomCard({ room }: { room: LiveMonitorRoom }) {
 export default function TheoDoiXacThucPage() {
   const can = useAuth((state) => state.can);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | "ATTENTION" | "VERIFIED">("ALL");
+  const [status, setStatus] = useState<"ALL" | "ATTENTION" | "VERIFIED" | "IT_OVERRIDE">("ALL");
   const canMonitor = can("duty.manage") || can("duty.manage-all");
   const monitor = useQuery({
     queryKey: DUTY_KEYS.liveMonitor,
@@ -154,7 +169,8 @@ export default function TheoDoiXacThucPage() {
     const keyword = search.trim().toLocaleLowerCase("vi");
     const matchesText = !keyword || `${room.code} ${room.name} ${room.location}`.toLocaleLowerCase("vi").includes(keyword);
     const health = roomHealth(room);
-    const matchesStatus = status === "ALL" || (status === "VERIFIED" ? health === "success" : health !== "success");
+    const matchesStatus = status === "ALL"
+      || (status === "VERIFIED" ? health === "success" : status === "IT_OVERRIDE" ? hasItOverride(room) : health !== "success");
     return matchesText && matchesStatus;
   }), [monitor.data?.rooms, search, status]);
 
@@ -167,7 +183,7 @@ export default function TheoDoiXacThucPage() {
     <div className="space-y-4">
       <PageHeader
         title="Theo dõi xác thực ca trực"
-        description="Quan sát các phòng đang trong ca và xác nhận sinh trắc học của bác sĩ theo thời gian thực."
+        description="Quan sát các phòng đang trong ca. Mở khẩn cấp IT được ghi riêng, không bao giờ thay thế xác thực khuôn mặt."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <RealtimeDot className="rounded-full border bg-[var(--card)] px-2.5 py-1.5 shadow-sm" />
@@ -179,10 +195,11 @@ export default function TheoDoiXacThucPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Phòng đang trong ca" value={summary?.rooms ?? "—"} hint={monitor.data?.scope === "ALL" ? "Toàn viện" : "Trong phạm vi khoa được giao"} icon={<Activity className="size-5" />} tone="primary" />
-        <StatCard label="Đã xác thực" value={summary ? `${summary.verified}/${summary.expected}` : "—"} hint="Sinh trắc học đã ghi nhận" icon={<UserRoundCheck className="size-5" />} tone="success" />
-        <StatCard label="Chờ xác thực" value={summary?.pending ?? "—"} hint="Người đã được phân công" icon={<Clock3 className="size-5" />} tone="warning" />
+        <StatCard label="Xác thực khuôn mặt" value={summary ? `${summary.verified}/${summary.expected}` : "—"} hint="Chỉ tính sinh trắc học AI" icon={<UserRoundCheck className="size-5" />} tone="success" />
+        <StatCard label="Mở khẩn cấp IT" value={summary?.itOverrides ?? "—"} hint="Đã ghi nhận, không phải sinh trắc học" icon={<Wrench className="size-5" />} tone={summary?.itOverrides ? "primary" : "default"} />
+        <StatCard label="Chờ xác thực" value={summary?.pending ?? "—"} hint="Chưa có sinh trắc học hoặc mở IT" icon={<Clock3 className="size-5" />} tone="warning" />
         <StatCard label="Thiếu phân công" value={summary?.unassigned ?? "—"} hint="Vị trí cần xử lý trong ca hiện tại" icon={<Users className="size-5" />} tone={summary?.unassigned ? "danger" : "default"} />
       </div>
 
@@ -190,7 +207,7 @@ export default function TheoDoiXacThucPage() {
         <CardBody className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2 text-xs text-[var(--muted-foreground)]">
             <Radio className="size-4 shrink-0 text-emerald-600" />
-            <span className="truncate">Dữ liệu ghi nhận lúc {monitor.data ? fmtDateTime(monitor.data.serverTime) : "—"}; tự cập nhật khi bác sĩ xác thực.</span>
+            <span className="truncate">Dữ liệu ghi nhận lúc {monitor.data ? fmtDateTime(monitor.data.serverTime) : "—"}; tự cập nhật khi có sinh trắc học hoặc mở khẩn cấp IT.</span>
           </div>
           <div className="grid gap-2 sm:flex sm:items-center">
             <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm phòng hoặc vị trí" className="h-9 sm:w-52" />
@@ -198,6 +215,7 @@ export default function TheoDoiXacThucPage() {
               <option value="ALL">Tất cả trạng thái</option>
               <option value="ATTENTION">Cần theo dõi</option>
               <option value="VERIFIED">Đủ xác thực</option>
+              <option value="IT_OVERRIDE">Có mở khẩn cấp IT</option>
             </Select>
           </div>
         </CardBody>

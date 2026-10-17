@@ -1309,7 +1309,7 @@ export class DutyService {
       return {
         serverTime: new Date(now).toISOString(),
         scope: canSeeAll ? 'ALL' : 'DEPT',
-        summary: { rooms: 0, slots: 0, expected: 0, verified: 0, pending: 0, unassigned: 0 },
+        summary: { rooms: 0, slots: 0, expected: 0, verified: 0, itOverrides: 0, pending: 0, unassigned: 0 },
         rooms: [],
       };
     }
@@ -1351,16 +1351,25 @@ export class DutyService {
       .where(
         and(
           inArray(dutyAttendance.slotId, activeSlots.map((slot) => slot.id)),
-          eq(dutyAttendance.method, 'AI_FACIAL_BIOMETRICS'),
+          inArray(dutyAttendance.method, ['AI_FACIAL_BIOMETRICS', 'IT_EMERGENCY_PIN']),
           gte(dutyAttendance.checkinTime, new Date(earliestStart)),
         ),
       )
       .orderBy(desc(dutyAttendance.checkinTime));
-    // Query đã sắp xếp mới nhất trước: giữ một check-in mới nhất cho mỗi người/ô.
-    const attendanceByAssignment = new Map<string, (typeof attendance)[number]>();
+    // PIN IT là một sự kiện kỹ thuật độc lập. Chỉ AI_FACIAL_BIOMETRICS mới
+    // có quyền đưa bác sĩ vào trạng thái đã xác thực; bản ghi PIN chỉ được
+    // dùng để hiển thị rõ việc máy trạm đã được IT can thiệp.
+    const biometricByAssignment = new Map<string, (typeof attendance)[number]>();
+    const itOverrideByAssignment = new Map<string, (typeof attendance)[number]>();
     for (const row of attendance) {
-      if (row.slotId == null || attendanceByAssignment.has(`${row.slotId}:${row.userId}`)) continue;
-      attendanceByAssignment.set(`${row.slotId}:${row.userId}`, row);
+      if (row.slotId == null) continue;
+      const key = `${row.slotId}:${row.userId}`;
+      if (row.method === 'AI_FACIAL_BIOMETRICS' && !biometricByAssignment.has(key)) {
+        biometricByAssignment.set(key, row);
+      }
+      if (row.method === 'IT_EMERGENCY_PIN' && !itOverrideByAssignment.has(key)) {
+        itOverrideByAssignment.set(key, row);
+      }
     }
 
     const assignmentsBySlot = new Map<number, typeof assignments>();
@@ -1395,6 +1404,8 @@ export class DutyService {
             absent: boolean;
             verified: boolean;
             verifiedAt: string | null;
+            /** Sự kiện mở khẩn cấp IT, luôn tách biệt với sinh trắc học. */
+            itOverrideAt: string | null;
           }>;
           unassigned: number;
         }>;
@@ -1411,15 +1422,18 @@ export class DutyService {
       };
       const people = (assignmentsBySlot.get(slot.id) ?? []).map((assignment) => {
         const absent = isAbsentForSlot(slot.id, assignment.userId);
-        const checkin = absent ? undefined : attendanceByAssignment.get(`${slot.id}:${assignment.userId}`);
+        const key = `${slot.id}:${assignment.userId}`;
+        const biometric = absent ? undefined : biometricByAssignment.get(key);
+        const itOverride = absent ? undefined : itOverrideByAssignment.get(key);
         return {
           userId: assignment.userId,
           fullName: assignment.fullName,
           title: assignment.title ?? '',
           departmentName: assignment.departmentName ?? '',
           absent,
-          verified: !!checkin,
-          verifiedAt: checkin?.checkinTime?.toISOString() ?? null,
+          verified: !!biometric,
+          verifiedAt: biometric?.checkinTime?.toISOString() ?? null,
+          itOverrideAt: itOverride?.checkinTime?.toISOString() ?? null,
         };
       });
       room.slots.push({
@@ -1447,6 +1461,8 @@ export class DutyService {
     const activeDoctors = allDoctors.filter((doctor) => !doctor.absent);
     const unassigned = roomList.reduce((total, room) => total + room.slots.reduce((n, slot) => n + slot.unassigned, 0), 0);
     const verified = activeDoctors.filter((doctor) => doctor.verified).length;
+    const itOverrides = activeDoctors.filter((doctor) => !!doctor.itOverrideAt).length;
+    const pending = activeDoctors.filter((doctor) => !doctor.verified && !doctor.itOverrideAt).length;
     return {
       serverTime: new Date(now).toISOString(),
       scope: canSeeAll ? 'ALL' : 'DEPT',
@@ -1455,7 +1471,8 @@ export class DutyService {
         slots: activeSlots.length,
         expected: activeDoctors.length,
         verified,
-        pending: activeDoctors.length - verified,
+        itOverrides,
+        pending,
         unassigned,
       },
       rooms: roomList,

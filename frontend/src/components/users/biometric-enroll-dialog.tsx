@@ -24,6 +24,7 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
   const [mode, setMode] = useState<'camera' | 'upload'>('camera');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -38,6 +39,7 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraAttemptRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // 1. Nạp trạng thái đăng ký hiện tại của nhân viên
@@ -66,47 +68,96 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
     fetchStatus();
   }, [open, user]);
 
-  // 2. Khởi động Webcam khi chuyển sang mode camera
-  const startWebcam = async () => {
-    setCameraError(null);
-    setCapturedImage(null);
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: 'user' },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch (err: any) {
-      console.warn('Lỗi mở camera:', err);
-      setCameraError('Không thể mở Camera trên thiết bị này. Vui lòng cấp quyền hoặc sử dụng chức năng tải tệp ảnh chân dung.');
-      setCameraActive(false);
-    }
-  };
-
+  // 2. Mở camera từ thao tác bấm trực tiếp. Safari trên iPhone có thể từ chối
+  // lời gọi getUserMedia phát sinh tự động khi dialog vừa xuất hiện, nên không
+  // được gọi trong useEffect. Người dùng chủ động bấm mới nhận được hộp thoại cấp quyền.
   const stopWebcam = () => {
+    cameraAttemptRef.current += 1;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (videoRef.current) videoRef.current.srcObject = null;
     setCameraActive(false);
+    setCameraStarting(false);
   };
 
-  useEffect(() => {
-    if (open && mode === 'camera' && !capturedImage) {
-      startWebcam();
-    } else {
-      stopWebcam();
+  const cameraErrorText = (err: unknown) => {
+    if (!window.isSecureContext) {
+      return 'Camera chỉ hoạt động trên kết nối HTTPS an toàn. Hãy mở lại QLBS bằng địa chỉ https:// của bệnh viện.';
     }
-    return () => stopWebcam();
+    const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return 'Quyền Camera đã bị từ chối. Trên iPhone: vào Cài đặt > Safari > Camera, chọn Cho phép rồi bấm thử lại.';
+    }
+    if (name === 'NotFoundError') return 'Không tìm thấy camera trên thiết bị này.';
+    if (name === 'NotReadableError') return 'Camera đang được ứng dụng khác sử dụng. Hãy đóng ứng dụng đó rồi thử lại.';
+    return 'Không thể mở Camera. Hãy kiểm tra quyền Camera và kết nối HTTPS, sau đó thử lại.';
+  };
+
+  const startWebcam = async () => {
+    stopWebcam();
+    const attempt = ++cameraAttemptRef.current;
+    setCameraError(null);
+    setCapturedImage(null);
+
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError(cameraErrorText(null));
+      return;
+    }
+
+    setCameraStarting(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: { ideal: 'user' },
+        },
+        audio: false,
+      });
+      // Dialog có thể đã đóng hoặc người dùng đã đổi sang tải ảnh trong lúc
+      // Safari đang chờ cấp quyền: không giữ camera ngầm sau thao tác đó.
+      if (attempt !== cameraAttemptRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      const video = videoRef.current;
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('VIDEO_ELEMENT_UNAVAILABLE');
+      }
+      streamRef.current = stream;
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
+      video.muted = true;
+      await video.play();
+      if (attempt !== cameraAttemptRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      setCameraActive(true);
+    } catch (err) {
+      console.warn('Lỗi mở camera:', err);
+      if (attempt === cameraAttemptRef.current) setCameraError(cameraErrorText(err));
+      stopWebcam();
+    } finally {
+      if (attempt === cameraAttemptRef.current) setCameraStarting(false);
+    }
+  };
+
+  // Chỉ dọn stream khi đóng dialog/đổi cách lấy ảnh/đã chụp. Không tự khởi động
+  // camera ở đây để giữ thao tác cấp quyền tương thích iPhone Safari.
+  useEffect(() => {
+    if (!open || mode !== 'camera' || capturedImage) stopWebcam();
   }, [open, mode, capturedImage]);
+
+  // Rời hẳn trang khi dialog đang mở cũng phải trả camera về hệ điều hành.
+  useEffect(() => () => {
+    cameraAttemptRef.current += 1;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
 
   // 3. Chụp ảnh từ video stream
   const handleCapture = () => {
@@ -285,27 +336,54 @@ export function BiometricEnrollDialog({ user, open, onClose, onSuccess }: Biomet
             </div>
           ) : mode === 'camera' ? (
             <>
-              {cameraError ? (
-                <div className="p-4 text-center text-xs text-rose-300 space-y-2">
-                  <AlertCircle className="h-8 w-8 mx-auto text-rose-400 mb-1" />
-                  <p>{cameraError}</p>
-                </div>
-              ) : (
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                autoPlay
+                className={`h-full w-full object-cover -scale-x-100 ${cameraActive ? '' : 'invisible absolute inset-0'}`}
+              />
+              {cameraActive ? (
                 <>
-                  <video ref={videoRef} playsInline muted autoPlay className="w-full h-full object-cover -scale-x-100" />
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-40 h-52 sm:w-44 sm:h-56 rounded-[50%] border-2 border-dashed border-teal-400/80 animate-pulse"></div>
+                    <div className="w-40 h-52 sm:w-44 sm:h-56 rounded-[50%] border-2 border-dashed border-teal-400/80 animate-pulse" />
                   </div>
                   <button
                     type="button"
                     onClick={handleCapture}
-                    disabled={!cameraActive}
                     className="absolute bottom-3 py-2 px-5 rounded-full bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-xs shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
                   >
                     <Camera className="h-4 w-4" />
                     Chụp ảnh ngay
                   </button>
                 </>
+              ) : (
+                <div className="p-5 text-center text-xs text-slate-200 space-y-3">
+                  {cameraError ? (
+                    <>
+                      <AlertCircle className="h-8 w-8 mx-auto text-rose-400" />
+                      <p className="leading-relaxed text-rose-200">{cameraError}</p>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="h-9 w-9 mx-auto text-teal-300" />
+                      <div className="space-y-1.5 leading-relaxed">
+                        <p className="font-semibold text-slate-100">Sẵn sàng chụp ảnh khuôn mặt</p>
+                        <p className="text-slate-400">Nhấn nút dưới đây để trình duyệt hiển thị bước cấp quyền Camera. Trên iPhone, hãy dùng Safari và kết nối HTTPS.</p>
+                      </div>
+                    </>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void startWebcam()}
+                    loading={cameraStarting}
+                    className="bg-teal-600 hover:bg-teal-500 text-white text-xs"
+                  >
+                    <Camera className="h-3.5 w-3.5 mr-1" />
+                    {cameraError ? 'Thử bật Camera lại' : 'Bật Camera và cấp quyền'}
+                  </Button>
+                </div>
               )}
             </>
           ) : (

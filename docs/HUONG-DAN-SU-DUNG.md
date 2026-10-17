@@ -307,3 +307,11 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 ### 11.6 Nhật ký và báo cáo
 
 Mọi thao tác quan trọng được ghi vào **Kỳ lịch → Nhật ký**, kèm người thực hiện và lý do. Tab **Giờ trực** cho thấy số ca, ca đêm, số ngày trực, tổng giờ theo người và độ chênh lệch giữa người nhiều nhất và ít nhất để điều chỉnh cho công bằng. Tab **Giờ trực** và **Nhật ký** chỉ người quản lý lịch thấy. Khi xoá kỳ lịch, nhật ký vẫn được giữ, ghi rõ tên kỳ, người xoá và lý do.
+
+### 11.7 Theo dõi xác thực và xử lý sự cố máy trạm
+
+Người có quyền điều phối mở **Lịch trực → Theo dõi xác thực** để quan sát đúng các ca đang diễn ra. Nhãn **Đã xác thực** chỉ xuất hiện khi hệ thống đã lưu kết quả **sinh trắc học khuôn mặt AI**.
+
+Khi máy tính phòng khám gặp sự cố, kỹ thuật viên có thể dùng PIN IT đã được cấu hình để mở khẩn cấp trong phạm vi ca hiện hành. Hệ thống ghi bền vững sự kiện này tại đúng phòng, ca và người trực bị ảnh hưởng; trang theo dõi hiển thị nhãn **Mở khẩn cấp IT** cùng thời điểm và có bộ lọc riêng. Sự kiện PIN IT **không** được tính là xác thực khuôn mặt, không biến thành trạng thái “Đã xác thực”, và vẫn cần hoàn thành sinh trắc học khi điều kiện cho phép.
+
+Đăng ký hồ sơ khuôn mặt tại **Cá nhân**: bấm **Bật Camera và cấp quyền** rồi chấp thuận yêu cầu của trình duyệt. Trên iPhone, thao tác cấp quyền phải được bấm trực tiếp trong Safari và hệ thống phải được mở bằng địa chỉ **HTTPS**; nếu quyền từng bị từ chối, vào *Cài đặt → Safari → Camera* để cho phép rồi bấm thử lại. Có thể dùng mục tải ảnh chân dung khi camera thiết bị không khả dụng.

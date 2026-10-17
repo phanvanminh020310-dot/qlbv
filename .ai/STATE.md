@@ -117,6 +117,12 @@ Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-lab
 - `backend/drizzle/0023_gan_vai_tro_truc_cho_bac_si.sql` chỉ **bổ sung** (không thay thế) `NHAN_VIEN_TRUC` cho người dùng chưa xoá có chức danh `Bác sĩ` hoặc `Bác Sỹ`; câu lệnh có thể chạy lặp an toàn.
 - Tạo/sửa tài khoản, thay thế danh sách vai trò và nhập Excel/CSV cũng phải tự giữ vai trò `NHAN_VIEN_TRUC` cho đúng chức danh Bác sĩ. Không suy rộng quy tắc này sang các chức danh có chứa chữ “bác sĩ” như `Bác sĩ CKI` nếu danh mục chưa được người dùng yêu cầu.
 
+### Theo dõi xác thực & hồ sơ khuôn mặt — quy tắc duy trì
+- PIN IT chỉ được dùng khi đối soát online có ca công bố/chốt đang diễn ra và vẫn phải bị thu hồi theo ranh giới ca/lịch. Mỗi lần mở khẩn cấp phải ghi bền vững sự kiện `IT_EMERGENCY_PIN`/`EMERGENCY_OVERRIDE` gắn với các phân công đang chịu tác động, phát realtime cho điều phối và hiển thị tại `/lich-truc/theo-doi-xac-thuc` là **“Mở khẩn cấp IT”** kèm thời điểm.
+- **Không bao giờ** tính PIN IT là sinh trắc học, không đặt `verified=true`, không hiện “Đã xác thực” do PIN, không cấp điểm tin cậy AI. Nếu sau đó bác sĩ xác thực khuôn mặt thật, màn hình có thể hiển thị cả xác thực và ghi chú đã từng mở IT.
+- Đăng ký khuôn mặt tại `/ca-nhan` phải yêu cầu người dùng **bấm trực tiếp** “Bật Camera và cấp quyền” rồi mới gọi `getUserMedia`; không tự gọi trong `useEffect` khi dialog mở vì Safari iPhone có thể không hiện hộp thoại cấp quyền. Giữ `playsInline`, camera trước `facingMode: user`, phát hiện lỗi HTTPS/quyền/camera bận rõ ràng, và dừng stream khi đóng/đổi chế độ/chụp xong.
+- Khi sửa các luồng này: chạy PGlite/Kiosk regression, runtime API tạo sự kiện PIN IT và xác nhận monitor vẫn `verified=false` nhưng có `itOverrideAt`; Playwright desktop/mobile trang theo dõi và giả lập iPhone cho điều kiện không gọi camera tự động, gọi đúng một lần sau thao tác bấm; kiểm tra không tràn ngang/console error.
+
 ## 5. Kiến trúc tham chiếu nhanh (bản in · lịch trực)
 
 ### Bản in (Yêu cầu 10)

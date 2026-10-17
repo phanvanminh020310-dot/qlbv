@@ -185,8 +185,11 @@ export interface LiveMonitorDoctor {
   title: string;
   departmentName: string;
   absent: boolean;
+  /** Chỉ true khi có bản ghi AI_FACIAL_BIOMETRICS. */
   verified: boolean;
   verifiedAt: string | null;
+  /** Mở khẩn cấp IT bằng PIN; luôn tách biệt với xác thực khuôn mặt. */
+  itOverrideAt: string | null;
 }
 export interface LiveMonitorSlot {
   id: number;
@@ -211,7 +214,7 @@ export interface LiveMonitorRoom {
 export interface LiveMonitorResponse {
   serverTime: string;
   scope: 'ALL' | 'DEPT';
-  summary: { rooms: number; slots: number; expected: number; verified: number; pending: number; unassigned: number };
+  summary: { rooms: number; slots: number; expected: number; verified: number; itOverrides: number; pending: number; unassigned: number };
   rooms: LiveMonitorRoom[];
 }
 

@@ -597,6 +597,23 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         method: "IT_EMERGENCY_PIN",
       },
     );
+    // Chỉ báo làm mới realtime; UI luôn đọc lại từ CSDL và phải trình bày đây
+    // là mở khẩn cấp IT, không phải một lần xác thực sinh trắc học.
+    try {
+      this.realtime?.publish({
+        topic: "duty-attendance",
+        type: "it-override",
+        permissions: ["duty.manage", "duty.manage-all"],
+        departmentId: result.departmentId,
+        data: {
+          attendanceIds: result.attendanceIds,
+          roomCode: roomCode.toUpperCase().trim(),
+          terminalId: terminalId || null,
+        },
+      });
+    } catch {
+      // Realtime chỉ hỗ trợ cập nhật nhanh, không được làm thất bại việc mở IT đã ghi nhật ký.
+    }
     return {
       success: true,
       message: "Đã mở khoá khẩn cấp phòng khám thành công.",
@@ -638,6 +655,8 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     shiftEndMs: number;
     shiftName: string;
     guard: ItOverrideRosterGuard;
+    /** Những phân công đang chịu tác động của lần mở kỹ thuật này. */
+    activeRows: Awaited<ReturnType<KioskService["loadActiveRoster"]>>;
   }> {
     const dates = [...candidateDutyDates(now), addDays(bangkokToday(now), 1)];
     const rows = await this.loadActiveRoster(roomCode, dates);
@@ -669,6 +688,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       guard: {
         signature: this.itRosterSignature(active.map((entry) => entry.row)),
       },
+      activeRows: active.map((entry) => entry.row),
     };
   }
 
@@ -710,6 +730,52 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    // Ghi sự kiện kỹ thuật theo từng phân công đang diễn ra để màn hình điều
+    // phối đọc lại được từ CSDL, kể cả khi Kiosk/API khởi động lại. Đây chỉ là
+    // nhật ký tác động đến máy trạm: tuyệt đối không biến PIN IT thành điểm danh
+    // hay xác thực khuôn mặt của bác sĩ.
+    const seenAssignments = new Set<string>();
+    const affectedRows = plan.activeRows.filter((row) => {
+      const key = `${row.slotId}:${row.userId}`;
+      if (seenAssignments.has(key)) return false;
+      seenAssignments.add(key);
+      return true;
+    });
+    const attendanceIds = affectedRows.map(() => crypto.randomUUID());
+    try {
+      await this.db.db.insert(dutyAttendance).values(
+        affectedRows.map((row, index) => ({
+          id: attendanceIds[index],
+          slotId: row.slotId,
+          roomId: row.roomId,
+          roomCode: row.roomCode,
+          roomName: row.roomName,
+          // userId ở đây chỉ gắn sự kiện cấp máy trạm với phân công bị ảnh
+          // hưởng để điều phối viên thấy đúng ô trực; không phải người nhập PIN.
+          userId: row.userId,
+          username: row.username,
+          fullName: row.fullName,
+          title: row.title ?? '',
+          shiftCode: row.shiftCode || "CA_TRUC",
+          shiftName: row.shiftName || "Ca làm việc",
+          checkinTime: new Date(now),
+          status: "EMERGENCY_OVERRIDE",
+          confidenceScore: 0,
+          method: "IT_EMERGENCY_PIN",
+          deviceInfo: `Mở khoá khẩn cấp IT · máy trạm ${terminalId || "legacy"}`,
+        })),
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Không thể ghi nhận mở khoá IT ${code}: ${error?.message || error}`,
+      );
+      // Không mở máy trạm nếu không có nhật ký truy vết bắt buộc.
+      throw new HttpException(
+        "Không thể ghi nhận sự kiện mở khoá IT. Máy trạm vẫn được giữ khoá; vui lòng thử lại.",
+        503,
+      );
+    }
+
     const itDoctor = {
       fullName: "Kỹ thuật viên IT",
       title: "IT Support",
@@ -725,7 +791,12 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       itRosterGuard: plan.guard,
       leaseDeadlineKind: "IT",
     });
-    return { itDoctor, shiftEndMs: plan.shiftEndMs };
+    return {
+      itDoctor,
+      shiftEndMs: plan.shiftEndMs,
+      attendanceIds,
+      departmentId: plan.activeRows[0]?.roomDepartmentId ?? null,
+    };
   }
 
   /** A face-verified doctor is released only until this active shift ends. */
