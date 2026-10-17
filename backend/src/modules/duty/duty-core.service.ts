@@ -82,18 +82,39 @@ export class DutyCoreService {
     return [...ids];
   }
 
-  /** Người dùng có quyền xếp trực cho phòng thuộc khoa này không */
+  /**
+   * Vai trò xếp lịch của khoa có thể thao tác trên mọi phòng khám. Phạm vi
+   * khoa chỉ dùng để giới hạn *nhân viên* được chọn/xếp, không dùng để khóa
+   * theo khoa gắn trên phòng khám.
+   */
+  isDepartmentScheduler(u: AccessContext): boolean {
+    // A dedicated scheduler role remains department-scoped even if another
+    // inherited permission contains manage-all. Test/legacy all-hospital
+    // coordinators may still carry dataScope=DEPT, so their explicit
+    // manage-all permission wins when they do not hold the scheduler role.
+    return u.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA') || (u.dataScope === 'DEPT' && !this.isAll(u));
+  }
+
+  /** Người dùng có thể quản lý nhân viên thuộc khoa được giao không. */
   canManageDept(u: AccessContext, departmentId: number | null): boolean {
-    if (this.isAll(u)) return true;
+    if (this.isAll(u) && !this.isDepartmentScheduler(u)) return true;
     if (!departmentId) return false;
     return this.hasPerm(u, 'duty.manage') && this.scopeDeptIds(u).includes(departmentId);
   }
 
+  /** Có quyền thao tác lập lịch, không phụ thuộc khoa gắn trên phòng. */
   canManageAny(u: AccessContext): boolean {
     return this.isAll(u) || this.hasPerm(u, 'duty.manage');
   }
 
-  ensureManageDept(u: AccessContext, departmentId: number | null, what = 'Phòng khám này'): void {
+  ensureManageSchedule(u: AccessContext, what = 'Thao tác lập lịch'): void {
+    if (!this.canManageAny(u)) {
+      throw new ForbiddenException(`${what} yêu cầu quyền xếp lịch trực`);
+    }
+  }
+
+  /** Giữ tên hàm tương thích cho luồng duyệt nhân sự/nghỉ, không dùng cho phòng. */
+  ensureManageDept(u: AccessContext, departmentId: number | null, what = 'Nhân viên này'): void {
     if (!this.canManageDept(u, departmentId)) {
       throw new ForbiddenException(`${what} nằm ngoài phạm vi khoa bạn được phân công quản lý lịch trực`);
     }
@@ -367,8 +388,15 @@ export class DutyCoreService {
   }
 
   /** Ghép dữ liệu thành PairCtx cho một ô (dùng cho nhiều người) */
-  pairsFor(slotRow: SlotRow, users: EngineUser[], opts: { filledDelta?: number; registrationBlocked?: string | null } = {}): PairCtx[] {
+  pairsFor(
+    slotRow: SlotRow,
+    users: EngineUser[],
+    opts: { filledDelta?: number; registrationBlocked?: string | null; ignoreRoomDepartment?: boolean } = {},
+  ): PairCtx[] {
     const slot = this.toEngineSlot(slotRow);
+    // Người xếp lịch khoa được điều phối nhân sự khoa mình tại mọi phòng. Chỉ
+    // bỏ kiểm tra khoa-phòng ở ngữ cảnh đó; tất cả ràng buộc an toàn khác giữ nguyên.
+    if (opts.ignoreRoomDepartment) slot.roomDepartmentId = null;
     if (opts.filledDelta) slot.filled = Math.max(0, slot.filled + opts.filledDelta);
     const { locked } = this.phaseOf({ status: slotRow.periodStatus, lockAt: slotRow.lockAt });
     return users.map((user) => ({

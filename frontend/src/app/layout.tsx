@@ -9,6 +9,20 @@ export const metadata: Metadata = {
   },
   description:
     'Hệ thống quản lý bệnh viện: sửa hồ sơ bệnh án điện tử, báo cáo công tác của khoa, thiết kế bản in và quản trị tập trung.',
+  applicationName: 'QLBS',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'QLBS',
+  },
+  icons: {
+    apple: '/icons/pwa-192.png',
+    icon: [
+      { url: '/icons/pwa-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/pwa-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  },
   other: {
     google: 'notranslate',
   },

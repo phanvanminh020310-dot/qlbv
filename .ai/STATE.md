@@ -123,6 +123,14 @@ Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-lab
 - Đăng ký khuôn mặt tại `/ca-nhan` phải yêu cầu người dùng **bấm trực tiếp** “Bật Camera và cấp quyền” rồi mới gọi `getUserMedia`; không tự gọi trong `useEffect` khi dialog mở vì Safari iPhone có thể không hiện hộp thoại cấp quyền. Giữ `playsInline`, camera trước `facingMode: user`, phát hiện lỗi HTTPS/quyền/camera bận rõ ràng, và dừng stream khi đóng/đổi chế độ/chụp xong.
 - Khi sửa các luồng này: chạy PGlite/Kiosk regression, runtime API tạo sự kiện PIN IT và xác nhận monitor vẫn `verified=false` nhưng có `itOverrideAt`; Playwright desktop/mobile trang theo dõi và giả lập iPhone cho điều kiện không gọi camera tự động, gọi đúng một lần sau thao tác bấm; kiểm tra không tràn ngang/console error.
 
+### PWA cài ứng dụng & lịch trực trên di động — quy tắc duy trì
+- QLBS là PWA cài được khi chạy bằng **HTTPS**: giữ `frontend/src/app/manifest.ts`, icon PNG `public/icons/pwa-192.png`/`pwa-512.png` và `public/sw.js`. Service worker không được cache dữ liệu nghiệp vụ, phiên đăng nhập hoặc API y tế; nó chỉ cung cấp điều kiện cài ứng dụng, mọi dữ liệu luôn đi mạng bình thường.
+- `PwaInstallPrompt` phải chỉ hiện khi chưa chạy `display-mode: standalone`; dùng `beforeinstallprompt` trên Chrome/Android, hướng dẫn Share → Thêm vào Màn hình chính cho Safari iPhone/iPad và cho phép người dùng hoãn 21 ngày. Không tự hiển thị lại trong app đã cài.
+- `/lich-truc` trên mobile là luồng: chọn tuần → chọn ngày → chạm thẻ phòng. Duy trì thẻ ngày cuộn ngang, thẻ phòng dễ chạm, nhãn số vị trí thiếu và bộ lọc **vị trí cần xếp**; không được tạo tràn ngang hay bắt người dùng đọc lưới tuần desktop trên điện thoại.
+- `NGUOI_XEP_LICH_TRUC_KHOA` (và luồng `DEPT` không có `duty.manage-all`) thao tác được **mọi phòng khám**: không được kiểm tra `duty_rooms.department_id` để chặn tạo/sửa/xoá ô, xếp/gỡ hoặc lấy ứng viên. Thay vào đó máy chủ phải lọc và tái kiểm tra nhân viên theo `users.department_id ∈ user_department_scopes`, kể cả khi gọi API trực tiếp; mọi ràng buộc ca/giờ/nghỉ/chức danh vẫn giữ. Khi xếp bởi vai trò này, không áp quy tắc khác khoa so với phòng vì phòng là tài nguyên dùng chung.
+- Duyệt nghỉ/bận và đổi/nhường của người xếp lịch khoa cũng theo **khoa của nhân viên/yêu cầu**, không theo khoa gắn trên phòng. Theo dõi xác thực Kiosk vẫn giữ phạm vi phòng/khoa cũ để không nới quyền dữ liệu nhạy cảm.
+- Khi sửa các phần trên: chạy tuần tự backend `npm test && npm run build`, frontend `npm run typecheck && npm run build`, `git diff --check`; Playwright xác nhận manifest + service worker, banner hiện khi chưa cài/ẩn ở standalone, desktop/mobile lịch trực, bộ lọc vị trí thiếu, không console/pageerror hoặc tràn ngang.
+
 ## 5. Kiến trúc tham chiếu nhanh (bản in · lịch trực)
 
 ### Bản in (Yêu cầu 10)

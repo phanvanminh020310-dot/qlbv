@@ -115,7 +115,8 @@ export interface Candidate {
   title: string;
   departmentId: number | null;
   departmentName: string;
-  sameDepartment: boolean;
+  /** Ứng viên thuộc phạm vi khoa của người xếp lịch hiện tại. */
+  inSchedulerDepartment: boolean;
   ok: boolean;
   errors: string[];
   warnings: string[];

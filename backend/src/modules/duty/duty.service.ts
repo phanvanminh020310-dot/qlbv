@@ -833,9 +833,9 @@ export class DutyService {
 
     const rooms = await this.roomsByIds(roomIds);
     if (rooms.length !== roomIds.length) throw new NotFoundException('Có phòng khám không tồn tại');
+    this.core.ensureManageSchedule(user, 'Sinh ô trực');
     for (const r of rooms) {
       if (!r.active) throw new BadRequestException(`Phòng ${r.code} đang tắt — bật lại trong danh mục trước`);
-      this.core.ensureManageDept(user, r.departmentId, `Phòng ${r.code}`);
     }
     const shifts = await this.db.db.select().from(dutyShiftTypes).where(inArray(dutyShiftTypes.id, shiftIds));
     if (shifts.length !== shiftIds.length || shifts.some((s) => !s.active)) throw new BadRequestException('Ca trực không tồn tại hoặc đang tắt');
@@ -886,7 +886,7 @@ export class DutyService {
     if (dto.dutyDate < p.startDate || dto.dutyDate > p.endDate) throw new BadRequestException('Ngày trực nằm ngoài kỳ lịch');
     const [room] = await this.roomsByIds([dto.roomId]);
     if (!room) throw new NotFoundException('Không tìm thấy phòng khám');
-    this.core.ensureManageDept(user, room.departmentId, `Phòng ${room.code}`);
+    this.core.ensureManageSchedule(user, `Tạo ô trực cho phòng ${room.code}`);
     const [dup] = await this.db.db
       .select({ id: dutySlots.id })
       .from(dutySlots)
@@ -912,7 +912,7 @@ export class DutyService {
 
   async updateSlot(user: AccessContext, slotId: number, dto: UpdateSlotDto) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Sửa ô trực phòng ${s.roomCode}`);
     if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không sửa ô trực');
     if (dto.requiredCount !== undefined && dto.requiredCount < Number(s.filled)) {
       throw new ConflictException(`Ô đang có ${s.filled} người trực — số người cần không thể nhỏ hơn`);
@@ -928,7 +928,7 @@ export class DutyService {
 
   async deleteSlot(user: AccessContext, slotId: number, dto: ForceDto) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Xoá ô trực phòng ${s.roomCode}`);
     if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không xoá ô trực');
     const people = await this.assignmentsOfSlots([slotId]);
     if (people.length && !dto.force) {
@@ -1025,10 +1025,10 @@ export class DutyService {
 
   /* ================================================================ Phân công */
 
-  /** Quản lý xếp người vào ô (theo phạm vi khoa); kỳ đã chốt chỉ đổi qua ngoại lệ */
+  /** Quản lý xếp người: được chọn mọi phòng, nhưng người xếp lịch khoa chỉ chọn nhân sự khoa mình. */
   async assign(user: AccessContext, slotId: number, dto: AssignDto) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Xếp người cho phòng ${s.roomCode}`);
     const { locked } = this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt });
     if (locked) throw new ConflictException('Kỳ lịch đã chốt — chỉ đổi người trực qua mục Đổi trực khẩn (KHTH)');
     if (dto.force) {
@@ -1042,7 +1042,10 @@ export class DutyService {
       const userMap = await this.core.loadUsers(tx, [dto.userId]);
       const u = userMap.get(dto.userId);
       if (!u) throw new NotFoundException('Không tìm thấy nhân viên');
-      const pairs: PairCtx[] = this.core.pairsFor(fresh, [u]);
+      this.core.ensureManageDept(user, u.departmentId, `Nhân viên ${u.fullName}`);
+      const pairs: PairCtx[] = this.core.pairsFor(fresh, [u], {
+        ignoreRoomDepartment: this.core.isDepartmentScheduler(user),
+      });
       const res = (await this.core.evaluatePairs(tx, pairs)).get(`${slotId}:${dto.userId}`) as EvaluateResult;
       if (!res.ok && !dto.force) throw new ConflictException(violationText(res));
       const [row] = await tx
@@ -1087,7 +1090,10 @@ export class DutyService {
     const [a] = await this.db.db.select().from(dutyAssignments).where(eq(dutyAssignments.id, assignmentId)).limit(1);
     if (!a) throw new NotFoundException('Không tìm thấy phân công');
     const s = await this.core.getSlot(a.slotId);
-    this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Gỡ người trực tại phòng ${s.roomCode}`);
+    const assignedUser = (await this.core.loadUsers(this.db.db, [a.userId])).get(a.userId);
+    if (!assignedUser) throw new NotFoundException('Không tìm thấy nhân viên được phân công');
+    this.core.ensureManageDept(user, assignedUser.departmentId, `Nhân viên ${assignedUser.fullName}`);
     if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) {
       throw new ConflictException('Kỳ lịch đã chốt — chỉ gỡ người trực qua mục Đổi trực khẩn (KHTH)');
     }
@@ -1209,13 +1215,12 @@ export class DutyService {
   /** Ứng viên cho một ô: mọi nhân viên đang hoạt động, kèm kết quả kiểm tra (để chọn người có cảnh báo) */
   async candidates(user: AccessContext, slotId: number, q?: string) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageDept(user, s.roomDepartmentId, `Phòng ${s.roomCode}`);
+    // Phòng khám là tài nguyên dùng chung: người xếp lịch khoa nhìn và thao tác
+    // được với mọi phòng. Danh sách nhân viên vẫn bị giới hạn nghiêm ngặt theo
+    // khoa/phạm vi người xếp lịch để không thể xếp nhân sự khoa khác.
+    this.core.ensureManageSchedule(user, `Chọn người trực cho phòng ${s.roomCode}`);
     const conds: SQL[] = [eq(users.active, true), isNull(users.deletedAt)];
-    // HCT/CNK/Phó CNK use the dedicated department scheduler role. Never let that
-    // role enumerate staff outside its explicit department assignment, even when
-    // another inherited permission happens to include duty.manage-all.
-    const isDepartmentScheduler =
-      user.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA') || user.dataScope === 'DEPT';
+    const isDepartmentScheduler = this.core.isDepartmentScheduler(user);
     if (isDepartmentScheduler || !this.core.isAll(user)) {
       const departmentIds = this.core.scopeDeptIds(user);
       if (!departmentIds.length) {
@@ -1245,7 +1250,9 @@ export class DutyService {
       departmentName: r.departmentName ?? '',
     }));
     const { locked } = this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt });
-    const pairs = this.core.pairsFor(s, engine).map((pc) => ({ ...pc, locked }));
+    const pairs = this.core
+      .pairsFor(s, engine, { ignoreRoomDepartment: isDepartmentScheduler })
+      .map((pc) => ({ ...pc, locked }));
     const results = await this.core.evaluatePairs(this.db.db, pairs);
     const list = engine.map((u) => {
       const res = results.get(`${s.id}:${u.id}`) as EvaluateResult;
@@ -1255,7 +1262,9 @@ export class DutyService {
         title: u.title,
         departmentId: u.departmentId,
         departmentName: u.departmentName,
-        sameDepartment: !!s.roomDepartmentId && u.departmentId === s.roomDepartmentId,
+        // Với vai trò xếp lịch khoa, giá trị này thể hiện đúng phạm vi nhân sự
+        // của người thao tác, không so với khoa gắn trên phòng.
+        inSchedulerDepartment: !isDepartmentScheduler || this.core.scopeDeptIds(user).includes(u.departmentId ?? -1),
         ok: res.ok,
         errors: res.errors.map((e) => e.message),
         warnings: res.warnings.map((w) => w.message),

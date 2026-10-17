@@ -218,7 +218,7 @@ export function AssignDialog({
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="text-sm font-medium">{c.fullName}</span>
                             <span className="text-xs text-[var(--muted-foreground)]">{c.title}</span>
-                            {c.sameDepartment ? <Badge tone="brand">Cùng khoa</Badge> : null}
+                            {c.inSchedulerDepartment ? <Badge tone="brand">Khoa phụ trách</Badge> : null}
                           </div>
                           <div className="text-xs text-[var(--muted-foreground)]">{c.departmentName || "Chưa thuộc khoa"}</div>
                           <ViolationList errors={c.errors} warnings={c.warnings} />
@@ -253,7 +253,7 @@ export function AssignDialog({
               </ul>
             )}
             <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
-              Hệ thống kiểm tra: trùng giờ, khoảng nghỉ tối thiểu, chức danh, nghỉ phép, giới hạn giờ/ngày/tuần và khác khoa.
+              Bạn có thể xếp cho mọi phòng khám; danh sách này chỉ gồm nhân viên thuộc khoa bạn phụ trách. Hệ thống vẫn kiểm tra trùng giờ, khoảng nghỉ, chức danh, nghỉ phép và giới hạn giờ.
             </p>
           </section>
         ) : null}

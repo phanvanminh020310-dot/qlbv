@@ -40,15 +40,16 @@ test("vai trò Người xếp lịch trực khoa chỉ được cấp quyền đ
   assert.ok(chief.permissions !== "*" && !chief.permissions.includes("duty.manage"), "trưởng khoa cần được gán riêng vai trò xếp lịch");
 });
 
-test("runtime authorization chặn người xếp lịch ra ngoài khoa được gán", () => {
+test("người xếp lịch khoa thao tác mọi phòng nhưng chỉ quản lý nhân viên khoa được gán", () => {
   const core = new DutyCoreService({} as any, {} as any, {} as any);
   const scheduler = context(["duty.view", "duty.manage", "duty.swap.approve"], [7, 11]);
   const viewer = context(["duty.view"], [7]);
 
+  assert.doesNotThrow(() => core.ensureManageSchedule(scheduler, "Phòng khám thuộc khoa khác"));
   assert.equal(core.canManageDept(scheduler, 7), true);
   assert.equal(core.canManageDept(scheduler, 11), true);
   assert.equal(core.canManageDept(scheduler, 8), false);
-  assert.throws(() => core.ensureManageDept(scheduler, 8, "Phòng khám X"), /ngoài phạm vi khoa/);
+  assert.throws(() => core.ensureManageDept(scheduler, 8, "Nhân viên khoa khác"), /ngoài phạm vi khoa/);
   assert.equal(core.canManageAny(viewer), false);
 });
 
@@ -113,16 +114,20 @@ test("migration role xếp lịch tạo quyền DEPT và thu hồi tự đăng k
 });
 
 
-test("candidate query never exposes hospital-wide staff to a department scheduler", () => {
+test("người xếp lịch khoa thấy mọi phòng nhưng API ứng viên chỉ trả nhân sự trong khoa", () => {
   const source = readFileSync(resolve(__dirname, "..", "src", "modules", "duty", "duty.service.ts"), "utf8");
   const start = source.indexOf("async candidates(user: AccessContext");
-  const end = source.indexOf("/* ================================================================ Lưới lịch", start);
+  const end = source.indexOf("/* ================================================================ Theo dõi xác thực", start);
   const candidates = source.slice(start, end);
-  assert.ok(candidates.includes("user.roles.includes('NGUOI_XEP_LICH_TRUC_KHOA')"));
-  assert.ok(candidates.includes("user.dataScope === 'DEPT'"));
+  assert.ok(candidates.includes("this.core.ensureManageSchedule(user"));
+  assert.ok(candidates.includes("const isDepartmentScheduler = this.core.isDepartmentScheduler(user)"));
   assert.ok(candidates.includes("const departmentIds = this.core.scopeDeptIds(user)"));
   assert.ok(candidates.includes("conds.push(inArray(users.departmentId, departmentIds))"));
+  assert.ok(candidates.includes("ignoreRoomDepartment: isDepartmentScheduler"));
   assert.ok(candidates.includes("chưa được gán phạm vi khoa"));
+
+  const coreSource = readFileSync(resolve(__dirname, "..", "src", "modules", "duty", "duty-core.service.ts"), "utf8");
+  assert.ok(coreSource.includes("if (opts.ignoreRoomDepartment) slot.roomDepartmentId = null"));
 });
 
 test("auth context merges home department with explicitly assigned department scopes", () => {

@@ -172,7 +172,7 @@ Các quyền lịch trực được tạo bởi migration `0015_lich_truc.sql`; 
 | Quyền | Ý nghĩa | Vai trò mặc định |
 |---|---|---|
 | `duty.view` | Xem lịch trực đã công bố, danh mục, lưới lịch | Bác sĩ/điều dưỡng và các vai trò lịch trực |
-| `duty.manage` | Sinh ô, xếp và gỡ người trực; ghi nhận, duyệt hoặc từ chối nghỉ/bận **trong khoa được giao** | `NGUOI_XEP_LICH_TRUC_KHOA`, `KHTB`, `DIEU_PHOI_TRUC` |
+| `duty.manage` | Sinh ô, xếp và gỡ người trực tại mọi phòng; với vai trò phạm vi khoa chỉ chọn/điều chỉnh **nhân viên trong khoa được giao** | `NGUOI_XEP_LICH_TRUC_KHOA`, `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.manage-all` | Xếp trực mọi phòng khám; bỏ qua ràng buộc khi có lý do | `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.period.manage` | Tạo, cấu hình, công bố, chốt sớm, mở chốt và xoá cả kỳ lịch | `KHTB`, `DIEU_PHOI_TRUC` |
 | `duty.catalog.manage` | Danh mục phòng khám, ca trực, vai trò trực, ngày nghỉ | `ADMIN`, `DIEU_PHOI_TRUC` |
@@ -183,13 +183,14 @@ Các quyền lịch trực được tạo bởi migration `0015_lich_truc.sql`; 
 **Vai trò lịch trực**
 
 - `DIEU_PHOI_TRUC` — *Điều phối lịch trực (KHTH)*. Phạm vi toàn viện; lập/công bố/chốt kỳ, quản lý danh mục và xử lý ngoại lệ sau khi chốt.
-- `NGUOI_XEP_LICH_TRUC_KHOA` — *Người xếp lịch trực khoa*. Gán thêm cho Hành chính khoa, Chủ nhiệm khoa hoặc Phó chủ nhiệm khoa; phạm vi `DEPT`. Vai trò chỉ xếp, gỡ, duyệt nghỉ/bận và duyệt đổi/nhường tại các khoa đã gán, không lập/công bố kỳ và không can thiệp khoa khác.
+- `NGUOI_XEP_LICH_TRUC_KHOA` — *Người xếp lịch trực khoa*. Gán thêm cho Hành chính khoa, Chủ nhiệm khoa hoặc Phó chủ nhiệm khoa; phạm vi `DEPT`. Vai trò có thể xem và thao tác lịch ở **mọi phòng khám**, nhưng chỉ xem/chọn/xếp/gỡ/duyệt nhân viên thuộc các khoa đã gán; không lập/công bố kỳ và không điều phối nhân sự khoa khác.
 - `NHAN_VIEN_TRUC` — *Nhân viên trực khám*. Bác sĩ, điều dưỡng chỉ có `duty.view`: chỉ xem lịch đã công bố. Không được tự đăng ký, nhường/đổi ca hoặc tự báo nghỉ/bận.
 
 **Quy tắc phạm vi**
 
-- `duty.manage` và `duty.swap.approve` chỉ áp dụng cho phòng thuộc khoa được giao (`user_department_scopes`). Phòng chưa gắn khoa chỉ người có `duty.manage-all` xếp được.
+- Phòng khám là tài nguyên dùng chung: `duty.manage` không bị giới hạn bởi khoa gắn trên phòng. Với người có phạm vi `DEPT`, mọi kiểm tra phạm vi nằm ở **nhân viên được chọn** (`user.department_id` phải thuộc `user_department_scopes`), kể cả khi gọi API trực tiếp.
+- `duty.swap.approve` của vai trò phạm vi khoa áp dụng cho yêu cầu của nhân viên trong khoa được giao, không theo khoa trên phòng.
 - `duty.exception.resolve` là quyền toàn viện. Mỗi lần dùng đều ghi nhật ký kèm lý do.
 - Bỏ qua ràng buộc khi xếp người (`force`) chỉ dành cho `duty.manage-all` và bắt buộc ghi lý do.
 - Bản nháp kỳ lịch và nhật ký thay đổi chỉ người quản lý (`duty.manage` hoặc `duty.manage-all`) thấy.
-- Danh sách ứng viên khi xếp trực chỉ hiển thị cho người có quyền quản lý lịch; phạm vi phòng và khoa luôn được kiểm tra lại ở máy chủ.
+- Danh sách ứng viên khi xếp trực chỉ hiển thị cho người có quyền quản lý lịch; phạm vi nhân sự luôn được kiểm tra lại ở máy chủ.

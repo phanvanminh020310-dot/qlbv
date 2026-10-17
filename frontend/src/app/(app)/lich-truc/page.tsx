@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, Printer, Settings2, Sparkles, Users } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Download, Printer, Settings2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -70,6 +70,7 @@ export default function LichTrucPage() {
   const can = useAuth((s) => s.can);
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [roomFilter, setRoomFilter] = useState<string>("ALL");
+  const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [mobileDate, setMobileDate] = useState<string | null>(null);
   const [cell, setCell] = useState<{ key: CellKey; title: string; subtitle: string } | null>(null);
   const [assignSlotId, setAssignSlotId] = useState<number | null>(null);
@@ -132,7 +133,13 @@ export default function LichTrucPage() {
     return m;
   }, [g]);
 
-  const rooms = useMemo(() => (g?.rooms ?? []).filter((r) => roomFilter === "ALL" || String(r.id) === roomFilter), [g, roomFilter]);
+  const rooms = useMemo(() => {
+    const selected = (g?.rooms ?? []).filter((r) => roomFilter === "ALL" || String(r.id) === roomFilter);
+    if (!showMissingOnly) return selected;
+    return selected.filter((room) =>
+      (g?.slots ?? []).some((slot) => slot.roomId === room.id && slot.filled < slot.requiredCount),
+    );
+  }, [g, roomFilter, showMissingOnly]);
   const assignSlot = useMemo(() => g?.slots.find((s) => s.id === assignSlotId) ?? null, [g, assignSlotId]);
 
   const openCell = (roomId: number, date: string) => {
@@ -166,7 +173,7 @@ export default function LichTrucPage() {
     <>
       <PageHeader
         title="Lịch trực khám bệnh"
-        description="Lịch trực theo tuần: phòng khám × ngày × ca. Nhân viên xem lịch; Người xếp lịch trực khoa phân công và theo dõi thiếu người."
+        description="Chọn tuần → chọn ngày → chạm vào phòng để xem ca và xếp người. Trên điện thoại, ưu tiên các vị trí còn thiếu để thao tác nhanh."
         actions={
           <div className="grid w-full gap-2 print:hidden sm:flex sm:w-auto sm:flex-wrap sm:items-center">
             {/* Thanh điều hướng tuần: chọn nhanh trên điện thoại, đầy đủ trên desktop */}
@@ -351,14 +358,31 @@ export default function LichTrucPage() {
                 </span>
               }
               actions={
-                <Select className="h-9 w-full text-xs print:hidden sm:h-8 sm:w-44" aria-label="Lọc theo phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
-                  <option value="ALL">Tất cả phòng</option>
-                  {g.rooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.code} — {r.name}
-                    </option>
-                  ))}
-                </Select>
+                <div className="grid w-full gap-2 print:hidden sm:flex sm:w-auto sm:items-center">
+                  {g.viewer.canManage && g.summary.missing > 0 ? (
+                    <button
+                      type="button"
+                      aria-pressed={showMissingOnly}
+                      onClick={() => setShowMissingOnly((value) => !value)}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors sm:h-8 ${
+                        showMissingOnly
+                          ? "border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-500 dark:bg-amber-950/60 dark:text-amber-200"
+                          : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                      }`}
+                    >
+                      <CircleAlert className="h-3.5 w-3.5" />
+                      {showMissingOnly ? "Đang xem ô thiếu" : `${g.summary.missing} vị trí cần xếp`}
+                    </button>
+                  ) : null}
+                  <Select className="h-9 w-full text-xs sm:h-8 sm:w-44" aria-label="Lọc theo phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)}>
+                    <option value="ALL">Tất cả phòng</option>
+                    {g.rooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.code} — {r.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               }
             />
             <CardBody className="p-0">
@@ -430,6 +454,11 @@ export default function LichTrucPage() {
                           (slotsByCell.get(cellKey(room.id, day.date)) ?? [])
                             .length > 0,
                       ).length;
+                      const missing = rooms.reduce(
+                        (total, room) => total + (slotsByCell.get(cellKey(room.id, day.date)) ?? [])
+                          .reduce((sum, slot) => sum + Math.max(0, slot.requiredCount - slot.filled), 0),
+                        0,
+                      );
                       return (
                         <button
                           key={day.date}
@@ -455,7 +484,7 @@ export default function LichTrucPage() {
                           <span
                             className={`block text-[9px] ${selected ? "text-[var(--primary-foreground)]/80" : "text-[var(--muted-foreground)]"}`}
                           >
-                            {count} phòng
+                            {missing ? `${missing} cần xếp` : `${count} phòng`}
                           </span>
                         </button>
                       );
@@ -511,12 +540,15 @@ export default function LichTrucPage() {
                           {rowsOfDay.map((room) => {
                             const slots =
                               slotsByCell.get(cellKey(room.id, day.date)) ?? [];
+                            const missing = slots.reduce((total, slot) => total + Math.max(0, slot.requiredCount - slot.filled), 0);
                             return (
                               <button
                                 key={room.id}
                                 type="button"
                                 onClick={() => openCell(room.id, day.date)}
-                                className="w-full rounded-xl border bg-[var(--card)] p-3 text-left shadow-sm transition active:scale-[0.99]"
+                                className={`w-full rounded-xl border bg-[var(--card)] p-3 text-left shadow-sm transition active:scale-[0.99] ${
+                                  missing ? "border-amber-200 ring-1 ring-amber-100 dark:border-amber-900 dark:ring-amber-950" : ""
+                                }`}
                               >
                                 <div className="mb-2 flex items-start justify-between gap-2">
                                   <div className="min-w-0 text-sm font-semibold">
@@ -525,14 +557,23 @@ export default function LichTrucPage() {
                                       · {room.name}
                                     </span>
                                   </div>
-                                  <span className="shrink-0 text-[11px] text-[var(--primary)]">
-                                    Xem ca
-                                  </span>
+                                  {missing ? (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+                                      <CircleAlert className="h-3 w-3" /> {missing} cần xếp
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                                      <CheckCircle2 className="h-3 w-3" /> Đủ người
+                                    </span>
+                                  )}
                                 </div>
                                 <CellPreview
                                   slots={slots}
                                   meId={g.viewer.userId}
                                 />
+                                <span className="mt-2 block text-right text-[11px] font-medium text-[var(--primary)]">
+                                  Chạm để xem và xếp người →
+                                </span>
                               </button>
                             );
                           })}
@@ -549,7 +590,7 @@ export default function LichTrucPage() {
             <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100 print:hidden">
               <Users className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
-                Còn <b>{g.summary.missing}</b> ô chưa đủ người trực. Bấm vào ô trên lưới để xếp thêm người.
+                Còn <b>{g.summary.missing}</b> vị trí chưa đủ người trực. Dùng nút <b>vị trí cần xếp</b>, chọn ngày rồi chạm vào phòng để phân công ngay.
               </div>
             </div>
           ) : null}

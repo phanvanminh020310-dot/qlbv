@@ -257,6 +257,11 @@ tin nhắn kèm liên kết mở phiếu.
 
 Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × ca (sáng, chiều, cả ngày; ca đêm nếu bật). Mỗi ô có số người cần và vai trò (bác sĩ, điều dưỡng).
 
+### 11.0 Dùng thuận tiện trên điện thoại
+
+- Mở QLBS từ đường link **HTTPS** lần đầu sẽ có nút **Cài ứng dụng**. Trên Android/Chrome, chạm nút và xác nhận hộp cài của trình duyệt. Trên iPhone/iPad, mở bằng Safari → **Chia sẻ** → **Thêm vào Màn hình chính**. Khi đã cài, lời mời sẽ tự ẩn và QLBS mở như một ứng dụng riêng.
+- Trong **Lịch trực tuần**: chọn tuần → chọn ngày → chạm vào thẻ phòng để xem từng ca hoặc xếp người. Nhãn vàng cho biết số vị trí còn thiếu; người xếp lịch có thể bấm **vị trí cần xếp** để chỉ xem các phòng cần xử lý.
+
 ### 11.1 Điều phối lịch (KHTH, vai trò `DIEU_PHOI_TRUC`)
 
 1. **Kỳ lịch & công bố → Tạo kỳ lịch.** Đặt tên, từ ngày đến ngày, **mốc chốt lịch** (sau mốc này lịch tự khoá), thời điểm mở đăng ký tự nguyện (nếu cần) và các ràng buộc giờ trực. Hai kỳ lịch không được trùng ngày; thời điểm mở đăng ký phải trước mốc chốt.
@@ -268,11 +273,11 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 7. **Ngoại lệ sau chốt.** Yêu cầu ngoại lệ nằm ở **Yêu cầu đổi trực → Chờ tôi duyệt**; duyệt để gỡ người cũ và xếp người thay. Khi cần đổi gấp, dùng **Điều chỉnh trực tiếp** (bắt buộc ghi lý do; chỉ bỏ qua ràng buộc khi thật cần).
 8. **Xoá cả kỳ lịch** (*Kỳ lịch → Xoá kỳ lịch*). Phải ghi lý do (tối thiểu 5 ký tự) và gõ lại đúng tên kỳ. Không xoá được khi đã có ca trực đã diễn ra hoặc đang diễn ra, để giữ dữ liệu đối soát giờ trực. Nhân viên đã được xếp nhận thông báo huỷ ca; nhật ký vẫn được giữ.
 
-### 11.2 Trưởng khoa (`TRUONG_KHOA`)
+### 11.2 Người xếp lịch trực khoa (`NGUOI_XEP_LICH_TRUC_KHOA`)
 
-- Xếp và gỡ người trực cho **phòng thuộc khoa mình**.
-- Duyệt đổi/nhường ca trong khoa trước khi chốt.
-- Xuất Excel lịch và bảng giờ trực.
+- Xem, tạo/sửa ô và xếp/gỡ người trực tại **mọi phòng khám**; không còn bị khóa theo khoa gắn trên phòng.
+- Danh sách chọn người chỉ hiển thị và chỉ cho phép phân công **nhân viên thuộc khoa/phạm vi khoa đã được gán**. Hệ thống chặn cả trường hợp gửi yêu cầu API trực tiếp để chọn người ngoài phạm vi.
+- Duyệt đổi/nhường của nhân viên trong khoa trước khi chốt; xuất Excel lịch và bảng giờ trực.
 
 ### 11.3 Nhân viên trực (`NHAN_VIEN_TRUC`)
 

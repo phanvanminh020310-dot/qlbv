@@ -352,18 +352,17 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
     },
   );
   await t.test(
-    "whole leave cannot be approved by manager outside an affected room scope",
+    "người xếp lịch duyệt nhân viên khoa mình dù ca ở phòng gắn khoa khác",
     async () => {
       await reset();
       await pg.exec("UPDATE duty_rooms SET department_id=2 WHERE id=1");
       const req = await service.create(doctor, leave);
-      await assert.rejects(
-        service.approve(context(9, ["duty.manage"]), req.id, {
-          replacements: picks,
-        }),
-        /phạm vi khoa/,
+      await service.approve(
+        context(9, ["duty.manage", "duty.exception.resolve"]),
+        req.id,
+        { replacements: picks },
       );
-      assert.deepEqual(await original(), [1, 1]);
+      assert.deepEqual(await original(), [2, 3]);
     },
   );
   await t.test(

@@ -42,10 +42,13 @@ export class DutyRequestService {
     private readonly duty: DutyService,
   ) {}
 
-  /** Duyệt đổi/nhường ca: có quyền duyệt và thuộc phạm vi khoa của ca */
-  canApproveSwap(u: AccessContext, roomDeptId: number | null): boolean {
-    if (this.core.isAll(u)) return true;
-    return this.core.hasPerm(u, 'duty.swap.approve') && !!roomDeptId && this.core.scopeDeptIds(u).includes(roomDeptId);
+  /**
+   * Duyệt đổi/nhường theo khoa của nhân sự yêu cầu, không theo khoa gắn trên
+   * phòng. Phòng khám là tài nguyên dùng chung trong luồng xếp lịch.
+   */
+  canApproveSwap(u: AccessContext, staffDepartmentId: number | null): boolean {
+    if (this.core.isAll(u) && !this.core.isDepartmentScheduler(u)) return true;
+    return this.core.hasPerm(u, 'duty.swap.approve') && this.core.canManageDept(u, staffDepartmentId);
   }
 
   private async getRequest(id: number, c: DbService['db'] | Tx = this.db.db) {
@@ -129,6 +132,7 @@ export class DutyRequestService {
         responseNote: dutyRequests.responseNote,
         requesterId: dutyRequests.requesterId,
         requesterName: requester.fullName,
+        requesterDepartmentId: requester.departmentId,
         targetUserId: dutyRequests.targetUserId,
         targetName: target.fullName,
         replacementUserId: dutyRequests.replacementUserId,
@@ -167,7 +171,7 @@ export class DutyRequestService {
       .map((r) => {
         const open = OPEN_STATUSES.includes(r.status);
         const isSwap = SWAP_TYPES.includes(r.type);
-        const scopeOk = isSwap ? this.canApproveSwap(user, r.roomDepartmentId) : canExc;
+        const scopeOk = isSwap ? this.canApproveSwap(user, r.requesterDepartmentId) : canExc;
         const pendingForTarget = r.status === 'CHO_NGUOI_NHAN' && r.targetUserId === me;
         return {
           ...r,
@@ -401,8 +405,10 @@ export class DutyRequestService {
       if (!this.core.hasPerm(user, 'duty.exception.resolve')) throw new ForbiddenException('Chỉ KHTH (điều phối lịch trực) mới xử lý ngoại lệ');
       await this.resolveException(user, req, dto);
     } else {
-      const slot = await this.core.getSlot(req.slotId);
-      if (!this.canApproveSwap(user, slot.roomDepartmentId)) throw new ForbiddenException('Bạn không có quyền duyệt đổi ca cho khoa này');
+      const requester = (await this.core.loadUsers(this.db.db, [req.requesterId])).get(req.requesterId);
+      if (!requester || !this.canApproveSwap(user, requester.departmentId)) {
+        throw new ForbiddenException('Bạn không có quyền duyệt đổi ca của nhân viên khoa này');
+      }
       if (locked) throw new ConflictException('Kỳ lịch đã chốt — yêu cầu này cần chuyển thành ngoại lệ cho KHTH');
       await this.db.db.transaction(async (tx) => {
         await lockAll(tx, [req.slotId, ...(req.targetSlotId ? [req.targetSlotId] : [])], [req.requesterId, req.targetUserId ?? 0]);
@@ -420,8 +426,10 @@ export class DutyRequestService {
     if (req.type === 'NGOAI_LE') {
       if (!this.core.hasPerm(user, 'duty.exception.resolve')) throw new ForbiddenException('Chỉ KHTH mới xử lý ngoại lệ');
     } else {
-      const slot = await this.core.getSlot(req.slotId);
-      if (!this.canApproveSwap(user, slot.roomDepartmentId)) throw new ForbiddenException('Bạn không có quyền duyệt đổi ca cho khoa này');
+      const requester = (await this.core.loadUsers(this.db.db, [req.requesterId])).get(req.requesterId);
+      if (!requester || !this.canApproveSwap(user, requester.departmentId)) {
+        throw new ForbiddenException('Bạn không có quyền duyệt đổi ca của nhân viên khoa này');
+      }
     }
     await this.db.db
       .update(dutyRequests)

@@ -310,13 +310,8 @@ export class DutyAbsenceService {
     const manager = this.core.canManageAny(user) && row.userId !== user.id;
     if (row.userId !== user.id) await this.ensureManager(user, row);
     const slots = await this.affected(row);
-    if (manager)
-      for (const s of slots)
-        this.core.ensureManageDept(
-          user,
-          s.roomDepartmentId,
-          `Phòng ${s.roomCode}`,
-        );
+    // Phòng khám dùng chung: quyền duyệt nghỉ được xác định theo khoa của
+    // nhân viên xin nghỉ (ensureManager), không theo khoa gắn trên từng phòng.
     const approvalBlockReason = !manager
       ? "Yêu cầu của bạn cần một người quản lý khác duyệt"
       : slots.some(
@@ -326,11 +321,20 @@ export class DutyAbsenceService {
           ) && !this.core.hasPerm(user, "duty.exception.resolve")
         ? "Có ca đã chốt/đang trực: cần KHTH có quyền xử lý ngoại lệ duyệt"
         : null;
+    const staffScope = this.core.scopeDeptIds(user);
     const staffRows = manager
       ? await this.db.db
           .select({ id: users.id })
           .from(users)
-          .where(and(eq(users.active, true), isNull(users.deletedAt)))
+          .where(
+            and(
+              eq(users.active, true),
+              isNull(users.deletedAt),
+              this.core.isAll(user) && !this.core.isDepartmentScheduler(user)
+                ? undefined
+                : inArray(users.departmentId, staffScope),
+            ),
+          )
       : [];
     const staff = await this.core.loadUsers(
       this.db.db,
@@ -341,7 +345,7 @@ export class DutyAbsenceService {
         .pairsFor(
           s,
           [...staff.values()].filter((u) => u.id !== row.userId),
-          { filledDelta: -1 },
+          { filledDelta: -1, ignoreRoomDepartment: this.core.isDepartmentScheduler(user) },
         )
         .map((p) => ({ ...p, locked: false })),
     );
@@ -459,11 +463,6 @@ export class DutyAbsenceService {
       for (const s of current.sort(
         (a, b) => a.dutyDate.localeCompare(b.dutyDate) || a.id - b.id,
       )) {
-        this.core.ensureManageDept(
-          user,
-          s.roomDepartmentId,
-          `Phòng ${s.roomCode}`,
-        );
         if (
           (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt })
             .locked ||
@@ -482,8 +481,12 @@ export class DutyAbsenceService {
           await this.core.loadUsers(tx, [replacement.replacementUserId])
         ).get(replacement.replacementUserId);
         if (!doctor) throw new NotFoundException("Người thay không tồn tại");
+        this.core.ensureManageDept(user, doctor.departmentId, `Nhân viên ${doctor.fullName}`);
         const pairs = this.core
-          .pairsFor(s, [doctor], { filledDelta: -1 })
+          .pairsFor(s, [doctor], {
+            filledDelta: -1,
+            ignoreRoomDepartment: this.core.isDepartmentScheduler(user),
+          })
           .map((p) => ({ ...p, locked: false }));
         const check = (
           await this.core.evaluatePairs(tx, pairs, {
