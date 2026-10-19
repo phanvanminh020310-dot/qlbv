@@ -297,11 +297,13 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 
 ### 11.5 Ràng buộc được kiểm tra tự động
 
+Kỳ lịch mới mặc định **1 ca tối đa/ngày**. Các ngưỡng số giờ/ngày, giờ/tuần, nghỉ tối thiểu, tổng ca/kỳ và ca đêm/kỳ mặc định là **0 = không giới hạn**; có thể đặt lại riêng cho từng kỳ. Riêng ca đêm liền kề một ca khác vẫn bị chặn để tránh hai ca sát nhau không có khoảng chuyển ca.
+
 | Ràng buộc | Kết quả |
 |---|---|
 | Trùng giờ giữa hai ca | Chặn |
-| Nghỉ giữa hai ca dưới mức tối thiểu (mặc định 12 giờ); ca đêm liền kề ca khác | Chặn |
-| Vượt giờ trực trong ngày (mặc định 10 giờ) hoặc trong tuần (mặc định 48 giờ, BLLĐ 2019) | Chặn |
+| Nghỉ giữa hai ca dưới mức đã cấu hình; ca đêm liền kề ca khác | Chặn |
+| Vượt giờ trực trong ngày/tuần khi kỳ lịch đặt giới hạn lớn hơn `0` | Chặn |
 | Sai chức danh; đang nghỉ phép; ô đã đủ người; ca đã qua; kỳ đã chốt | Chặn |
 | Khác khoa với phòng | Cảnh báo (có thể cấu hình thành chặn) |
 | Ca sáng và ca chiều liền nhau trong cùng ngày | Được phép |

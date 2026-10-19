@@ -12,14 +12,18 @@ const DAY_MS = 86_400_000;
 const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
-/** Mặc định theo quy định lao động (BLLĐ 2019 Điều 105) và thực tế lập lịch tuần của phòng khám */
+/**
+ * Mặc định lập kỳ mới theo yêu cầu vận hành: chỉ giới hạn một ca/ngày;
+ * các ngưỡng số giờ/số ca theo tuần-kỳ và khoảng nghỉ đều bằng 0 = không giới hạn.
+ * Lịch đã tạo giữ nguyên bộ quy tắc đã lưu riêng của kỳ đó.
+ */
 export const DEFAULT_DUTY_RULES: DutyRules = {
-  maxShiftsPerDay: 2,
+  maxShiftsPerDay: 1,
   maxShiftsPerPeriod: 0,
   maxNightShiftsPerPeriod: 0,
-  maxHoursPerDay: 10,
-  maxHoursPerWeek: 48,
-  minRestHours: 12,
+  maxHoursPerDay: 0,
+  maxHoursPerWeek: 0,
+  minRestHours: 0,
   crossDeptPolicy: 'CANH_BAO',
   allowSelfRegister: true,
   swapNeedsApproval: true,

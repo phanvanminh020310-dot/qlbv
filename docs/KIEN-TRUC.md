@@ -233,7 +233,7 @@ docker-compose.yml # PostgreSQL + Redis + API + Web
 **Lõi nghiệp vụ thuần** — `backend/src/modules/duty/duty-rules.ts`, không truy vấn CSDL, có kiểm thử `backend/test/duty-rules.test.ts` (`npm test`).
 
 - Mọi mốc thời gian quy về mili-giây UTC theo múi giờ cố định Asia/Bangkok (+07:00, không có giờ mùa hè). Ca qua đêm cộng thêm 24 giờ.
-- Ràng buộc **chặn**: trùng giờ; nghỉ giữa hai ca dưới mức tối thiểu (`minRestHours`, mặc định 12 giờ); ca đêm liền kề ca khác; số ca và giờ trực trong ngày; giờ trực trong tuần ISO (mặc định ≤48, theo BLLĐ 2019 Điều 105); số ca và ca đêm trong kỳ; đang nghỉ phép; sai chức danh; ô đã đủ người; đã có trong ô; ca đã qua; kỳ đã chốt; tài khoản ngừng hoạt động; lý do chặn đăng ký.
+- Ràng buộc **chặn**: trùng giờ; nghỉ giữa hai ca dưới mức `minRestHours` khi kỳ lịch đặt lớn hơn 0; ca đêm liền kề ca khác; số ca/ngày (mặc định 1); các giới hạn giờ/ngày, giờ/tuần, số ca/kỳ và ca đêm/kỳ khi kỳ lịch đặt lớn hơn 0; đang nghỉ phép; sai chức danh; ô đã đủ người; đã có trong ô; ca đã qua; kỳ đã chốt; tài khoản ngừng hoạt động; lý do chặn đăng ký. Kỳ mới mặc định các giới hạn số giờ/kỳ/nghỉ là 0 = không giới hạn.
 - Ràng buộc **cảnh báo** (cấu hình được): khác khoa với phòng, `crossDeptPolicy` = `CHO_PHEP` | `CANH_BAO` | `CHAN`.
 - Ca sáng và ca chiều liền nhau trong cùng ngày được phép, theo mẫu lịch thật của phòng khám. Ca đêm (có từ 2 giờ trở lên trong khung 22:00–06:00, BLLĐ Điều 106) luôn cần khoảng nghỉ.
 - Cấu hình ràng buộc lưu theo từng kỳ (`duty_periods.rules`, JSON), chuẩn hoá bởi `normalizeRules` (thiếu thì lấy mặc định, vượt biên thì kẹp về biên).

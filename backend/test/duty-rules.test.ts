@@ -115,7 +115,15 @@ test('tuần ISO: Thứ 2 là đầu tuần, Chủ nhật là ngày 7', () => {
   assert.equal(addDays('2026-10-31', 1), '2026-11-01');
 });
 
-test('chuẩn hoá cấu hình: thiếu thì lấy mặc định, vượt biên thì kẹp về biên', () => {
+test('chuẩn hoá cấu hình: kỳ mới mặc định một ca/ngày và các ngưỡng giờ/kỳ bằng 0; vượt biên bị kẹp', () => {
+  const defaults = normalizeRules({});
+  assert.equal(defaults.maxShiftsPerDay, 1);
+  assert.equal(defaults.maxHoursPerDay, 0);
+  assert.equal(defaults.maxHoursPerWeek, 0);
+  assert.equal(defaults.minRestHours, 0);
+  assert.equal(defaults.maxShiftsPerPeriod, 0);
+  assert.equal(defaults.maxNightShiftsPerPeriod, 0);
+
   const r = normalizeRules({ maxHoursPerWeek: 999, minRestHours: -5, crossDeptPolicy: 'XYZ', allowSelfRegister: false });
   assert.equal(r.maxHoursPerWeek, 168);
   assert.equal(r.minRestHours, 0);
@@ -132,9 +140,13 @@ test('hợp lệ: người đúng chức danh, trống ca, không nghỉ phép',
   assert.deepEqual(r.errors, []);
 });
 
-test('cho phép ca liền kề ban ngày (Sáng + Chiều cùng ngày, mẫu lịch thật)', () => {
+test('cho phép ca liền kề ban ngày khi kỳ lịch cấu hình từ hai ca/ngày', () => {
   const slot = slotOf(2, '2026-10-06', 'C');
-  const r = evaluateCandidate(input({ slot, duties: [dutyOf(1, '2026-10-06', 'S')] }));
+  const r = evaluateCandidate(input({
+    slot,
+    duties: [dutyOf(1, '2026-10-06', 'S')],
+    rules: { ...RULES, maxShiftsPerDay: 2 },
+  }));
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
@@ -202,17 +214,25 @@ test('giới hạn giờ trong ngày (10 giờ): CD (10h) cộng thêm C (5h) b�
   assert.ok(!codes(sameWeekOther).includes('HOURS_PER_DAY'));
 });
 
-test('giới hạn giờ trong tuần (48 giờ): đã có 40 giờ thì thêm ca 10 giờ bị chặn', () => {
+test('giới hạn giờ trong tuần khi kỳ lịch đặt 48 giờ: đã có 40 giờ thì thêm ca 10 giờ bị chặn', () => {
   const duties = [
     dutyOf(1, '2026-10-05', 'CD'),
     dutyOf(2, '2026-10-06', 'CD'),
     dutyOf(3, '2026-10-07', 'CD'),
     dutyOf(4, '2026-10-08', 'CD'),
   ];
-  const r = evaluateCandidate(input({ slot: slotOf(12, '2026-10-09', 'CD'), duties }));
+  const r = evaluateCandidate(input({
+    slot: slotOf(12, '2026-10-09', 'CD'),
+    duties,
+    rules: { ...RULES, maxHoursPerWeek: 48 },
+  }));
   assert.ok(codes(r).includes('HOURS_PER_WEEK'));
   // Tuần sau thì không tính chung
-  const next = evaluateCandidate(input({ slot: slotOf(12, '2026-10-12', 'CD'), duties }));
+  const next = evaluateCandidate(input({
+    slot: slotOf(12, '2026-10-12', 'CD'),
+    duties,
+    rules: { ...RULES, maxHoursPerWeek: 48 },
+  }));
   assert.ok(!codes(next).includes('HOURS_PER_WEEK'));
 });
 

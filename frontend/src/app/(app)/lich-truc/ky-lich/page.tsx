@@ -57,12 +57,12 @@ import {
 } from "@/lib/duty";
 
 const DEFAULT_RULES: DutyRules = {
-  maxShiftsPerDay: 2,
+  maxShiftsPerDay: 1,
   maxShiftsPerPeriod: 0,
   maxNightShiftsPerPeriod: 0,
-  maxHoursPerDay: 10,
-  maxHoursPerWeek: 48,
-  minRestHours: 12,
+  maxHoursPerDay: 0,
+  maxHoursPerWeek: 0,
+  minRestHours: 0,
   crossDeptPolicy: "CANH_BAO",
   allowSelfRegister: true,
   swapNeedsApproval: true,
@@ -328,12 +328,12 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
         <div>
           <h4 className="mb-2 text-sm font-semibold">Ràng buộc xếp trực</h4>
           <div className="grid gap-3 sm:grid-cols-3">
-            <NumField label="Ca tối đa / ngày" value={rules.maxShiftsPerDay} onChange={(v) => set("maxShiftsPerDay", num(v))} hint="0 = không giới hạn" />
-            <NumField label="Giờ trực tối đa / ngày" value={rules.maxHoursPerDay} onChange={(v) => set("maxHoursPerDay", num(v))} hint="BLLĐ: ≤10 giờ/ngày" />
-            <NumField label="Giờ trực tối đa / tuần" value={rules.maxHoursPerWeek} onChange={(v) => set("maxHoursPerWeek", num(v))} hint="BLLĐ: ≤48 giờ/tuần" />
-            <NumField label="Nghỉ tối thiểu giữa hai ca (giờ)" value={rules.minRestHours} onChange={(v) => set("minRestHours", num(v))} hint="Ca đêm luôn cần nghỉ" />
-            <NumField label="Ca tối đa / kỳ" value={rules.maxShiftsPerPeriod} onChange={(v) => set("maxShiftsPerPeriod", num(v))} hint="0 = không giới hạn" />
-            <NumField label="Ca đêm tối đa / kỳ" value={rules.maxNightShiftsPerPeriod} onChange={(v) => set("maxNightShiftsPerPeriod", num(v))} hint="0 = không giới hạn" />
+            <NumField label="Ca tối đa / ngày" value={rules.maxShiftsPerDay} onChange={(v) => set("maxShiftsPerDay", num(v))} hint="Mặc định 1; 0 = không giới hạn" />
+            <NumField label="Giờ trực tối đa / ngày" value={rules.maxHoursPerDay} onChange={(v) => set("maxHoursPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
+            <NumField label="Giờ trực tối đa / tuần" value={rules.maxHoursPerWeek} onChange={(v) => set("maxHoursPerWeek", num(v))} hint="Mặc định 0 = không giới hạn" />
+            <NumField label="Nghỉ tối thiểu giữa hai ca (giờ)" value={rules.minRestHours} onChange={(v) => set("minRestHours", num(v))} hint="Mặc định 0; ca đêm liền kề vẫn bị chặn" />
+            <NumField label="Ca tối đa / kỳ" value={rules.maxShiftsPerPeriod} onChange={(v) => set("maxShiftsPerPeriod", num(v))} hint="Mặc định 0 = không giới hạn" />
+            <NumField label="Ca đêm tối đa / kỳ" value={rules.maxNightShiftsPerPeriod} onChange={(v) => set("maxNightShiftsPerPeriod", num(v))} hint="Mặc định 0 = không giới hạn" />
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
