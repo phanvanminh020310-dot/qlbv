@@ -438,7 +438,7 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <NumField label="Số người cần mỗi ô" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} />
+          <NumField label="Chỉ tiêu người trực mỗi ô" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Không giới hạn số người mà người xếp lịch có thể phân công" />
           <div className="flex items-end gap-2 pb-2">
             <Switch checked={skipClosed} onCheckedChange={setSkipClosed} />
             <span className="text-sm">Bỏ qua ngày nghỉ lễ</span>
@@ -555,7 +555,7 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
             {catalog.roles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </Select>
         </div>
-        <NumField label="Số người cần" value={Number(required)} onChange={setRequired} />
+        <NumField label="Chỉ tiêu người trực" value={Number(required)} onChange={setRequired} hint="Không giới hạn số người mà người xếp lịch có thể phân công" />
       </div>
     </Dialog>
   );

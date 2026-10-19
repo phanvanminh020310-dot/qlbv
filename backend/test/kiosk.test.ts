@@ -10,7 +10,7 @@ const NATIVE_CAMERA_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)
 
 type Row = { slotId?: number; userId: number; dutyDate: string; shiftCode: string; shiftName: string; startTime: string; endTime: string; crossesMidnight: boolean };
 class Socket extends EventEmitter { messages: string[] = []; writableEnded = false; destroyed = false; write(v: string) { this.messages.push(v); return true; } end() { this.writableEnded = true; this.emit("close"); } }
-const active = (r: Row) => ({ dutyDate: r.dutyDate, room: { code: "PK01", name: "Phòng khám 01" }, shift: { code: r.shiftCode, name: r.shiftName, startTime: r.startTime, endTime: r.endTime }, staff: { username: `doctor_${r.userId}`, fullName: `Bác sĩ ${r.userId}`, title: "BS." } });
+const active = (r: Row) => ({ dutyDate: r.dutyDate, room: { code: "PK01", name: "Phòng khám 01" }, role: { code: "BS", name: "Bác sĩ" }, shift: { code: r.shiftCode, name: r.shiftName, startTime: r.startTime, endTime: r.endTime }, staff: { username: `doctor_${r.userId}`, fullName: `Bác sĩ ${r.userId}`, title: "BS." } });
 const current = (userId = 7): Row => ({ slotId: 1, userId, dutyDate: "2026-10-15", shiftCode: "DAY", shiftName: "Cả ngày", startTime: "00:00", endTime: "23:59", crossesMidnight: false });
 
 function serviceFor(t: TestContext, values: Record<string, unknown> = {}) {
@@ -57,6 +57,16 @@ test("only an online exact active shift requests kiosk/QR, and scan survives sta
   const first = await service.getKioskStatus("PK01", "terminal_a", "https://hospital.test"); assert.equal(first.kioskRequired, true); assert.equal(first.isUnlocked, false); assert.ok(first.qrSession);
   await service.touchSessionScan(first.qrSession!.sessionId, { claimToken: TOKEN });
   const again = await service.getKioskStatus("PK01", "terminal_a", "https://hospital.test"); assert.equal(again.qrSession?.sessionId, first.qrSession?.sessionId); assert.equal(again.qrSession?.status, "SCANNED");
+});
+
+test("Kiosk lists every person assigned to the active shift and keeps all of them eligible", async (t) => {
+  const { service, integration } = serviceFor(t);
+  integration.result = { onDuty: [active(current(7)), active(current(8))] };
+  const status = await service.getKioskStatus("PK01", "terminal_multi", "https://hospital.test");
+  assert.equal(status.kioskRequired, true);
+  assert.deepEqual(status.currentScheduledStaff.map((staff: any) => staff.username), ["doctor_7", "doctor_8"]);
+  assert.equal(status.currentScheduledStaff[0]?.roleName, "Bác sĩ");
+  assert.equal(status.currentScheduled?.fullName, "BS. Bác sĩ 7 · BS. Bác sĩ 8", "Kiosk Windows cũ cũng nhận được tên đầy đủ của mọi người trực");
 });
 
 test("no shift, upcoming/recent roster, or failed online reconciliation immediately releases and clears QR/lease", async (t) => {

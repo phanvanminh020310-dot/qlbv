@@ -914,9 +914,8 @@ export class DutyService {
     const s = await this.core.getSlot(slotId);
     this.core.ensureManageSchedule(user, `Sửa ô trực phòng ${s.roomCode}`);
     if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không sửa ô trực');
-    if (dto.requiredCount !== undefined && dto.requiredCount < Number(s.filled)) {
-      throw new ConflictException(`Ô đang có ${s.filled} người trực — số người cần không thể nhỏ hơn`);
-    }
+    // requiredCount là chỉ tiêu, không phải sức chứa: có thể hạ chỉ tiêu xuống
+    // dưới số người đã phân công mà không gỡ hay làm thay đổi bất kỳ ai.
     await this.db.db
       .update(dutySlots)
       .set({ ...(dto.requiredCount !== undefined ? { requiredCount: dto.requiredCount } : {}), ...(dto.note !== undefined ? { note: dto.note } : {}), updatedAt: new Date() })
@@ -1043,8 +1042,11 @@ export class DutyService {
       const u = userMap.get(dto.userId);
       if (!u) throw new NotFoundException('Không tìm thấy nhân viên');
       this.core.ensureManageDept(user, u.departmentId, `Nhân viên ${u.fullName}`);
+      // Người xếp lịch (kể cả phạm vi khoa) có thể thêm nhiều người vào cùng một
+      // ô; requiredCount chỉ là chỉ tiêu phục vụ theo dõi/công bố, không phải trần.
       const pairs: PairCtx[] = this.core.pairsFor(fresh, [u], {
         ignoreRoomDepartment: this.core.isDepartmentScheduler(user),
+        ignoreSlotCapacity: true,
       });
       const res = (await this.core.evaluatePairs(tx, pairs)).get(`${slotId}:${dto.userId}`) as EvaluateResult;
       if (!res.ok && !dto.force) throw new ConflictException(violationText(res));
@@ -1250,8 +1252,13 @@ export class DutyService {
       departmentName: r.departmentName ?? '',
     }));
     const { locked } = this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt });
+    // Hiển thị đúng khả năng phân công của điều phối viên: đã đủ chỉ tiêu vẫn
+    // cho phép thêm người; các ràng buộc an toàn cho từng người vẫn được kiểm tra.
     const pairs = this.core
-      .pairsFor(s, engine, { ignoreRoomDepartment: isDepartmentScheduler })
+      .pairsFor(s, engine, {
+        ignoreRoomDepartment: isDepartmentScheduler,
+        ignoreSlotCapacity: true,
+      })
       .map((pc) => ({ ...pc, locked }));
     const results = await this.core.evaluatePairs(this.db.db, pairs);
     const list = engine.map((u) => {

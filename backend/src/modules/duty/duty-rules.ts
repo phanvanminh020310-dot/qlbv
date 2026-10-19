@@ -267,6 +267,8 @@ export interface EvaluateInput {
   locked: boolean;
   /** Lý do chặn đăng ký tự nguyện (chưa mở đăng ký, kỳ chưa công bố…) */
   registrationBlocked?: string | null;
+  /** Người xếp lịch phân công trực tiếp có thể xếp vượt chỉ tiêu requiredCount; tự đăng ký thì không. */
+  ignoreSlotCapacity?: boolean;
 }
 
 export interface EvaluateResult {
@@ -294,7 +296,9 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
 
   if (!u.active) err('NOT_ACTIVE', 'Tài khoản đã ngừng hoạt động');
   if (i.alreadyInSlot) err('ALREADY_IN_SLOT', `Đã được xếp trong ca ${where}`);
-  else if (s.filled >= s.requiredCount) err('SLOT_FULL', `Ca ${where} đã đủ người (${s.filled}/${s.requiredCount})`);
+  // requiredCount là chỉ tiêu nhân sự, không phải trần cho thao tác phân công của người xếp lịch.
+  // Luồng tự đăng ký vẫn tôn trọng chỉ tiêu để không tạo đăng ký dư ngoài kiểm soát.
+  else if (!i.ignoreSlotCapacity && s.filled >= s.requiredCount) err('SLOT_FULL', `Ca ${where} đã đủ người (${s.filled}/${s.requiredCount})`);
   if (i.locked) err('LOCKED', 'Kỳ lịch đã chốt — chỉ thay đổi qua yêu cầu ngoại lệ gửi KHTH');
   if (s.start <= i.now) err('PAST', `Ca ${where} đã bắt đầu hoặc đã qua`);
   if (i.registrationBlocked) err('REGISTRATION', i.registrationBlocked);

@@ -20,6 +20,16 @@ import {
 import QRCode from "qrcode";
 import { KioskLockdown } from "@/lib/kiosk-lockdown";
 
+type ScheduledStaff = {
+  username: string;
+  fullName: string;
+  title: string;
+  roleName: string;
+  shiftName: string;
+  startTime: string;
+  endTime: string;
+};
+
 export default function KioskPage() {
   const routeParams = useParams();
   const rawRoomCode = (routeParams?.roomCode as string) || "PK01";
@@ -29,7 +39,10 @@ export default function KioskPage() {
     code: roomCode,
     name: `Phòng khám số ${roomCode.replace(/^[^\d]*/, "") || roomCode}`,
   });
+  // currentScheduled giữ tương thích với Kiosk cũ; currentScheduledStaff là
+  // danh sách đầy đủ những người đang trực trong cùng ca/phòng.
   const [scheduledDuty, setScheduledDuty] = useState<any>(null);
+  const [scheduledStaff, setScheduledStaff] = useState<ScheduledStaff[]>([]);
   const [qrUrl, setQrUrl] = useState<string>("");
   const [terminalId, setTerminalId] = useState<string>("");
   const [expiresInSeconds, setExpiresInSeconds] = useState<number>(15);
@@ -192,6 +205,13 @@ export default function KioskPage() {
       }
       if (data?.currentScheduled !== undefined) {
         setScheduledDuty(data.currentScheduled);
+        setScheduledStaff(
+          Array.isArray(data?.currentScheduledStaff)
+            ? data.currentScheduledStaff
+            : data.currentScheduled
+              ? [data.currentScheduled]
+              : [],
+        );
       }
 
       if (data?.isUnlocked) {
@@ -251,6 +271,13 @@ export default function KioskPage() {
         }
         if (data?.currentScheduled !== undefined) {
           setScheduledDuty(data.currentScheduled);
+          setScheduledStaff(
+            Array.isArray(data?.currentScheduledStaff)
+              ? data.currentScheduledStaff
+              : data.currentScheduled
+                ? [data.currentScheduled]
+                : [],
+          );
         }
         if (data?.isUnlocked) {
           setIsUnlocked(true);
@@ -739,25 +766,24 @@ export default function KioskPage() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid gap-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
                 <div>
-                  <span className="text-xs opacity-70 block">
-                    Bác sĩ khám chính:
-                  </span>
-                  <span
-                    className={`font-bold text-sm sm:text-base ${
-                      scheduledDuty ? "text-teal-400" : "text-slate-400"
-                    }`}
-                  >
-                    {scheduledDuty?.fullName
-                      ? `${scheduledDuty.title ? `${scheduledDuty.title} ` : ""}${scheduledDuty.fullName}`
-                      : "Không có ca trực hoạt động"}
-                  </span>
+                  <span className="text-xs opacity-70 block">Danh sách người trực:</span>
+                  {scheduledStaff.length ? (
+                    <ul className="mt-1.5 space-y-1" aria-label="Danh sách người trực ca hiện tại">
+                      {scheduledStaff.map((staff) => (
+                        <li key={`${staff.username}-${staff.shiftName}`} className="font-bold text-sm sm:text-base text-teal-600 dark:text-teal-400">
+                          {staff.title ? `${staff.title} ` : ""}{staff.fullName}
+                          <span className="ml-1.5 text-xs font-normal opacity-70">· {staff.roleName}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="font-bold text-sm sm:text-base text-slate-400">Không có ca trực hoạt động</span>
+                  )}
                 </div>
-                <div>
-                  <span className="text-xs opacity-70 block">
-                    Khung giờ trực:
-                  </span>
+                <div className="sm:text-right">
+                  <span className="text-xs opacity-70 block">Khung giờ trực:</span>
                   <span
                     className={`font-semibold font-mono ${
                       scheduledDuty

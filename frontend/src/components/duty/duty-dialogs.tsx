@@ -117,7 +117,7 @@ export function AssignDialog({
     staleTime: 5_000,
   });
   if (!slot) return null;
-  const full = slot.filled >= slot.requiredCount;
+  const targetMet = slot.filled >= slot.requiredCount;
   const list = (cand.data ?? []).slice(0, 80);
   const onAssign = (userId: number, force: boolean) => {
     if (force && forceReason.trim().length < 5) {
@@ -136,7 +136,7 @@ export function AssignDialog({
       onClose={onClose}
       size="lg"
       title={`Xếp người trực · ${slot.roomCode} · ${slot.shiftCode}`}
-      description={`${dayName(slot.dutyDate)} ${fmtDate(slot.dutyDate)} · ${slot.startTime}–${slot.endTime} · ${slot.roleName} · cần ${slot.requiredCount} người`}
+      description={`${dayName(slot.dutyDate)} ${fmtDate(slot.dutyDate)} · ${slot.startTime}–${slot.endTime} · ${slot.roleName} · chỉ tiêu ${slot.requiredCount} người`}
     >
       <div className="space-y-5">
         {locked ? (
@@ -148,8 +148,8 @@ export function AssignDialog({
         <section>
           <div className="mb-2 flex items-center justify-between">
             <h4 className="text-sm font-semibold">Đang trực</h4>
-            <Badge tone={full ? "success" : "warning"}>
-              {slot.filled}/{slot.requiredCount} người
+            <Badge tone={targetMet ? "success" : "warning"}>
+              Đã xếp {slot.filled} · chỉ tiêu {slot.requiredCount}
             </Badge>
           </div>
           {slot.assignments.length === 0 ? (
@@ -198,8 +198,10 @@ export function AssignDialog({
                 </p>
               </div>
             </div>
-            {full ? (
-              <div className="mb-2 text-xs text-amber-600 dark:text-amber-400">Ô đã đủ người. Gỡ bớt người trực trước khi thêm, hoặc tăng số người cần của ô.</div>
+            {targetMet ? (
+              <div className="mb-2 text-xs text-emerald-700 dark:text-emerald-300">
+                Ô đã đạt chỉ tiêu. Người xếp lịch vẫn có thể thêm người trực khi cần.
+              </div>
             ) : null}
             {cand.isLoading ? (
               <div className="py-6 text-center text-sm text-[var(--muted-foreground)]">Đang kiểm tra ràng buộc…</div>
@@ -226,7 +228,7 @@ export function AssignDialog({
                         <div className="flex shrink-0 flex-col items-end gap-1.5">
                           {clean ? <Badge tone="success">Phù hợp</Badge> : c.ok ? <Badge tone="warning">Có cảnh báo</Badge> : <Badge tone="danger">Không đủ điều kiện</Badge>}
                           {c.ok ? (
-                            <Button size="sm" disabled={full || actions.assign.isPending} onClick={() => onAssign(c.userId, false)}>
+                            <Button size="sm" disabled={actions.assign.isPending} onClick={() => onAssign(c.userId, false)}>
                               Xếp
                             </Button>
                           ) : canManageAll ? (

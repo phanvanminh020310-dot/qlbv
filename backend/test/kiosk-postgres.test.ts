@@ -100,6 +100,44 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
   );
 
   await t.test(
+    "one slot may list several staff and any listed staff can pass face verification",
+    async () => {
+      await pg.exec("INSERT INTO duty_assignments (id, slot_id, user_id) VALUES (7006, 7001, 7002)");
+      const listed = await service.getKioskStatus("PK01", "pc_multi", "https://hospital.test");
+      assert.deepEqual(
+        listed.currentScheduledStaff.map((person: any) => person.username),
+        ["doctor_fixture_a", "doctor_fixture_b"],
+      );
+      assert.equal(listed.currentScheduled?.fullName, "BS. Bác sĩ A · BS. Bác sĩ B");
+
+      const vector = Array<number>(512).fill(0);
+      vector[1] = 1;
+      await database.db.insert(schema.userBiometrics).values({
+        userId: 7002,
+        faceDescriptor: (service as any).encryptDescriptor(vector),
+      });
+      service.verifyAndExtractAi = async () => ({ isLive: true, embedding: vector });
+      const sessionId = listed.qrSession!.sessionId;
+      await service.touchSessionScan(sessionId, { claimToken: TOKEN });
+      const verified = await service.verifyFaceAndUnlock({
+        sessionId,
+        snapshotBase64: "fixture-only-not-a-real-face",
+        claimToken: TOKEN,
+      });
+      assert.equal(verified.success, true);
+      assert.equal((verified as any).doctor.username, "doctor_fixture_b");
+      const attendance = (await database.db.select().from(schema.dutyAttendance))
+        .filter((row) => row.userId === 7002 && row.method === "AI_FACIAL_BIOMETRICS");
+      assert.equal(attendance.length, 1);
+      assert.equal(attendance[0]?.slotId, 7001);
+
+      // Không để fixture nhiều người ảnh hưởng tới các kịch bản thu hồi lease tiếp theo.
+      service.lockRoom("PK01");
+      await pg.exec("DELETE FROM duty_attendance WHERE user_id = 7002; DELETE FROM user_biometrics WHERE user_id = 7002; DELETE FROM duty_assignments WHERE id = 7006");
+    },
+  );
+
+  await t.test(
     "concurrent frames produce one attendance row bound to slot/room and unlock only the scanning PC",
     async () => {
       const vector = Array<number>(512).fill(0);

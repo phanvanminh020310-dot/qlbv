@@ -113,6 +113,21 @@ test("live monitor shows only exact-active, published roster and preserves depar
     service.liveMonitor(manager(["duty.manage"], [])),
     /chưa được gán phạm vi khoa/,
   );
+
+  // requiredCount là chỉ tiêu, nên không được gỡ người hoặc từ chối sửa khi
+  // người xếp lịch chủ động để số người thực tế cao hơn chỉ tiêu.
+  await pg.exec(`
+    INSERT INTO users (id, username, password_hash, full_name, title, active)
+    VALUES (90, 'monitor_manager', 'fixture', 'Điều phối trực', 'Điều phối', true);
+    INSERT INTO duty_assignments (id, slot_id, user_id) VALUES (5, 1, 2);
+  `);
+  const loweredTarget = await service.updateSlot(
+    manager(["duty.manage-all"], [], "ALL"),
+    1,
+    { requiredCount: 1 },
+  );
+  assert.equal(loweredTarget.requiredCount, 1);
+  assert.equal(loweredTarget.filled, 2);
 });
 
 

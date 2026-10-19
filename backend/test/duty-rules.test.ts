@@ -187,12 +187,15 @@ test('đang nghỉ phép thì không được xếp', () => {
   assert.ok(codes(r).includes('ABSENT'));
 });
 
-test('ca đã đủ người, đã có trong ca, kỳ đã chốt, ca đã qua, tài khoản ngừng hoạt động', () => {
-  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S', { filled: 1 }) }))).includes('SLOT_FULL'));
-  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), alreadyInSlot: true }))).includes('ALREADY_IN_SLOT'));
-  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), locked: true }))).includes('LOCKED'));
-  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), now: Date.parse('2026-10-07T00:00:00+07:00') }))).includes('PAST'));
-  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), user: { ...doctor, active: false } }))).includes('NOT_ACTIVE'));
+test('chỉ tiêu người trực chặn tự đăng ký nhưng không chặn người xếp lịch thêm nhiều người; các chặn khác vẫn giữ', () => {
+  const fullSlot = slotOf(8, '2026-10-06', 'S', { filled: 1 });
+  assert.ok(codes(evaluateCandidate(input({ slot: fullSlot }))).includes('SLOT_FULL'));
+  const schedulerAssignment = evaluateCandidate(input({ slot: fullSlot, ignoreSlotCapacity: true }));
+  assert.equal(schedulerAssignment.ok, true, JSON.stringify(schedulerAssignment.errors));
+  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), alreadyInSlot: true, ignoreSlotCapacity: true }))).includes('ALREADY_IN_SLOT'));
+  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), locked: true, ignoreSlotCapacity: true }))).includes('LOCKED'));
+  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), now: Date.parse('2026-10-07T00:00:00+07:00'), ignoreSlotCapacity: true }))).includes('PAST'));
+  assert.ok(codes(evaluateCandidate(input({ slot: slotOf(8, '2026-10-06', 'S'), user: { ...doctor, active: false }, ignoreSlotCapacity: true }))).includes('NOT_ACTIVE'));
 });
 
 test('khác khoa: cảnh báo mềm mặc định; chặn khi chính sách là CHAN; bỏ qua khi CHO_PHEP', () => {

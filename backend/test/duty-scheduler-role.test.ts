@@ -124,7 +124,13 @@ test("người xếp lịch khoa thấy mọi phòng nhưng API ứng viên ch�
   assert.ok(candidates.includes("const departmentIds = this.core.scopeDeptIds(user)"));
   assert.ok(candidates.includes("conds.push(inArray(users.departmentId, departmentIds))"));
   assert.ok(candidates.includes("ignoreRoomDepartment: isDepartmentScheduler"));
+  assert.ok(candidates.includes("ignoreSlotCapacity: true"));
   assert.ok(candidates.includes("chưa được gán phạm vi khoa"));
+
+  const assignStart = source.indexOf("async assign(user: AccessContext");
+  const assignEnd = source.indexOf("async unassign(", assignStart);
+  const assign = source.slice(assignStart, assignEnd);
+  assert.ok(assign.includes("ignoreSlotCapacity: true"), "người xếp lịch khoa phải được thêm nhiều người trong cùng ô");
 
   const coreSource = readFileSync(resolve(__dirname, "..", "src", "modules", "duty", "duty-core.service.ts"), "utf8");
   assert.ok(coreSource.includes("if (opts.ignoreRoomDepartment) slot.roomDepartmentId = null"));

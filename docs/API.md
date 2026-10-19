@@ -362,9 +362,9 @@ Tiền tố `/api/duty`. Ngày dạng `YYYY-MM-DD`; thời điểm dạng ISO 86
 | `GET` | `/duty/periods/:id/summary` | Giờ trực, số ca, ca đêm, số ngày trực theo người; chênh lệch giờ giữa người nhiều nhất và ít nhất | `duty.manage` · `duty.manage-all` |
 | `GET` | `/duty/periods/:id/logs` | Nhật ký thay đổi (kèm lý do, người thực hiện) | `duty.view` (chỉ người quản lý) |
 | `GET` | `/duty/periods/:id/export` | Xuất Excel: sheet lưới lịch và sheet tổng hợp giờ | `duty.export` |
-| `POST` | `/duty/periods/:id/slots/generate` | Sinh ô hàng loạt `{roomIds, shiftIds, roleIds, weekdays: [1..7], requiredCount?, skipClosedDays?}`, tối đa 4000 ô | `duty.manage` · `duty.manage-all` |
-| `POST` | `/duty/periods/:id/slots` | Thêm một ô `{dutyDate, roomId, shiftId, roleId, requiredCount?, note?}` | `duty.manage` · `duty.manage-all` |
-| `PUT` | `/duty/slots/:id` | Sửa số người cần, ghi chú (không được thấp hơn số đã xếp) | `duty.manage` · `duty.manage-all` |
+| `POST` | `/duty/periods/:id/slots/generate` | Sinh ô hàng loạt `{roomIds, shiftIds, roleIds, weekdays: [1..7], requiredCount?, skipClosedDays?}`; `requiredCount` là chỉ tiêu người trực, tối đa 4000 ô | `duty.manage` · `duty.manage-all` |
+| `POST` | `/duty/periods/:id/slots` | Thêm một ô `{dutyDate, roomId, shiftId, roleId, requiredCount?, note?}`; `requiredCount` là chỉ tiêu, không phải trần phân công trực tiếp | `duty.manage` · `duty.manage-all` |
+| `PUT` | `/duty/slots/:id` | Sửa chỉ tiêu người trực, ghi chú; chỉ tiêu có thể thấp hơn số đã xếp | `duty.manage` · `duty.manage-all` |
 | `POST` | `/duty/slots/:id/delete` | Xoá ô. Ô đang có người trực cần `{force: true, reason}` | `duty.manage` · `duty.manage-all` |
 | `GET` | `/duty/slots/:id/candidates?q=` | Ứng viên kèm kết quả kiểm tra ràng buộc (lỗi, cảnh báo, cùng khoa) | `duty.manage` · `duty.manage-all` |
 | `POST` | `/duty/slots/:id/assignments` | Xếp người trực `{userId, note?, force?, reason?}`. `force` chỉ dành cho `duty.manage-all`, bắt buộc có lý do | `duty.manage` · `duty.manage-all` |

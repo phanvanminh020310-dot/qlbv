@@ -299,12 +299,14 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 
 Kỳ lịch mới mặc định **1 ca tối đa/ngày**. Các ngưỡng số giờ/ngày, giờ/tuần, nghỉ tối thiểu, tổng ca/kỳ và ca đêm/kỳ mặc định là **0 = không giới hạn**; có thể đặt lại riêng cho từng kỳ. Riêng ca đêm liền kề một ca khác vẫn bị chặn để tránh hai ca sát nhau không có khoảng chuyển ca.
 
+**Số người cần mỗi ô** là chỉ tiêu theo dõi/công bố, không phải giới hạn trên khi người có quyền xếp lịch phân công trực tiếp: người xếp lịch trực khoa có thể thêm nhiều nhân sự khác nhau vào cùng một ô/ca. Tự đăng ký (nếu kỳ có mở) vẫn dừng ở chỉ tiêu để tránh đăng ký dư. Mọi ràng buộc an toàn theo từng người vẫn được kiểm tra.
+
 | Ràng buộc | Kết quả |
 |---|---|
 | Trùng giờ giữa hai ca | Chặn |
 | Nghỉ giữa hai ca dưới mức đã cấu hình; ca đêm liền kề ca khác | Chặn |
 | Vượt giờ trực trong ngày/tuần khi kỳ lịch đặt giới hạn lớn hơn `0` | Chặn |
-| Sai chức danh; đang nghỉ phép; ô đã đủ người; ca đã qua; kỳ đã chốt | Chặn |
+| Sai chức danh; đang nghỉ phép; đã có trong cùng ô; ca đã qua; kỳ đã chốt | Chặn |
 | Khác khoa với phòng | Cảnh báo (có thể cấu hình thành chặn) |
 | Ca sáng và ca chiều liền nhau trong cùng ngày | Được phép |
 | Hai kỳ lịch trùng ngày | Chặn |

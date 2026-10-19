@@ -44,6 +44,8 @@ export interface PairCtx {
   rules: DutyRules;
   locked: boolean;
   registrationBlocked?: string | null;
+  /** Phân công trực tiếp được phép vượt chỉ tiêu người của ô; tự đăng ký thì không. */
+  ignoreSlotCapacity?: boolean;
 }
 
 /** Dòng ô trực đã join đủ danh mục */
@@ -381,6 +383,7 @@ export class DutyCoreService {
           now,
           locked: p.locked,
           registrationBlocked: p.registrationBlocked ?? null,
+          ignoreSlotCapacity: !!p.ignoreSlotCapacity,
         }),
       );
     }
@@ -391,7 +394,12 @@ export class DutyCoreService {
   pairsFor(
     slotRow: SlotRow,
     users: EngineUser[],
-    opts: { filledDelta?: number; registrationBlocked?: string | null; ignoreRoomDepartment?: boolean } = {},
+    opts: {
+      filledDelta?: number;
+      registrationBlocked?: string | null;
+      ignoreRoomDepartment?: boolean;
+      ignoreSlotCapacity?: boolean;
+    } = {},
   ): PairCtx[] {
     const slot = this.toEngineSlot(slotRow);
     // Người xếp lịch khoa được điều phối nhân sự khoa mình tại mọi phòng. Chỉ
@@ -405,6 +413,7 @@ export class DutyCoreService {
       rules: slotRow.rules,
       locked,
       registrationBlocked: opts.registrationBlocked ?? null,
+      ignoreSlotCapacity: !!opts.ignoreSlotCapacity,
     }));
   }
 

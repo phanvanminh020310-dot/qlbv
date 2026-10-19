@@ -52,7 +52,8 @@ protocolVersion: 2
 terminalId: đúng máy đang yêu cầu
 roomExists, room: đúng phòng đang hoạt động
 serverTime: Unix milliseconds
-currentScheduled: phân công chuẩn hoặc null
+currentScheduled: phân công đầu tiên/tóm tắt tương thích Kiosk cũ, hoặc null
+currentScheduledStaff: danh sách đầy đủ mọi người trực đang hoạt động trong phòng (mỗi username một lần)
 isUnlocked, activeDoctor, shiftEndMs: lease của riêng (phòng, terminal)
 qrSession: null nếu đã mở, nếu khoá gồm:
   sessionId, qrUrl

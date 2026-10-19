@@ -861,6 +861,20 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     // IntegrationDutyService.onDuty uses the published roster and coversInstant;
     // it deliberately excludes early arrival, post-shift grace, upcoming and draft slots.
     let currentScheduled: any = null;
+    let currentScheduledStaff: Array<{
+      dutyDate: string;
+      roomCode: string;
+      roomName: string;
+      shiftCode: string;
+      shiftName: string;
+      startTime: string;
+      endTime: string;
+      roleCode: string;
+      roleName: string;
+      fullName: string;
+      title: string;
+      username: string;
+    }> = [];
     let rosterVerified = false;
     if (matchedRooms.length) {
       try {
@@ -869,9 +883,11 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           now,
         );
         rosterVerified = true;
-        const item = result.onDuty[0];
-        if (item) {
-          currentScheduled = {
+        // Một ô có thể có nhiều người trực. Dedupe theo username để một người
+        // bị phân công vào hai vai trò trùng giờ không xuất hiện hai lần trên Kiosk.
+        const staffByUsername = new Map<string, (typeof currentScheduledStaff)[number]>();
+        for (const item of result.onDuty) {
+          const person = {
             dutyDate: item.dutyDate,
             roomCode: item.room.code,
             roomName: item.room.name,
@@ -879,10 +895,29 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             shiftName: item.shift.name,
             startTime: item.shift.startTime,
             endTime: item.shift.endTime,
+            roleCode: item.role.code,
+            roleName: item.role.name,
             fullName: item.staff.fullName,
             title: item.staff.title,
             username: item.staff.username,
           };
+          if (!staffByUsername.has(person.username)) staffByUsername.set(person.username, person);
+        }
+        currentScheduledStaff = [...staffByUsername.values()];
+        const first = currentScheduledStaff[0];
+        if (first) {
+          // Giữ currentScheduled tương thích Kiosk Windows cũ. Khi có nhiều
+          // người, fullName trở thành chuỗi hiển thị đầy đủ để bản cũ cũng thấy
+          // danh sách; client mới dùng currentScheduledStaff có cấu trúc.
+          currentScheduled = currentScheduledStaff.length === 1
+            ? first
+            : {
+                ...first,
+                title: '',
+                fullName: currentScheduledStaff
+                  .map((person) => `${person.title ? `${person.title} ` : ''}${person.fullName}`)
+                  .join(' · '),
+              };
         }
       } catch (e: any) {
         // If reconciliation is unavailable, do not create a QR or keep Windows locked.
@@ -907,6 +942,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         activeDoctor: null,
         shiftEndMs: null,
         currentScheduled: null,
+        currentScheduledStaff: [],
         serverTime: Date.now(),
         qrSession: null,
       };
@@ -1046,6 +1082,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       activeDoctor: unlockedDoctor,
       shiftEndMs,
       currentScheduled,
+      currentScheduledStaff,
       serverTime: Date.now(),
       qrSession:
         !isUnlocked && activeSession
