@@ -260,7 +260,7 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 ### 11.0 Dùng thuận tiện trên điện thoại
 
 - Mở QLBS từ đường link **HTTPS** lần đầu sẽ có nút **Cài ứng dụng**. Trên Android/Chrome, chạm nút và xác nhận hộp cài của trình duyệt. Trên iPhone/iPad, mở bằng Safari → **Chia sẻ** → **Thêm vào Màn hình chính**. Khi đã cài, lời mời sẽ tự ẩn và QLBS mở như một ứng dụng riêng.
-- Trong **Lịch trực tuần**: chọn tuần → chọn ngày → chạm vào thẻ phòng để xem từng ca hoặc xếp người. Nhãn vàng cho biết số vị trí còn thiếu; người xếp lịch có thể bấm **vị trí cần xếp** để chỉ xem các phòng cần xử lý.
+- Trong **Lịch trực tuần**: khi mở trang, hệ thống tự chọn kỳ giao với **tuần hiện tại** (kể cả bản nháp mà người quản lý được xem), sau đó chọn tuần → chọn ngày → chạm vào thẻ phòng để xem từng ca hoặc xếp người. Nhãn vàng cho biết số vị trí còn thiếu; người xếp lịch có thể bấm **vị trí cần xếp** để chỉ xem các phòng cần xử lý.
 
 ### 11.1 Điều phối lịch (KHTH, vai trò `DIEU_PHOI_TRUC`)
 

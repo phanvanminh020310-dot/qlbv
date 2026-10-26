@@ -14,22 +14,11 @@ import { Select } from "@/components/ui/input";
 import { useRealtimeInvalidate } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
 import { bkkTodayYmd, DUTY_KEYS, dutyApi, fmtDate, fmtDm, type GridSlot } from "@/lib/duty";
+import { pickDefaultDutyPeriod } from "@/lib/duty-period-selection";
 import { downloadFile } from "@/lib/api";
 
 type CellKey = string;
 const cellKey = (roomId: number, date: string) => `${roomId}|${date}`;
-
-/** Chọn kỳ mặc định: kỳ đang diễn ra hoặc kỳ sắp tới gần nhất (ưu tiên kỳ đã công bố) */
-function pickDefaultPeriod(periods: { id: number; startDate: string; endDate: string; status: string }[]): number | null {
-  if (!periods.length) return null;
-  const today = bkkTodayYmd();
-  const visible = periods.filter((p) => p.status !== "NHAP");
-  const pool = visible.length ? visible : periods;
-  const current = pool.find((p) => p.startDate <= today && p.endDate >= today);
-  if (current) return current.id;
-  const upcoming = [...pool].filter((p) => p.startDate > today).sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
-  return (upcoming ?? [...pool].sort((a, b) => b.startDate.localeCompare(a.startDate))[0]).id;
-}
 
 /** Nội dung một ô phòng × ngày: các ca và người trực */
 function CellPreview({ slots, meId }: { slots: GridSlot[]; meId: number }) {
@@ -80,7 +69,9 @@ export default function LichTrucPage() {
   const canView = can("duty.view");
   const periods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: canView });
   useEffect(() => {
-    if (periodId === null && periods.data?.length) setPeriodId(pickDefaultPeriod(periods.data));
+    if (periodId === null && periods.data?.length) {
+      setPeriodId(pickDefaultDutyPeriod(periods.data, bkkTodayYmd()));
+    }
   }, [periods.data, periodId]);
 
   const today = bkkTodayYmd();
