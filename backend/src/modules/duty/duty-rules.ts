@@ -13,12 +13,12 @@ const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
 /**
- * Mặc định lập kỳ mới theo yêu cầu vận hành: chỉ giới hạn một ca/ngày;
- * các ngưỡng số giờ/số ca theo tuần-kỳ và khoảng nghỉ đều bằng 0 = không giới hạn.
- * Lịch đã tạo giữ nguyên bộ quy tắc đã lưu riêng của kỳ đó.
+ * Mặc định lập kỳ mới theo yêu cầu vận hành: mọi ngưỡng số ca/số giờ và
+ * khoảng nghỉ đều bằng 0 = không giới hạn. Lịch đã tạo giữ nguyên bộ quy tắc
+ * đã lưu riêng của kỳ đó.
  */
 export const DEFAULT_DUTY_RULES: DutyRules = {
-  maxShiftsPerDay: 1,
+  maxShiftsPerDay: 0,
   maxShiftsPerPeriod: 0,
   maxNightShiftsPerPeriod: 0,
   maxHoursPerDay: 0,

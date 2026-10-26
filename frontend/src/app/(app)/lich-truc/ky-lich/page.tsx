@@ -57,7 +57,7 @@ import {
 } from "@/lib/duty";
 
 const DEFAULT_RULES: DutyRules = {
-  maxShiftsPerDay: 1,
+  maxShiftsPerDay: 0,
   maxShiftsPerPeriod: 0,
   maxNightShiftsPerPeriod: 0,
   maxHoursPerDay: 0,
@@ -328,7 +328,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
         <div>
           <h4 className="mb-2 text-sm font-semibold">Ràng buộc xếp trực</h4>
           <div className="grid gap-3 sm:grid-cols-3">
-            <NumField label="Ca tối đa / ngày" value={rules.maxShiftsPerDay} onChange={(v) => set("maxShiftsPerDay", num(v))} hint="Mặc định 1; 0 = không giới hạn" />
+            <NumField label="Ca tối đa / ngày" value={rules.maxShiftsPerDay} onChange={(v) => set("maxShiftsPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
             <NumField label="Giờ trực tối đa / ngày" value={rules.maxHoursPerDay} onChange={(v) => set("maxHoursPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
             <NumField label="Giờ trực tối đa / tuần" value={rules.maxHoursPerWeek} onChange={(v) => set("maxHoursPerWeek", num(v))} hint="Mặc định 0 = không giới hạn" />
             <NumField label="Nghỉ tối thiểu giữa hai ca (giờ)" value={rules.minRestHours} onChange={(v) => set("minRestHours", num(v))} hint="Mặc định 0; ca đêm liền kề vẫn bị chặn" />

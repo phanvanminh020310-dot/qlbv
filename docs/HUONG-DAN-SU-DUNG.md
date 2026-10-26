@@ -297,7 +297,7 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 
 ### 11.5 Ràng buộc được kiểm tra tự động
 
-Kỳ lịch mới mặc định **1 ca tối đa/ngày**. Các ngưỡng số giờ/ngày, giờ/tuần, nghỉ tối thiểu, tổng ca/kỳ và ca đêm/kỳ mặc định là **0 = không giới hạn**; có thể đặt lại riêng cho từng kỳ. Riêng ca đêm liền kề một ca khác vẫn bị chặn để tránh hai ca sát nhau không có khoảng chuyển ca.
+Kỳ lịch mới mặc định mọi ngưỡng số ca/ngày, số giờ/ngày, giờ/tuần, nghỉ tối thiểu, tổng ca/kỳ và ca đêm/kỳ là **0 = không giới hạn**; có thể đặt lại riêng cho từng kỳ. Riêng ca đêm liền kề một ca khác vẫn bị chặn để tránh hai ca sát nhau không có khoảng chuyển ca.
 
 **Số người cần mỗi ô** là chỉ tiêu theo dõi/công bố, không phải giới hạn trên khi người có quyền xếp lịch phân công trực tiếp: người xếp lịch trực khoa có thể thêm nhiều nhân sự khác nhau vào cùng một ô/ca. Tự đăng ký (nếu kỳ có mở) vẫn dừng ở chỉ tiêu để tránh đăng ký dư. Mọi ràng buộc an toàn theo từng người vẫn được kiểm tra.
 

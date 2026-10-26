@@ -115,9 +115,9 @@ test('tuần ISO: Thứ 2 là đầu tuần, Chủ nhật là ngày 7', () => {
   assert.equal(addDays('2026-10-31', 1), '2026-11-01');
 });
 
-test('chuẩn hoá cấu hình: kỳ mới mặc định một ca/ngày và các ngưỡng giờ/kỳ bằng 0; vượt biên bị kẹp', () => {
+test('chuẩn hoá cấu hình: kỳ mới mặc định mọi giới hạn số ca/giờ/nghỉ bằng 0; vượt biên bị kẹp', () => {
   const defaults = normalizeRules({});
-  assert.equal(defaults.maxShiftsPerDay, 1);
+  assert.equal(defaults.maxShiftsPerDay, 0);
   assert.equal(defaults.maxHoursPerDay, 0);
   assert.equal(defaults.maxHoursPerWeek, 0);
   assert.equal(defaults.minRestHours, 0);
@@ -140,12 +140,11 @@ test('hợp lệ: người đúng chức danh, trống ca, không nghỉ phép',
   assert.deepEqual(r.errors, []);
 });
 
-test('cho phép ca liền kề ban ngày khi kỳ lịch cấu hình từ hai ca/ngày', () => {
+test('kỳ mới không giới hạn số ca/ngày nên cho phép ca liền kề ban ngày', () => {
   const slot = slotOf(2, '2026-10-06', 'C');
   const r = evaluateCandidate(input({
     slot,
     duties: [dutyOf(1, '2026-10-06', 'S')],
-    rules: { ...RULES, maxShiftsPerDay: 2 },
   }));
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
@@ -241,7 +240,9 @@ test('giới hạn giờ trong tuần khi kỳ lịch đặt 48 giờ: đã có 
 
 test('giới hạn ca trong ngày và ca/ca đêm trong kỳ', () => {
   const duties = [dutyOf(1, '2026-10-06', 'S'), dutyOf(2, '2026-10-06', 'C')];
-  const perDay = evaluateCandidate(input({ slot: slotOf(13, '2026-10-06', 'CD'), duties, rules: { ...RULES, maxHoursPerDay: 24 } }));
+  const unlimitedPerDay = evaluateCandidate(input({ slot: slotOf(13, '2026-10-06', 'CD'), duties, rules: { ...RULES, maxHoursPerDay: 24 } }));
+  assert.ok(!codes(unlimitedPerDay).includes('SHIFTS_PER_DAY'), 'mặc định 0 không giới hạn số ca/ngày');
+  const perDay = evaluateCandidate(input({ slot: slotOf(13, '2026-10-06', 'CD'), duties, rules: { ...RULES, maxShiftsPerDay: 2, maxHoursPerDay: 24 } }));
   assert.ok(codes(perDay).includes('SHIFTS_PER_DAY'));
   const night = evaluateCandidate(input({ slot: slotOf(14, '2026-10-20', 'D'), periodNights: 2, rules: { ...RULES, maxNightShiftsPerPeriod: 2 } }));
   assert.ok(codes(night).includes('NIGHT_PER_PERIOD'));
