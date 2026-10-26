@@ -283,7 +283,11 @@ test('tính số tuần ISO và khoảng ngày tuần tự động', () => {
   assert.equal(r43.endDate, '2026-10-25');
 
   assert.equal(smartPeriodTitle('2026-10-19', '2026-10-25'), 'Tuần 43 (19/10 – 25/10/2026) - Tháng 10');
-  assert.equal(defaultLockAt('2026-10-19'), '2026-10-16T17:00:00+07:00');
+  // Kỳ tuần bắt đầu Thứ 2: chốt vào chiều Chủ nhật ngay trước tuần trực.
+  assert.equal(defaultLockAt('2026-10-19'), '2026-10-18T17:00:00+07:00');
+  // Không lệch tuần tại năm mới và ngày Chủ nhật tuỳ chỉnh vẫn là chính ngày đó.
+  assert.equal(defaultLockAt('2027-01-04'), '2027-01-03T17:00:00+07:00');
+  assert.equal(defaultLockAt('2026-10-18'), '2026-10-18T17:00:00+07:00');
 });
 
 

@@ -255,7 +255,7 @@ tin nhắn kèm liên kết mở phiếu.
 
 ## 11. Lịch trực khám bệnh
 
-Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × ca (sáng, chiều, cả ngày; ca đêm nếu bật). Mỗi ô có số người cần và vai trò (bác sĩ, điều dưỡng).
+Lịch trực lập theo **tuần** (Thứ 2 → Chủ nhật), theo phòng khám × ca (sáng, chiều, cả ngày; ca đêm nếu bật). Mỗi ô có số người cần và vai trò (bác sĩ, điều dưỡng).
 
 ### 11.0 Dùng thuận tiện trên điện thoại
 
@@ -264,12 +264,12 @@ Lịch trực lập theo **tuần** (Thứ 2 → Thứ 7), theo phòng khám × 
 
 ### 11.1 Điều phối lịch (KHTH, vai trò `DIEU_PHOI_TRUC`)
 
-1. **Kỳ lịch & công bố → Tạo kỳ lịch.** Đặt tên, từ ngày đến ngày, **mốc chốt lịch** (sau mốc này lịch tự khoá), thời điểm mở đăng ký tự nguyện (nếu cần) và các ràng buộc giờ trực. Hai kỳ lịch không được trùng ngày; thời điểm mở đăng ký phải trước mốc chốt.
+1. **Kỳ lịch & công bố → Tạo kỳ lịch.** Đặt tên, từ ngày đến ngày, **mốc chốt lịch** (mặc định 17:00 Chủ nhật ngay trước tuần trực; sau mốc này kỳ đã công bố tự khoá), thời điểm mở đăng ký tự nguyện (nếu cần) và các ràng buộc giờ trực. Hai kỳ lịch không được trùng ngày; thời điểm mở đăng ký phải trước mốc chốt.
 2. **Sinh ô trực.** Chọn phòng, ca, vai trò và các thứ trong tuần. Ngày nghỉ lễ được bỏ qua tự động. Có thể thêm lẻ từng ô.
 3. **Xếp người.** Vào **Lịch trực tuần**, bấm vào ô → *Quản lý người trực*. Danh sách ứng viên có nhãn *Phù hợp / Có cảnh báo / Không đủ điều kiện*, kèm lý do cụ thể.
 4. **Công bố.** Hệ thống kiểm tra ô còn thiếu người. Sau khi công bố, mỗi người trực nhận thông báo.
 5. **Theo dõi** số ô còn thiếu trên các chỉ số đầu trang. Nhân viên có thể tự đăng ký ca trống trước mốc chốt.
-6. **Chốt.** Tự động theo mốc chốt, hoặc bấm *Chốt sớm*. Muốn mở lại: *Mở chốt* và ghi lý do.
+6. **Chốt.** Kỳ đã công bố tự chốt khi đến mốc chốt, hoặc bấm *Chốt sớm*. Bản nháp không tự công bố; hãy kiểm tra và công bố trước. Muốn mở lại: *Mở chốt* và ghi lý do.
 7. **Ngoại lệ sau chốt.** Yêu cầu ngoại lệ nằm ở **Yêu cầu đổi trực → Chờ tôi duyệt**; duyệt để gỡ người cũ và xếp người thay. Khi cần đổi gấp, dùng **Điều chỉnh trực tiếp** (bắt buộc ghi lý do; chỉ bỏ qua ràng buộc khi thật cần).
 8. **Xoá cả kỳ lịch** (*Kỳ lịch → Xoá kỳ lịch*). Phải ghi lý do (tối thiểu 5 ký tự) và gõ lại đúng tên kỳ. Không xoá được khi đã có ca trực đã diễn ra hoặc đang diễn ra, để giữ dữ liệu đối soát giờ trực. Nhân viên đã được xếp nhận thông báo huỷ ca; nhật ký vẫn được giữ.
 

@@ -4,6 +4,8 @@
  */
 import { apiFetch } from '@/lib/api';
 
+export { defaultLockAtLocal } from './duty-period-defaults';
+
 export type PeriodStatus = 'NHAP' | 'CONG_BO' | 'DA_CHOT';
 export type Phase = 'NHAP' | 'MO' | 'CHOT';
 export type RequestType = 'NHUONG' | 'DOI' | 'NGOAI_LE';
@@ -338,13 +340,6 @@ export function smartPeriodTitle(startDate: string, endDate: string): string {
   return `Tuần ${week} (${fmtDm(startDate)} – ${fmtDm(endDate)}/${year}) - Tháng ${String(m).padStart(2, '0')}`;
 }
 
-/** Mốc chốt lịch mặc định theo giờ local YYYY-MM-DDTHH:mm: 17:00 Thứ Sáu trước tuần trực */
-export function defaultLockAtLocal(startDate: string): string {
-  const dow = isoWeekday(startDate);
-  const diffToFriday = dow >= 5 ? dow - 5 : dow + 2;
-  const lockFriday = addDaysYmd(startDate, -diffToFriday);
-  return `${lockFriday}T17:00`;
-}
 export const fmtDate = (ymd: string) => {
   const [y, m, d] = ymd.split('-');
   return `${d}/${m}/${y}`;

@@ -240,7 +240,7 @@ docker-compose.yml # PostgreSQL + Redis + API + Web
 
 **Đồng thời và toàn vẹn dữ liệu.** Mọi thao tác ghi phân công chạy trong transaction, khoá ô bằng `SELECT … FOR UPDATE`, rồi khoá từng người bằng `pg_advisory_xact_lock(9301, userId)`, luôn theo thứ tự id tăng dần để tránh deadlock. Ràng buộc duy nhất ở CSDL: `(slot_id, user_id)` và `(period_id, duty_date, room_id, shift_id, role_id)`. Luôn truyền `tx` vào các hàm bên trong transaction. Khoá tạo/đổi khoảng ngày kỳ lịch: `pg_advisory_xact_lock(9300)` (chặn hai kỳ trùng ngày).
 
-**Chốt lịch.** Trạng thái lưu là `NHAP` · `CONG_BO` · `DA_CHOT`. Trạng thái hiệu lực (`phase`) tính theo `lock_at`, nên đến mốc chốt kỳ tự khoá mà không cần tác vụ định kỳ. Mở chốt bắt buộc lý do và mốc mới ở tương lai.
+**Chốt lịch.** Trạng thái lưu là `NHAP` · `CONG_BO` · `DA_CHOT`. Với kỳ đã công bố, trạng thái hiệu lực (`phase`) tính theo `lock_at`, nên đến mốc chốt kỳ tự khoá mà không cần tác vụ định kỳ; bản nháp vẫn là bản nháp, không tự công bố. Kỳ tuần mới mặc định chốt lúc 17:00 Chủ nhật ngay trước tuần trực. Mở chốt bắt buộc lý do và mốc mới ở tương lai.
 
 **Luồng đổi trực.**
 

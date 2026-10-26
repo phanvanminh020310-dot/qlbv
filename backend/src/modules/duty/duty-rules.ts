@@ -168,14 +168,14 @@ export function smartPeriodTitle(startDate: string, endDate: string): string {
   return `Tuần ${week} (${fmtDm(startDate)} – ${fmtDm(endDate)}/${year}) - Tháng ${String(m).padStart(2, '0')}`;
 }
 
-/** Mốc chốt lịch mặc định: Thứ Sáu 17:00 trước ngày bắt đầu ca tuần (giờ Việt Nam +07:00) */
+/** Mốc chốt lịch mặc định: Chủ nhật 17:00 trước tuần trực (giờ Việt Nam +07:00). */
 export function defaultLockAt(startDate: string): string {
-  const dow = isoWeekday(startDate);
-  // Nếu bắt đầu vào Thứ 2 (dow=1), lùi 3 ngày về Thứ Sáu tuần trước
-  // Nếu ngày khác, lùi về Thứ Sáu gần nhất trước ngày bắt đầu
-  const diffToFriday = dow >= 5 ? dow - 5 : dow + 2;
-  const lockFriday = addDays(startDate, -diffToFriday);
-  return `${lockFriday}T17:00:00+07:00`;
+  // ISO: Thứ 2 = 1 … Chủ nhật = 7. Với kỳ tuần bắt đầu Thứ 2, lùi 1 ngày
+  // để các khoa có trọn Thứ bảy và Chủ nhật hoàn thiện lịch. Kỳ tuỳ chỉnh
+  // lấy Chủ nhật gần nhất vào hoặc trước ngày bắt đầu.
+  const diffToSunday = isoWeekday(startDate) % 7;
+  const lockSunday = addDays(startDate, -diffToSunday);
+  return `${lockSunday}T17:00:00+07:00`;
 }
 
 const fmtH = (h: number) => (Number.isInteger(h) ? `${h}` : h.toFixed(1));

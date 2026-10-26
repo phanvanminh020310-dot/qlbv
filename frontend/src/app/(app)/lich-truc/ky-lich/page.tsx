@@ -247,7 +247,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
               </div>
             </div>
             <p className="text-[11px] text-teal-800 dark:text-teal-300">
-              ✓ Đã tự động tính Thứ 2 ({fmtDate(startDate)}) đến Chủ Nhật ({fmtDate(endDate)}) và mốc chốt 17h Thứ Sáu tuần trước.
+              ✓ Đã tự động tính Thứ 2 ({fmtDate(startDate)}) đến Chủ Nhật ({fmtDate(endDate)}) và mốc chốt 17h Chủ nhật tuần trước.
             </p>
           </div>
         ) : null}
@@ -268,7 +268,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
           <div className="space-y-1.5">
             <Label htmlFor="p-lock">Mốc chốt lịch *</Label>
             <Input id="p-lock" type="datetime-local" value={lockAt} disabled={locked} onChange={(e) => setLockAt(e.target.value)} />
-            <p className="text-[11px] text-[var(--muted-foreground)]">Sau mốc này lịch tự khoá. Thay đổi cần qua yêu cầu ngoại lệ.</p>
+            <p className="text-[11px] text-[var(--muted-foreground)]">Sau mốc này kỳ đã công bố tự khoá; thay đổi cần qua yêu cầu ngoại lệ.</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="p-open">Mở đăng ký tự nguyện</Label>

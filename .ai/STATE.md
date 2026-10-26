@@ -171,7 +171,7 @@ Nguyên văn (tóm): Khắc phục việc phải nhập lặp lại ngày tháng
 
 **Đã làm:**
 - **Backend**:
-  + Thêm các hàm toán học ngày tuần chuẩn ISO 8601: `isoWeekNumber(ymd)`, `isoWeekRange(year, week)`, `smartPeriodTitle(start, end)`, `defaultLockAt(startDate)` (17h00 Thứ Sáu trước tuần trực).
+  + Thêm các hàm toán học ngày tuần chuẩn ISO 8601: `isoWeekNumber(ymd)`, `isoWeekRange(year, week)`, `smartPeriodTitle(start, end)`, `defaultLockAt(startDate)` (17h00 Chủ nhật ngay trước tuần trực).
   + Thêm API `GET /api/duty/periods/suggest-next`: tự động phát hiện tuần kế tiếp từ kỳ gần nhất hoặc ngày hiện tại, tính mốc khoá và sinh tên kỳ chuẩn.
   + Mở rộng `POST /api/duty/periods` hỗ trợ `autoGenerateSlots` (tự sinh ô từ danh mục phòng/ca/vai trò) và `copyFromPeriodId` (sao chép ô + phân công).
   + Thêm API `POST /api/duty/periods/:id/clone`: nhân bản nhanh 1-chạm sang tuần tiếp theo (hoặc tuần chỉ định) kèm tuỳ chọn sao chép người trực.

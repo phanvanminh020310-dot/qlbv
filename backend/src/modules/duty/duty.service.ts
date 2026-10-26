@@ -197,7 +197,7 @@ export class DutyService {
   /**
    * Tự động tính toán và gợi ý thông số tạo tuần tiếp theo:
    * Tìm kỳ có endDate lớn nhất -> lấy tuần kế tiếp -> tính ISO week, ngày Thứ 2 đến Chủ nhật,
-   * tên kỳ chuẩn, mốc chốt mặc định 17h Thứ Sáu trước tuần.
+   * tên kỳ chuẩn, mốc chốt mặc định 17h Chủ nhật trước tuần.
    */
   async suggestNextPeriod() {
     const [last] = await this.db.db
