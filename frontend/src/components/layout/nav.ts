@@ -29,6 +29,7 @@ import {
   QrCode,
   ScanLine,
   PackageSearch,
+  Terminal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -41,6 +42,8 @@ export interface NavItem {
   permission?: string;
   /** Một trong các quyền thay thế cũng được mở mục này (OR). */
   anyPermissions?: string[];
+  /** Chỉ hiện với vai trò ADMIN hoặc SUPER_ADMIN (dùng cho công cụ hạ tầng nhạy cảm). */
+  adminOnly?: boolean;
   /** Menu con (thu gọn/mở rộng được). Mục cha tự ẩn khi không có quyền xem mục con nào. */
   children?: NavItem[];
 }
@@ -128,6 +131,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/quan-tri/tien-ich', label: 'Tiện ích', icon: SlidersHorizontal, permission: 'utility.view' },
       { href: '/quan-tri/tac-vu', label: 'Tác vụ định kỳ', icon: CalendarClock, permission: 'job.view' },
       { href: '/quan-tri/sao-luu', label: 'Sao lưu & phục hồi', icon: DatabaseBackup, permission: 'backup.view' },
+      { href: '/quan-tri/truy-van-sql', label: 'SQL Console', icon: Terminal, adminOnly: true },
       { href: '/quan-tri/cau-hinh', label: 'Cấu hình hệ thống', icon: Settings2, permission: 'setting.view' },
       { href: '/quan-tri/nhat-ky', label: 'Nhật ký kiểm toán', icon: History, permission: 'audit.log.view' },
     ],

@@ -77,6 +77,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   /** Lọc theo quyền; mục cha chỉ hiện khi còn ít nhất 1 mục con */
   const visible = (items: NavItem[]): NavItem[] =>
     items.flatMap((item) => {
+      const isAdmin = !!user?.isSuperAdmin || (user?.roles ?? []).includes('ADMIN');
+      if (item.adminOnly && !isAdmin) return [];
       if ((item.permission || item.anyPermissions?.length) && !(item.permission && can(item.permission)) && !item.anyPermissions?.some(p => can(p))) return [];
       if (item.children) {
         const children = visible(item.children);

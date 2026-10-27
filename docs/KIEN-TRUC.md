@@ -191,7 +191,7 @@ bản sao lưu pg_dump).
   [PHAN-QUYEN.md](PHAN-QUYEN.md)).
 * **Phạm vi dữ liệu** theo vai trò: `ALL` (toàn viện) · `DEPT` (khoa được gán) ·
   `OWN` (chỉ dữ liệu của mình) — áp ngay trong câu truy vấn.
-* Mọi thao tác ghi đều vào `audit_logs` (ai, làm gì, trên bản ghi nào, từ IP nào).
+* Mọi thao tác ghi đều vào `audit_logs` (ai, làm gì, trên bản ghi nào, từ IP nào). **SQL Console** chỉ mở cho vai trò `ADMIN`/`SUPER_ADMIN`: SELECT/WITH/EXPLAIN chạy trong giao dịch read-only có timeout; INSERT/UPDATE/DELETE cần lý do + xác nhận, chạy transaction, UPDATE/DELETE bắt buộc `WHERE`, không nhận DDL/nhiều câu lệnh và không thể sửa audit/migration. Câu lệnh SQL được ghi audit riêng với `module=SQL_CONSOLE`.
 
 ## 6. Hiệu năng
 
@@ -228,7 +228,7 @@ docker-compose.yml # PostgreSQL + Redis + API + Web
 
 ## 8. Phân hệ Lịch trực khám bệnh
 
-**Mô hình.** Kỳ lịch (thường một tuần, Thứ 2 → Thứ 7) → ô trực (ngày × phòng × ca × vai trò, kèm số người cần) → phân công. Danh mục phòng, ca, vai trò và ngày nghỉ cấu hình được. Bảng: `duty_rooms`, `duty_shift_types`, `duty_roles`, `duty_closed_days`, `duty_periods`, `duty_slots`, `duty_assignments`, `duty_absences`, `duty_requests`, `duty_logs` (migration `0015_lich_truc.sql`, schema `backend/src/db/schema/duty.ts`).
+**Mô hình.** Kỳ lịch (thường một tuần, Thứ 2 → Chủ nhật) → ô trực (ngày × phòng × ca × vai trò, kèm số người cần) → phân công. Danh mục phòng, ca, vai trò và ngày nghỉ cấu hình được. Bảng: `duty_rooms`, `duty_shift_types`, `duty_roles`, `duty_closed_days`, `duty_periods`, `duty_slots`, `duty_assignments`, `duty_absences`, `duty_requests`, `duty_logs` (migration `0015_lich_truc.sql`, schema `backend/src/db/schema/duty.ts`).
 
 **Lõi nghiệp vụ thuần** — `backend/src/modules/duty/duty-rules.ts`, không truy vấn CSDL, có kiểm thử `backend/test/duty-rules.test.ts` (`npm test`).
 

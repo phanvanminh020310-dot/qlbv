@@ -39,6 +39,7 @@ import { BackupsModule } from './modules/backups/backups.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { StudioModule } from './modules/studio/studio.module';
 import { KioskModule } from './modules/kiosk/kiosk.module';
+import { SqlConsoleModule } from './modules/sql-console/sql-console.module';
 
 const envFile = [
   path.resolve(process.cwd(), '.env'),
@@ -86,6 +87,8 @@ const envFile = [
     StudioModule,
     // Phân hệ Kiosk Điểm danh Sinh trắc học & Mở khoá Phòng khám (Tích hợp VPS 2 AI)
     KioskModule,
+    // Công cụ kỹ thuật chỉ dành cho quản trị hệ thống
+    SqlConsoleModule,
     // Kiểm tra tình trạng
     HealthModule,
   ],

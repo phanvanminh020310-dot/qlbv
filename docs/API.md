@@ -1,6 +1,6 @@
 # Danh mục API — QLBS
 
-Tổng **187** endpoint. Đường dẫn đầy đủ có tiền tố `/api`, ví dụ `GET /api/hsba/requests`. Cột **Quyền** là (các) mã quyền cần có — nhiều mã cách nhau bởi `|` nghĩa là chỉ cần một trong số đó; quản trị tối cao (`SUPER_ADMIN`) bỏ qua mọi kiểm tra. Xem [PHAN-QUYEN.md](PHAN-QUYEN.md).
+Tổng **191** endpoint. Đường dẫn đầy đủ có tiền tố `/api`, ví dụ `GET /api/hsba/requests`. Cột **Quyền** là (các) mã quyền cần có — nhiều mã cách nhau bởi `|` nghĩa là chỉ cần một trong số đó; quản trị tối cao (`SUPER_ADMIN`) bỏ qua mọi kiểm tra. Xem [PHAN-QUYEN.md](PHAN-QUYEN.md).
 
 > Tài liệu tương tác (Swagger UI): `http://<máy chủ>:4000/api/docs`
 
@@ -36,6 +36,19 @@ Tổng **187** endpoint. Đường dẫn đầy đủ có tiền tố `/api`, v�
 | `GET` | `/auth/sessions` | Các phiên đăng nhập đang hoạt động | — |
 | `DELETE` | `/auth/sessions/:id` | Thu hồi một phiên đăng nhập | — |
 | `DELETE` | `/auth/sessions` | Đăng xuất khỏi toàn bộ thiết bị | — |
+
+## SQL Console quản trị
+
+Tiền tố `/api/admin/sql`. **Chỉ tài khoản có vai trò `ADMIN` hoặc `SUPER_ADMIN`** dùng được (không dựa vào quyền đơn lẻ). Công cụ giới hạn câu lệnh đơn, timeout 15 giây và ghi audit `module=SQL_CONSOLE`.
+
+| Phương thức | Đường dẫn | Mô tả |
+|---|---|---|
+| `GET` | `/admin/sql/schema` | Danh sách bảng/cột trong schema `public` để hỗ trợ soạn truy vấn |
+| `POST` | `/admin/sql/query` | Chạy `{statement}` dạng `SELECT`/`WITH`/`EXPLAIN` thuần trong giao dịch read-only; xem trước tối đa 1.000 dòng |
+| `POST` | `/admin/sql/execute` | Chạy `{statement, reason, confirm:"THUC THI"}` dạng `INSERT`/`UPDATE`/`DELETE`; `UPDATE`/`DELETE` cần `WHERE`, chạy transaction và trả số dòng tác động |
+| `POST` | `/admin/sql/export` | Xuất `{statement, format:"xlsx"\|"csv"\|"json"}` của truy vấn đọc, tối đa 10.000 dòng |
+
+Không nhận DDL (`DROP`, `ALTER`, `TRUNCATE`…), nhiều câu lệnh, `EXPLAIN ANALYZE`, truy vấn khoá dòng, hay ghi trực tiếp `_qlbs_migrations`, `audit_logs`, `login_logs`.
 
 ## Bảng điều khiển
 
