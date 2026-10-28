@@ -68,7 +68,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (connError) {
     return (
-      <div className="flex min-h-dvh items-center justify-center p-6">
+      <div className="flex min-h-svh items-center justify-center p-6">
         <div className="max-w-xs space-y-3 text-center">
           <div className="text-sm font-medium">Không kết nối được máy chủ</div>
           <p className="text-xs text-[var(--muted-foreground)]">

@@ -111,6 +111,7 @@
 | 29 | **Nâng cấp Kiosk Agent (Chờ mạng, tự mở lại khi có mạng, sửa bàn phím IT) & Đối soát lịch trực Realtime**: Kiểm tra có mạng tới máy chủ mới khởi động Kiosk khi mở máy (chống lỗi màn hình trắng); tự động bật lại Kiosk khi mạng phục hồi; mở khóa bàn phím khi kỹ thuật viên IT mở hộp thoại nhập PIN khẩn cấp qua cầu nối `/it-mode`; đồng bộ realtime 100% lịch trực qua SSE `SCHEDULE_UPDATED` và chu kỳ đệm 10s; tự động khóa màn hình và chuyển ca trực của bác sĩ kế tiếp ngay sau khi hết giờ ca trực + ân hạn | b1c89f2 |
 | 30 | **SQL Console quản trị**: trang `/quan-tri/truy-van-sql`, schema browser, SELECT/WITH/EXPLAIN read-only, INSERT/UPDATE/DELETE transactional (lý do + `THUC THI`, WHERE bắt buộc), xuất Excel/CSV/JSON; chỉ `ADMIN`/`SUPER_ADMIN`, timeout, chống nhiều lệnh/DDL/ghi audit-migration và audit `SQL_CONSOLE`; không migration, không hồi tố dữ liệu | `36eb44a` |
 | 31 | **SQL Console — lọc nhanh kết quả**: lọc tức thời, không phân biệt hoa/thường hoặc dấu tiếng Việt trong tối đa 1.000 dòng xem trước; hiển thị số dòng khớp/trạng thái rỗng, không gọi lại API, không đổi SQL, dữ liệu CSDL hoặc tệp xuất | `03513a9` |
+| 32 | **Ổn định bố cục iPhone sau đăng nhập**: app shell dùng viewport ổn định `svh`; chỉ vùng nội dung cuộn, header/footer giữ vị trí; chặn Safari tự đổi cỡ chữ gây nhảy bố cục và cuộn ngang; trang đăng nhập/trạng thái nạp cũng dùng `svh` | (commit này) |
 
 Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-label].json.gz` v2.
 

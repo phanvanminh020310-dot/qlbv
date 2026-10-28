@@ -64,13 +64,49 @@
 
 html,
 body {
+  min-height: 100%;
   background: var(--background);
   color: var(--foreground);
 }
 
+html {
+  /* Safari iPhone có thể tự tăng cỡ chữ sau xoay máy/tải lại, làm các cột nhảy bố cục. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
+  overflow-x: clip;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Safari iPhone thay đổi chiều cao visual viewport khi thanh địa chỉ thu/mở.
+ * Vùng app dùng `svh` ổn định; chỉ `main` cuộn nên header/footer không dịch
+ * theo thanh trình duyệt và không tạo cuộn ngang toàn trang.
+ */
+.app-shell {
+  min-height: 100svh;
+}
+
+@media (max-width: 1023px) {
+  .app-shell {
+    height: 100svh;
+    min-height: 100svh;
+    overflow: hidden;
+  }
+
+  .app-shell-content {
+    min-height: 0;
+  }
+
+  .app-shell-main {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* Vùng in: khi bấm in, chỉ in nội dung cần thiết */
