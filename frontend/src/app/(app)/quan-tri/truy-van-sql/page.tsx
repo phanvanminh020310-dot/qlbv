@@ -11,6 +11,7 @@ import {
   FileText,
   Play,
   RefreshCw,
+  Search,
   ShieldAlert,
   TableProperties,
   Terminal,
@@ -80,6 +81,7 @@ export default function SqlConsolePage() {
   const [writeDialog, setWriteDialog] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showSchema, setShowSchema] = useState(true);
+  const [resultFilter, setResultFilter] = useState('');
 
   useEffect(() => {
     try {
@@ -111,6 +113,7 @@ export default function SqlConsolePage() {
     mutationFn: () => apiFetch<QueryResult>('/admin/sql/query', { method: 'POST', body: { statement } }),
     onSuccess: (data) => {
       setResult(data);
+      setResultFilter('');
       remember('QUERY');
       toast.success(`Đã lấy ${data.rowCount.toLocaleString('vi-VN')} dòng trong ${data.elapsedMs} ms`);
     },
@@ -136,6 +139,13 @@ export default function SqlConsolePage() {
   const tableCount = schema.data?.tables.length ?? 0;
   const canExecuteWrite = kind === 'WRITE' && reason.trim().length >= 5 && confirm.trim().toUpperCase() === WRITE_CONFIRM_TEXT;
   const columns = result?.columns ?? [];
+  const normalizedFilter = resultFilter.trim().normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('vi-VN');
+  const visibleRows = useMemo(() => {
+    if (!result || !normalizedFilter) return result?.rows ?? [];
+    return result.rows.filter((row) => columns.some((column) => (
+      formatValue(row[column]).normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('vi-VN').includes(normalizedFilter)
+    )));
+  }, [columns, normalizedFilter, result]);
   const canExport = kind === 'READ' && !!statement.trim();
 
   const exportResult = async (format: ExportFormat) => {
@@ -224,7 +234,7 @@ export default function SqlConsolePage() {
           <Card>
             <CardHeader
               title="Kết quả truy vấn"
-              description={result ? `${result.operation} · ${result.rowCount.toLocaleString('vi-VN')} dòng · ${result.elapsedMs} ms${result.truncated ? ' · đã rút gọn khi xem trước' : ''}` : 'Chạy một câu lệnh SELECT, WITH hoặc EXPLAIN để xem dữ liệu.'}
+              description={result ? `${result.operation} · ${result.rowCount.toLocaleString('vi-VN')} dòng · ${result.elapsedMs} ms${result.truncated ? ' · đã rút gọn khi xem trước' : ''}${normalizedFilter ? ` · lọc còn ${visibleRows.length.toLocaleString('vi-VN')} dòng` : ''}` : 'Chạy một câu lệnh SELECT, WITH hoặc EXPLAIN để xem dữ liệu.'}
               actions={
                 <div className="flex gap-1">
                   <Button size="sm" variant="outline" disabled={!canExport} onClick={() => void exportResult('xlsx')} title="Xuất Excel"><FileSpreadsheet /> Excel</Button>
@@ -239,18 +249,38 @@ export default function SqlConsolePage() {
               ) : columns.length === 0 ? (
                 <div className="p-8 text-center text-sm text-[var(--muted-foreground)]">Truy vấn không trả về cột dữ liệu.</div>
               ) : (
-                <TableWrap className="max-h-[540px] rounded-none border-0">
-                  <thead className="sticky top-0 z-10 bg-[var(--card)]"><Tr>{columns.map((column) => <Th key={column} className="whitespace-nowrap font-mono text-xs">{column}</Th>)}</Tr></thead>
-                  <tbody>
-                    {result.rows.map((row, index) => (
-                      <Tr key={index}>
-                        {columns.map((column) => (
-                          <Td key={column} className="max-w-[360px] whitespace-pre-wrap break-words font-mono text-xs">{formatValue(row[column])}</Td>
-                        ))}
-                      </Tr>
-                    ))}
-                  </tbody>
-                </TableWrap>
+                <>
+                  <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+                    <div className="relative min-w-0 flex-1">
+                      <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                      <Input
+                        aria-label="Lọc kết quả hiện tại"
+                        type="search"
+                        value={resultFilter}
+                        onChange={(event) => setResultFilter(event.target.value)}
+                        placeholder="Lọc trong các dòng đang hiển thị…"
+                        className="pl-9"
+                      />
+                    </div>
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {normalizedFilter ? `${visibleRows.length.toLocaleString('vi-VN')} / ${result.rows.length.toLocaleString('vi-VN')} dòng` : `${result.rows.length.toLocaleString('vi-VN')} dòng đang hiển thị`}
+                    </span>
+                  </div>
+                  <TableWrap className="max-h-[540px] rounded-none border-0">
+                    <thead className="sticky top-0 z-10 bg-[var(--card)]"><Tr>{columns.map((column) => <Th key={column} className="whitespace-nowrap font-mono text-xs">{column}</Th>)}</Tr></thead>
+                    <tbody>
+                      {visibleRows.length === 0 ? (
+                        <Tr><Td colSpan={columns.length} className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy dòng nào khớp bộ lọc hiện tại.</Td></Tr>
+                      ) : visibleRows.map((row, index) => (
+                        <Tr key={index}>
+                          {columns.map((column) => (
+                            <Td key={column} className="max-w-[360px] whitespace-pre-wrap break-words font-mono text-xs">{formatValue(row[column])}</Td>
+                          ))}
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </TableWrap>
+                </>
               )}
             </CardBody>
           </Card>

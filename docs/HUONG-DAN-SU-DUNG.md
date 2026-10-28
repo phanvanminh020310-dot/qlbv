@@ -109,13 +109,14 @@ danh sách khoa chưa nhập số liệu trong kỳ.
 | Mẫu in: khổ giấy, lề, font, ảnh, chữ ký, phiên bản đang ban hành | **Quản trị → Mẫu in** |
 | Tiện ích (menu): thêm/sửa/xoá, sắp xếp, đặt vị trí, giới hạn theo quyền | **Quản trị → Tiện ích** |
 | Tác vụ định kỳ: cron, chạy tay, xem lịch sử chạy | **Quản trị → Tác vụ** |
-| **SQL Console**: xem schema, chạy SELECT/WITH/EXPLAIN, thay đổi INSERT/UPDATE/DELETE có xác nhận, xuất Excel/CSV/JSON | **Quản trị → SQL Console** — chỉ `ADMIN` / `SUPER_ADMIN` |
+| **SQL Console**: xem schema, chạy SELECT/WITH/EXPLAIN, lọc nhanh kết quả đang xem, thay đổi INSERT/UPDATE/DELETE có xác nhận, xuất Excel/CSV/JSON | **Quản trị → SQL Console** — chỉ `ADMIN` / `SUPER_ADMIN` |
 | Cấu hình: thông tin bệnh viện, tuỳ chọn hệ thống, khôi phục mặc định | **Quản trị → Cấu hình** |
 | Nhật ký toàn hệ thống (lọc theo người dùng, phân hệ, thao tác, thời gian) | **Quản trị → Nhật ký** |
 
 ### SQL Console (chỉ `ADMIN` / `SUPER_ADMIN`)
 
 - Dùng để tra cứu kỹ thuật trực tiếp: `SELECT`, `WITH` và `EXPLAIN`; kết quả xem trước tối đa 1.000 dòng và có thể xuất **Excel, CSV hoặc JSON** (tối đa 10.000 dòng).
+- Ô **Lọc kết quả hiện tại** tìm nhanh không phân biệt hoa/thường hoặc dấu tiếng Việt trong các dòng đang xem trước, không gửi lại SQL lên máy chủ, không làm đổi dữ liệu hoặc nội dung tệp xuất.
 - Chỉ hỗ trợ thao tác ghi `INSERT`, `UPDATE`, `DELETE`. Mỗi lần ghi bắt buộc nêu lý do, gõ `THUC THI` để xác nhận; `UPDATE` và `DELETE` luôn phải có `WHERE` và chạy trong một giao dịch, lỗi thì toàn bộ câu lệnh được rollback.
 - Không hỗ trợ DDL (`DROP`, `ALTER`, `TRUNCATE`…), nhiều câu lệnh trong một lần chạy, khoá dòng hoặc sửa trực tiếp nhật ký/migration. Mọi câu lệnh đã chạy, lý do, thời điểm và số dòng tác động đều có trong **Quản trị → Nhật ký** (`SQL_CONSOLE`). Hãy tạo bản sao lưu trước khi chỉnh sửa dữ liệu diện rộng.
 
