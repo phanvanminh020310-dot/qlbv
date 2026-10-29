@@ -73,7 +73,7 @@ export function RoomPicker({
             setOpen(true);
           }}
           placeholder="Tìm hoặc chọn phòng..."
-          className="h-9 w-full pr-8 pl-8 text-xs sm:h-8"
+          className="h-9 w-full pr-8 pl-8 text-sm sm:h-8"
         />
         {query ? (
           <button
