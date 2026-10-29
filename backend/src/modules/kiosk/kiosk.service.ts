@@ -10,7 +10,7 @@ import {
   UnauthorizedException,
   HttpException,
 } from "@nestjs/common";
-import { and, eq, inArray, sql, or, asc } from "drizzle-orm";
+import { and, eq, inArray, sql, or, asc, desc, gt, isNull } from "drizzle-orm";
 import { Response } from "express";
 import * as crypto from "crypto";
 import * as fs from "fs";
@@ -21,6 +21,7 @@ import {
   dutyAbsences,
   dutyAssignments,
   dutyAttendance,
+  kioskGlobalReleases,
   dutyPeriods,
   dutyRoles,
   dutyRooms,
@@ -89,6 +90,23 @@ export interface ActiveRoomUnlock {
   itRosterGuard?: ItOverrideRosterGuard;
   /** Every release is bound to the currently active published shift (or an IT support session). */
   leaseDeadlineKind?: "ACTIVE_SHIFT" | "IT";
+}
+
+interface GlobalReleaseLease {
+  id: string;
+  operationId: string;
+  roomId: number | null;
+  roomCode: string;
+  roomName: string;
+  rosterSignature: string;
+  shiftEndAt: Date;
+  activatedAt: Date;
+  activatedByUserId: number | null;
+  activatedByUsername: string;
+  activatedByFullName: string;
+  reason: string;
+  endedAt: Date | null;
+  endReason: string | null;
 }
 
 @Injectable()
@@ -166,6 +184,15 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             entityId: rCode,
           });
         }
+      }, 1000),
+    );
+
+    // Global ADMIN releases are persisted so a restart cannot silently revoke a
+    // still-current emergency operation. This small reconciler closes their audit
+    // lease at the shift boundary and signals every currently connected terminal.
+    this.timers.push(
+      setInterval(() => {
+        void this.expireGlobalEmergencyReleases();
       }, 1000),
     );
   }
@@ -522,6 +549,458 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
+    // Besides waking Kiosk status reconciliation, proactively revoke a durable
+    // global lease when this duty event replaced a doctor/roster. This makes the
+    // lock push immediate even for a terminal whose next status poll is delayed.
+    void this.reconcileGlobalReleasesAfterScheduleUpdate(roomCode);
+  }
+
+  /** Strictly ADMIN/SUPER_ADMIN only: this deliberately is not a delegable kiosk permission. */
+  private assertGlobalReleaseAdmin(user: AccessContext): void {
+    if (user.isSuperAdmin || user.roles.includes("ADMIN")) return;
+    throw new ForbiddenException(
+      "Mở khẩn cấp toàn bộ Kiosk chỉ dành cho tài khoản Quản trị hệ thống (ADMIN) hoặc Quản trị tối cao.",
+    );
+  }
+
+  private cleanGlobalReleaseReason(reason: unknown): string {
+    const clean = String(reason ?? "").trim().replace(/\s+/g, " ");
+    if (clean.length < 5 || clean.length > 500) {
+      throw new BadRequestException(
+        "Vui lòng ghi rõ lý do mở khẩn cấp từ 5 đến 500 ký tự.",
+      );
+    }
+    return clean;
+  }
+
+  /** A global release must never leave an old QR/phone verification usable afterwards. */
+  private expireWaitingSessionsInRoom(roomCode: string): void {
+    const code = roomCode.toUpperCase().trim();
+    for (const session of this.sessions.values()) {
+      if (session.roomCode !== code || session.status !== "WAITING") continue;
+      session.status = "EXPIRED";
+      session.consumed = true;
+    }
+  }
+
+  /**
+   * The global release replaces every local biometric/IT lease for its room.
+   * Otherwise a former terminal-local release could survive after the global
+   * roster guard was revoked, violating the required return-to-authentication.
+   */
+  private clearLocalUnlocksForGlobalRelease(roomCode: string): void {
+    const code = roomCode.toUpperCase().trim();
+    for (const [key, unlock] of this.activeRoomUnlocks) {
+      if (unlock.roomCode === code) this.activeRoomUnlocks.delete(key);
+    }
+  }
+
+  private globalReleaseDoctor(release: Pick<GlobalReleaseLease, "activatedByFullName">, shiftName?: string) {
+    return {
+      fullName: "Mở khẩn cấp toàn bộ Kiosk",
+      title: "Quản trị hệ thống",
+      shiftName: shiftName || "Ca trực hiện hành",
+      releasedBy: release.activatedByFullName,
+    };
+  }
+
+  private async findCurrentGlobalRelease(
+    roomCode: string,
+    now: number,
+  ): Promise<GlobalReleaseLease | null> {
+    const [release] = await this.db.db
+      .select()
+      .from(kioskGlobalReleases)
+      .where(
+        and(
+          eq(kioskGlobalReleases.roomCode, roomCode.toUpperCase().trim()),
+          isNull(kioskGlobalReleases.endedAt),
+          gt(kioskGlobalReleases.shiftEndAt, new Date(now)),
+        ),
+      )
+      .orderBy(desc(kioskGlobalReleases.activatedAt))
+      .limit(1);
+    // Keep malformed/mock query rows fail-closed rather than ever treating a
+    // partial record as an emergency authority.
+    if (
+      !release ||
+      typeof release.id !== "string" ||
+      typeof release.operationId !== "string" ||
+      typeof release.rosterSignature !== "string" ||
+      !(release.shiftEndAt instanceof Date)
+    ) {
+      return null;
+    }
+    return release as GlobalReleaseLease;
+  }
+
+  /**
+   * Close the durable lease before telling clients to lock. The DB write is the
+   * authority, so reconnects and API restarts can never resurrect this release.
+   */
+  private async endGlobalRelease(
+    release: GlobalReleaseLease,
+    endReason: string,
+  ): Promise<boolean> {
+    const [ended] = await this.db.db
+      .update(kioskGlobalReleases)
+      .set({ endedAt: new Date(), endReason })
+      .where(
+        and(
+          eq(kioskGlobalReleases.id, release.id),
+          isNull(kioskGlobalReleases.endedAt),
+        ),
+      )
+      .returning({ id: kioskGlobalReleases.id });
+    if (!ended) return false;
+
+    await this.audit.log({
+      action: "KIOSK_GLOBAL_RELEASE_ENDED",
+      module: "KIOSK",
+      entity: "kiosk_global_release",
+      entityId: release.id,
+      description: `Kết thúc mở khẩn cấp Kiosk phòng ${release.roomCode}: ${endReason}`,
+      afterData: {
+        operationId: release.operationId,
+        roomCode: release.roomCode,
+        roomName: release.roomName,
+        activatedAt: release.activatedAt,
+        activatedBy: {
+          userId: release.activatedByUserId,
+          username: release.activatedByUsername,
+          fullName: release.activatedByFullName,
+        },
+        endedAt: new Date().toISOString(),
+        endReason,
+      },
+    });
+    // A room-wide lock notification is fail-closed. Kiosk status remains
+    // authoritative and will keep a separately authenticated terminal open.
+    this.broadcastToRoom(release.roomCode, "LOCK_EVENT", {
+      type: "GLOBAL_ADMIN_RELEASE_ENDED",
+      roomCode: release.roomCode,
+      reason: endReason,
+      timestamp: new Date().toISOString(),
+    });
+    return true;
+  }
+
+  /**
+   * Verify that a persisted global release still belongs to exactly the active
+   * published roster. Any roster/doctor replacement fails closed.
+   */
+  private async getUsableGlobalRelease(
+    roomCode: string,
+    now: number,
+  ): Promise<GlobalReleaseLease | null> {
+    let release: GlobalReleaseLease | null;
+    try {
+      release = await this.findCurrentGlobalRelease(roomCode, now);
+    } catch (error: any) {
+      this.logger.warn(
+        `Không đọc được phiên mở toàn cục Kiosk ${roomCode}; giữ luồng xác thực thường: ${error?.message || error}`,
+      );
+      return null;
+    }
+    if (!release) return null;
+
+    try {
+      const plan = await this.itOverrideLeasePlan(roomCode, now);
+      if (plan.guard.signature !== release.rosterSignature) {
+        await this.endGlobalRelease(
+          release,
+          "Ca trực hoặc bác sĩ được phân công đã thay đổi; Kiosk trở về xác thực thường.",
+        );
+        return null;
+      }
+      // The signature includes every time boundary, but retain the tighter bound
+      // if a harmless roster representation changes while remaining identical.
+      if (plan.shiftEndMs < release.shiftEndAt.getTime()) {
+        await this.db.db
+          .update(kioskGlobalReleases)
+          .set({ shiftEndAt: new Date(plan.shiftEndMs) })
+          .where(
+            and(
+              eq(kioskGlobalReleases.id, release.id),
+              isNull(kioskGlobalReleases.endedAt),
+            ),
+          );
+        release.shiftEndAt = new Date(plan.shiftEndMs);
+      }
+      return release;
+    } catch (error: any) {
+      const reason = error instanceof ForbiddenException
+        ? "Không còn ca trực hiện hành; Kiosk trở về trạng thái thường."
+        : "Không xác minh được roster ca trực; Kiosk trở về xác thực thường.";
+      this.logger.warn(
+        `Thu hồi mở toàn cục Kiosk ${roomCode}: ${error?.message || error}`,
+      );
+      await this.endGlobalRelease(release, reason);
+      return null;
+    }
+  }
+
+  /** Automatically persist/broadcast releases ending at their original shift boundary. */
+  private async expireGlobalEmergencyReleases(): Promise<void> {
+    try {
+      const expired = await this.db.db
+        .select()
+        .from(kioskGlobalReleases)
+        .where(
+          and(
+            isNull(kioskGlobalReleases.endedAt),
+            sql`${kioskGlobalReleases.shiftEndAt} <= ${new Date(Date.now())}`,
+          ),
+        )
+        .limit(100);
+      for (const release of expired as GlobalReleaseLease[]) {
+        await this.endGlobalRelease(
+          release,
+          "Ca trực hiện hành đã kết thúc; Kiosk trở về xác thực thường.",
+        );
+      }
+    } catch (error: any) {
+      // Status reconciliation is also fail-closed; a temporary DB issue must not
+      // terminate the process nor make a terminal trust an unverified release.
+      this.logger.warn(
+        `Không thể đối soát hạn mở toàn cục Kiosk: ${error?.message || error}`,
+      );
+    }
+  }
+
+  /** Check durable global leases immediately after a roster publish/change event. */
+  private async reconcileGlobalReleasesAfterScheduleUpdate(
+    roomCode?: string,
+  ): Promise<void> {
+    try {
+      const now = Date.now();
+      const roomCodes = roomCode
+        ? [roomCode.toUpperCase().trim()]
+        : [
+            ...new Set(
+              (await this.db.db
+                .select({ roomCode: kioskGlobalReleases.roomCode })
+                .from(kioskGlobalReleases)
+                .where(
+                  and(
+                    isNull(kioskGlobalReleases.endedAt),
+                    gt(kioskGlobalReleases.shiftEndAt, new Date(now)),
+                  ),
+                ))
+                .map((release) => release.roomCode),
+            ),
+          ];
+      for (const code of roomCodes) {
+        await this.getUsableGlobalRelease(code, now);
+      }
+    } catch (error: any) {
+      this.logger.warn(
+        `Không thể đối soát mở toàn cục sau cập nhật lịch: ${error?.message || error}`,
+      );
+    }
+  }
+
+  private async globalReleasePlans(now: number) {
+    const rooms = await this.db.db
+      .select({ id: dutyRooms.id, code: dutyRooms.code, name: dutyRooms.name })
+      .from(dutyRooms)
+      .where(eq(dutyRooms.active, true));
+    const plans = await Promise.all(
+      rooms.map(async (room) => {
+        try {
+          const plan = await this.itOverrideLeasePlan(room.code, now);
+          return { room, plan };
+        } catch (error) {
+          // No active published shift in a room is normal; failures of a real
+          // roster query are propagated rather than creating an unguarded lease.
+          if (error instanceof ForbiddenException) return null;
+          throw error;
+        }
+      }),
+    );
+    return plans.filter(
+      (value): value is { room: (typeof rooms)[number]; plan: Awaited<ReturnType<KioskService["itOverrideLeasePlan"]>> } => value !== null,
+    );
+  }
+
+  /**
+   * One ADMIN action releases every kiosk room that has a currently active,
+   * published shift. Rows are durable and bound to roster signature + shift end;
+   * nothing in duty schedule or attendance is written by this operation.
+   */
+  async activateGlobalEmergencyRelease(
+    user: AccessContext,
+    client: ClientMeta,
+    reasonInput: unknown,
+  ) {
+    this.assertGlobalReleaseAdmin(user);
+    const reason = this.cleanGlobalReleaseReason(reasonInput);
+    const now = Date.now();
+    let plans: Awaited<ReturnType<KioskService["globalReleasePlans"]>>;
+    try {
+      plans = await this.globalReleasePlans(now);
+    } catch (error: any) {
+      this.logger.error(
+        `Không thể kiểm tra roster trước khi mở khẩn cấp toàn cục: ${error?.message || error}`,
+      );
+      throw new HttpException(
+        "Không thể xác minh đầy đủ các ca trực hiện hành. Chưa Kiosk nào được mở; vui lòng thử lại.",
+        503,
+      );
+    }
+    if (!plans.length) {
+      throw new BadRequestException(
+        "Hiện không có phòng khám nào có ca trực đã công bố đang diễn ra để mở khẩn cấp.",
+      );
+    }
+
+    const operationId = crypto.randomUUID();
+    const activatedAt = new Date(now);
+    const rows = plans.map(({ room, plan }) => ({
+      id: crypto.randomUUID(),
+      operationId,
+      roomId: room.id,
+      roomCode: room.code,
+      roomName: room.name,
+      rosterSignature: plan.guard.signature,
+      shiftEndAt: new Date(plan.shiftEndMs),
+      activatedAt,
+      activatedByUserId: user.id,
+      activatedByUsername: user.username,
+      activatedByFullName: user.fullName,
+      reason,
+    }));
+    try {
+      await this.db.db.insert(kioskGlobalReleases).values(rows);
+    } catch (error: any) {
+      this.logger.error(
+        `Không thể lưu nhật ký mở khẩn cấp toàn cục: ${error?.message || error}`,
+      );
+      throw new HttpException(
+        "Không thể ghi nhận đầy đủ thao tác mở khẩn cấp. Chưa Kiosk nào được mở; vui lòng thử lại.",
+        503,
+      );
+    }
+
+    const affectedRooms = plans.map(({ room, plan }) => ({
+      roomCode: room.code,
+      roomName: room.name,
+      shiftName: plan.shiftName,
+      shiftEndMs: plan.shiftEndMs,
+      activeAssignments: plan.activeRows.length,
+      connectedTerminals: this.roomTerminals.get(room.code)?.size ?? 0,
+    }));
+    await this.audit.log({
+      userId: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      action: "KIOSK_GLOBAL_RELEASE_ACTIVATED",
+      module: "KIOSK",
+      entity: "kiosk_global_release",
+      entityId: operationId,
+      description: `Mở khẩn cấp toàn bộ Kiosk cho ${affectedRooms.length} phòng có ca hiện hành. Lý do: ${reason}`,
+      afterData: {
+        operationId,
+        activatedAt: activatedAt.toISOString(),
+        reason,
+        affectedRooms,
+      },
+      departmentId: user.departmentId,
+      ip: client.ip,
+      userAgent: client.userAgent,
+    });
+
+    // Emit only after the durable operation/audit has been recorded. Native and
+    // web kiosks refuse room-wide UNLOCK_EVENTs, therefore each online terminal
+    // is addressed by its exact terminalId; disconnected kiosks reconcile from DB.
+    for (const { room, plan } of plans) {
+      this.expireWaitingSessionsInRoom(room.code);
+      this.clearLocalUnlocksForGlobalRelease(room.code);
+      for (const terminalId of this.roomTerminals.get(room.code) || []) {
+        this.emitToTarget(room.code, terminalId, "UNLOCK_EVENT", {
+          type: "UNLOCK_SUCCESS",
+          doctor: this.globalReleaseDoctor(
+            { activatedByFullName: user.fullName },
+            plan.shiftName,
+          ),
+          shiftEndMs: plan.shiftEndMs,
+          method: "ADMIN_GLOBAL_EMERGENCY_RELEASE",
+          operationId,
+        });
+      }
+    }
+    try {
+      this.realtime?.publish({
+        topic: "duty-attendance",
+        type: "global-kiosk-release",
+        permissions: ["duty.manage", "duty.manage-all"],
+        data: { operationId, affectedRooms: affectedRooms.map((room) => room.roomCode) },
+      });
+    } catch {
+      // Realtime dashboard refresh is non-authoritative; the stored lease remains valid.
+    }
+
+    return {
+      success: true,
+      operationId,
+      activatedAt: activatedAt.toISOString(),
+      reason,
+      affectedRooms,
+      connectedTerminals: affectedRooms.reduce(
+        (total, room) => total + room.connectedTerminals,
+        0,
+      ),
+      message: `Đã mở khẩn cấp Kiosk cho ${affectedRooms.length} phòng có ca trực hiện hành.`,
+    };
+  }
+
+  /** ADMIN view of durable, currently active global release leases. */
+  async getGlobalEmergencyReleaseStatus(user: AccessContext) {
+    this.assertGlobalReleaseAdmin(user);
+    await this.expireGlobalEmergencyReleases();
+    const now = Date.now();
+    const rows = await this.db.db
+      .select()
+      .from(kioskGlobalReleases)
+      .where(
+        and(
+          isNull(kioskGlobalReleases.endedAt),
+          gt(kioskGlobalReleases.shiftEndAt, new Date(now)),
+        ),
+      )
+      .orderBy(desc(kioskGlobalReleases.activatedAt))
+      .limit(100);
+
+    const active: Array<{
+      id: string;
+      operationId: string;
+      roomCode: string;
+      roomName: string;
+      shiftEndAt: string;
+      activatedAt: string;
+      activatedBy: { username: string; fullName: string };
+      reason: string;
+      connectedTerminals: number;
+    }> = [];
+    for (const row of rows as GlobalReleaseLease[]) {
+      const usable = await this.getUsableGlobalRelease(row.roomCode, now);
+      if (!usable || usable.id !== row.id) continue;
+      active.push({
+        id: usable.id,
+        operationId: usable.operationId,
+        roomCode: usable.roomCode,
+        roomName: usable.roomName,
+        shiftEndAt: usable.shiftEndAt.toISOString(),
+        activatedAt: usable.activatedAt.toISOString(),
+        activatedBy: {
+          username: usable.activatedByUsername,
+          fullName: usable.activatedByFullName,
+        },
+        reason: usable.reason,
+        connectedTerminals: this.roomTerminals.get(usable.roomCode)?.size ?? 0,
+      });
+    }
+    return { serverTime: now, active };
   }
 
   /**
@@ -943,6 +1422,28 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         shiftEndMs: null,
         currentScheduled: null,
         currentScheduledStaff: [],
+        serverTime: Date.now(),
+        qrSession: null,
+      };
+    }
+
+    // A durable ADMIN global release overlays every terminal in this room, including
+    // one that reconnects after the button was pressed. It is checked before any
+    // terminal-local lease and fails closed on a roster/doctor mismatch.
+    const globalRelease = await this.getUsableGlobalRelease(room.code, now);
+    if (globalRelease) {
+      return {
+        protocolVersion: 2,
+        terminalId: tid,
+        roomExists: true,
+        room: { code: room.code, name: room.name },
+        kioskRequired: true,
+        isUnlocked: true,
+        unlocked: true,
+        activeDoctor: this.globalReleaseDoctor(globalRelease, currentScheduled?.shiftName),
+        shiftEndMs: globalRelease.shiftEndAt.getTime(),
+        currentScheduled,
+        currentScheduledStaff,
         serverTime: Date.now(),
         qrSession: null,
       };

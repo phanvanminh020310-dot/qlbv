@@ -29,6 +29,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     "0019_kiosk_duty_attendance.sql",
     "0020_them_avatar_data_sinh_trac_hoc.sql",
     "0021_duty_absence_approval.sql",
+    "0024_kiosk_global_emergency_release.sql",
   ]) {
     await pg.exec(
       readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"),
@@ -266,6 +267,87 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       await pg.exec(
         "UPDATE duty_assignments SET user_id = 7001 WHERE id = 7001; DELETE FROM duty_assignments WHERE id = 7005; DELETE FROM duty_slots WHERE id = 7005; DELETE FROM duty_shift_types WHERE id = 7005",
       );
+    },
+  );
+
+  await t.test(
+    "ADMIN global emergency release is durable, terminal-targeted, and revoked by a doctor replacement without writing attendance",
+    async (t) => {
+      now = MORNING;
+      const beforeAttendance = (await database.db.select().from(schema.dutyAttendance)).length;
+      const admin = {
+        id: 7001,
+        username: 'admin_fixture',
+        fullName: 'Quản trị viên fixture',
+        title: 'ADMIN',
+        departmentId: null,
+        departmentIds: [],
+        permissions: [],
+        roles: ['ADMIN'],
+        isSuperAdmin: false,
+        dataScope: 'ALL',
+        sessionId: 'admin-fixture-session',
+      };
+      const nonAdmin = { ...admin, roles: ['BAC_SI'] };
+      await assert.rejects(
+        service.activateGlobalEmergencyRelease(nonAdmin as any, { ip: '10.1.1.9', userAgent: 'test' }, 'Sự cố xác thực toàn viện'),
+        /chỉ dành cho/,
+      );
+
+      const Socket = (await import('node:events')).EventEmitter;
+      class TestSocket extends Socket {
+        messages: string[] = [];
+        writableEnded = false;
+        destroyed = false;
+        write(value: string) { this.messages.push(value); return true; }
+        end() { this.writableEnded = true; this.emit('close'); }
+      }
+      const a = new TestSocket();
+      const b = new TestSocket();
+      const otherRoom = new TestSocket();
+      service.registerSseClient('PK01', 'global_a', a as any);
+      service.registerSseClient('PK01', 'global_b', b as any);
+      service.registerSseClient('PK010', 'global_other', otherRoom as any);
+      // A prior per-terminal lease must not survive a later global operation.
+      (service as any).activeRoomUnlocks.set('PK01::global_a', {
+        roomCode: 'PK01', terminalId: 'global_a', doctor: { userId: 7001 },
+        shift: { dutyDate: '2026-10-15', shiftCode: 'FIXTURE_S' },
+        unlockedAt: now, shiftEndMs: Date.parse('2026-10-15T11:00:00+07:00'),
+      });
+
+      const activated = await service.activateGlobalEmergencyRelease(
+        admin as any,
+        { ip: '10.1.1.9', userAgent: 'test' },
+        'Sự cố xác thực toàn viện, duy trì khám bệnh',
+      );
+      assert.equal(activated.affectedRooms.length, 2, 'only rooms with a current published shift are affected');
+      assert.equal(activated.connectedTerminals, 3);
+      assert.equal((service as any).activeRoomUnlocks.has('PK01::global_a'), false, 'global lease replaces any old terminal-local release');
+      assert.match(a.messages.at(-1)!, /UNLOCK_EVENT[\s\S]*global_a/);
+      assert.match(b.messages.at(-1)!, /UNLOCK_EVENT[\s\S]*global_b/);
+      assert.match(otherRoom.messages.at(-1)!, /UNLOCK_EVENT[\s\S]*global_other/);
+      assert.equal((await database.db.select().from(schema.kioskGlobalReleases)).length, 2, 'one persistent guarded lease per affected room');
+      assert.equal((await database.db.select().from(schema.dutyAttendance)).length, beforeAttendance, 'emergency release never creates attendance');
+      assert.equal((await service.getKioskStatus('PK01', 'global_a', 'https://hospital.test')).isUnlocked, true);
+      assert.equal((await service.getKioskStatus('PK01', 'global_b', 'https://hospital.test')).isUnlocked, true);
+
+      // A new service has no RAM leases, proving that reconnect/restart still obtains
+      // the current emergency state from the persisted release table.
+      const restarted = new KioskService(
+        database as any,
+        new IntegrationDutyService(database as any),
+        { get: async (key: string) => settings[key] ?? null } as any,
+        { log: async () => {} } as any,
+      );
+      t.after(() => restarted.onModuleDestroy());
+      assert.equal((await restarted.getKioskStatus('PK01', 'after_restart', 'https://hospital.test')).isUnlocked, true);
+
+      await pg.exec("UPDATE duty_assignments SET user_id = 7002 WHERE id = 7001");
+      assert.equal((await restarted.getKioskStatus('PK01', 'after_roster_change', 'https://hospital.test')).isUnlocked, false, 'doctor replacement fails closed immediately');
+      const pk01Release = (await database.db.select().from(schema.kioskGlobalReleases))
+        .find((row) => row.roomCode === 'PK01');
+      assert.ok(pk01Release?.endedAt, 'the durable release receives an audited terminal state');
+      await pg.exec("UPDATE duty_assignments SET user_id = 7001 WHERE id = 7001");
     },
   );
 

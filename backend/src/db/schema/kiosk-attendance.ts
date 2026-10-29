@@ -64,3 +64,38 @@ export const dutyAttendance = pgTable(
     userIdx: index('duty_attendance_user_idx').on(t.userId),
   }),
 );
+
+/**
+ * Phiên mở khẩn cấp toàn cục do ADMIN kích hoạt.
+ *
+ * Mỗi phòng đang có ca được ghi thành một dòng riêng để phiên luôn bị chặn ở
+ * ranh giới ca và bởi đúng chữ ký roster/bác sĩ đã được công bố. Đây là nhật ký
+ * vận hành độc lập với duty_attendance: không biến thao tác khẩn cấp thành một
+ * lần điểm danh hay thay đổi dữ liệu lịch trực.
+ */
+export const kioskGlobalReleases = pgTable(
+  'kiosk_global_releases',
+  {
+    id: text('id').primaryKey(),
+    /** Một lần bấm của ADMIN có thể tác động nhiều phòng/cả bệnh viện. */
+    operationId: text('operation_id').notNull(),
+    roomId: integer('room_id').references(() => dutyRooms.id, { onDelete: 'set null' }),
+    roomCode: text('room_code').notNull(),
+    roomName: text('room_name').notNull(),
+    /** Identity of all staff/slots currently covering this exact room. */
+    rosterSignature: text('roster_signature').notNull(),
+    shiftEndAt: timestamp('shift_end_at', { withTimezone: true }).notNull(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }).defaultNow().notNull(),
+    activatedByUserId: integer('activated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    activatedByUsername: text('activated_by_username').notNull(),
+    activatedByFullName: text('activated_by_full_name').notNull(),
+    reason: text('reason').notNull(),
+    /** Set when the original roster is changed or the current shift ends. */
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endReason: text('end_reason'),
+  },
+  (t) => ({
+    roomActiveIdx: index('kiosk_global_releases_room_active_idx').on(t.roomCode, t.endedAt, t.shiftEndAt),
+    operationIdx: index('kiosk_global_releases_operation_idx').on(t.operationId),
+  }),
+);

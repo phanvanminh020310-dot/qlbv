@@ -30,6 +30,7 @@ import {
   ScanLine,
   PackageSearch,
   Terminal,
+  Unlock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -132,6 +133,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/quan-tri/tac-vu', label: 'Tác vụ định kỳ', icon: CalendarClock, permission: 'job.view' },
       { href: '/quan-tri/sao-luu', label: 'Sao lưu & phục hồi', icon: DatabaseBackup, permission: 'backup.view' },
       { href: '/quan-tri/truy-van-sql', label: 'SQL Console', icon: Terminal, adminOnly: true },
+      { href: '/quan-tri/kiosk-khan-cap', label: 'Mở khẩn cấp Kiosk', icon: Unlock, adminOnly: true },
       { href: '/quan-tri/cau-hinh', label: 'Cấu hình hệ thống', icon: Settings2, permission: 'setting.view' },
       { href: '/quan-tri/nhat-ky', label: 'Nhật ký kiểm toán', icon: History, permission: 'audit.log.view' },
     ],

@@ -72,6 +72,7 @@ export const TABLE_COMMENTS: Record<string, string> = {
   duty_logs: 'Nhật ký nghiệp vụ lịch trực: mọi thay đổi phân công, công bố, chốt, ngoại lệ — kèm lý do và người thực hiện',
   user_biometrics: 'Hồ sơ sinh trắc học khuôn mặt: vector ArcFace mã hoá AES-256 và ảnh chân dung Base64 để sao lưu',
   duty_attendance: 'Nhật ký điểm danh ca trực & mở khoá phòng khám bằng nhận diện khuôn mặt AI',
+  kiosk_global_releases: 'Phiên ADMIN mở khẩn cấp toàn bộ Kiosk theo từng phòng/ca; tự kết thúc khi hết ca hoặc roster thay đổi',
 };
 
 /** Ghi chú theo TỪNG CỘT của bảng (ưu tiên cao hơn COLUMN_COMMENTS_COMMON) */
@@ -606,6 +607,23 @@ export const COLUMN_COMMENTS: Record<string, Record<string, string>> = {
     size_bytes: 'Kích thước tệp (byte)',
     trigger: 'Nguồn phát hành: queue (theo lịch) | manual (chạy thử)',
     created_at: 'Thời điểm xuất',
+  },
+  kiosk_global_releases: {
+    _table: 'Phiên ADMIN mở khẩn cấp Kiosk, bị ràng buộc ca/roster và không phải bản ghi điểm danh',
+    id: 'Mã duy nhất của lease theo phòng',
+    operation_id: 'Mã chung cho một lần ADMIN mở toàn bộ Kiosk',
+    room_id: 'Phòng khám bị tác động (FK duty_rooms)',
+    room_code: 'Mã phòng tại thời điểm kích hoạt',
+    room_name: 'Tên phòng tại thời điểm kích hoạt',
+    roster_signature: 'Chữ ký các phân công/ca hiện hành để phát hiện đổi bác sĩ hoặc roster',
+    shift_end_at: 'Ranh giới kết thúc ca tuyệt đối của lease',
+    activated_at: 'Thời điểm ADMIN kích hoạt',
+    activated_by_user_id: 'ID ADMIN đã kích hoạt',
+    activated_by_username: 'Tên đăng nhập ADMIN tại thời điểm kích hoạt',
+    activated_by_full_name: 'Họ tên ADMIN tại thời điểm kích hoạt',
+    reason: 'Lý do mở khẩn cấp do ADMIN nhập',
+    ended_at: 'Thời điểm tự thu hồi do hết ca/roster đổi',
+    end_reason: 'Lý do hệ thống thu hồi lease',
   },
   duty_absences: {
     start_date: 'Ngày bắt đầu nghỉ',

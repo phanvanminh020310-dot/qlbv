@@ -271,6 +271,29 @@ export class KioskController {
     );
   }
 
+  @Get("global-release")
+  @Header("Cache-Control", "no-store")
+  @ApiOperation({
+    summary: "Xem các phiên mở khẩn cấp toàn bộ Kiosk đang hiệu lực (ADMIN/SUPER_ADMIN)",
+  })
+  async getGlobalEmergencyReleaseStatus(
+    @CurrentUser() user: AccessContext,
+  ) {
+    return this.service.getGlobalEmergencyReleaseStatus(user);
+  }
+
+  @Post("global-release")
+  @ApiOperation({
+    summary: "ADMIN mở khẩn cấp mọi Kiosk có ca trực hiện hành",
+  })
+  async activateGlobalEmergencyRelease(
+    @Body() body: { reason?: unknown },
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
+  ) {
+    return this.service.activateGlobalEmergencyRelease(user, client, body?.reason);
+  }
+
   @Public()
   @Post("lock")
   @ApiOperation({
