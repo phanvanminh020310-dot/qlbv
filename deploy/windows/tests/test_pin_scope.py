@@ -31,8 +31,8 @@ class NativeKioskPolicyTests(unittest.TestCase):
         cls.source = SOURCE.read_text(encoding="utf-8-sig")
 
     def test_version_and_all_account_runtime_policy_are_explicit(self):
-        self.assertIn('[assembly: AssemblyVersion("2.0.5.0")]', self.source)
-        self.assertIn('internal const string Version = "2.0.5";', self.source)
+        self.assertIn('[assembly: AssemblyVersion("2.0.6.0")]', self.source)
+        self.assertIn('internal const string Version = "2.0.6";', self.source)
         program = class_block(self.source, "Program")
         self.assertIn("including local/domain Administrators and UAC-filtered tokens", program)
         self.assertIn("no account-based runtime bypass", program)
@@ -74,6 +74,8 @@ class NativeKioskPolicyTests(unittest.TestCase):
         installer = (WINDOWS_DIR / "cai_dat_kiosk.ps1").read_text(encoding="utf-8-sig")
         generator = (WINDOWS_DIR / "tao_goi_cai_dat_kiosk.ps1").read_text(encoding="utf-8-sig")
         self.assertIn('QLBS_Kiosk_Install.ini', bat)
+        self.assertIn('QLBS_Server_Trust.cer', bat)
+        self.assertIn('TrustLocalCertificate', installer)
         self.assertIn('certificate_sha256', installer)
         self.assertIn("X509Store('Root', 'LocalMachine')", installer)
         self.assertIn("TrustFailure", self.source)

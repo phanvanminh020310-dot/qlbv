@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$VerifyOnly,
+    [switch]$TrustLocalCertificate,
     [switch]$Elevated
 )
 
@@ -39,6 +40,49 @@ function Get-PublicCertificate([string]$path) {
         $raw = [Convert]::FromBase64String($body)
     }
     return New-Object Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $raw)
+}
+
+function Install-LocalTrustCertificate([Security.Cryptography.X509Certificates.X509Certificate2]$certificate, [string]$relaunchSwitch) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1} -Elevated' -f $PSCommandPath.Replace('"', '""'), $relaunchSwitch
+        $child = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+        exit $child.ExitCode
+    }
+
+    $store = New-Object Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    try {
+        $alreadyTrusted = $store.Certificates | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } | Select-Object -First 1
+        if ($null -eq $alreadyTrusted) {
+            $store.Add($certificate)
+            Write-Host '[OK] Da cai chung chi QLBV da kiem tra vao Trusted Root cua may tram.' -ForegroundColor Green
+        } else {
+            Write-Host '[OK] Chung chi QLBV da co trong Trusted Root cua may tram.' -ForegroundColor Green
+        }
+    } finally {
+        $store.Close()
+    }
+}
+
+if ($TrustLocalCertificate) {
+    try {
+        $certificatePath = Join-Path $root 'QLBS_Server_Trust.cer'
+        if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) { Fail 'Khong tim thay QLBS_Server_Trust.cer trong thu muc bo cai.' }
+        $certificate = Get-PublicCertificate $certificatePath
+        if ($certificate.HasPrivateKey) { Fail 'Tep chung chi khong duoc chua private key/PFX.' }
+        $now = [DateTime]::Now
+        if ($certificate.NotBefore -gt $now -or $certificate.NotAfter -le $now) { Fail "Chung chi chua co hieu luc hoac da het han ($($certificate.NotAfter.ToString('yyyy-MM-dd')))." }
+        if ($VerifyOnly) {
+            Write-Host "[OK] Chung chi cuc bo hop le: $($certificate.Subject); SHA-256 $((Get-FileHash -LiteralPath $certificatePath -Algorithm SHA256).Hash.ToUpperInvariant())"
+            exit 0
+        }
+        Install-LocalTrustCertificate $certificate '-TrustLocalCertificate'
+        exit 0
+    } catch {
+        Fail $_.Exception.Message
+    }
 }
 
 function Get-SiteBundle {
@@ -93,27 +137,7 @@ try {
         exit 0
     }
 
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Elevated' -f $PSCommandPath.Replace('"', '""')
-        $child = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $arguments -Wait -PassThru
-        exit $child.ExitCode
-    }
-
-    $store = New-Object Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
-    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-    try {
-        $alreadyTrusted = $store.Certificates | Where-Object { $_.Thumbprint -eq $bundle.Certificate.Thumbprint } | Select-Object -First 1
-        if ($null -eq $alreadyTrusted) {
-            $store.Add($bundle.Certificate)
-            Write-Host '[OK] Da cai chung chi QLBV da kiem tra vao Trusted Root cua may tram.' -ForegroundColor Green
-        } else {
-            Write-Host '[OK] Chung chi QLBV da co trong Trusted Root cua may tram.' -ForegroundColor Green
-        }
-    } finally {
-        $store.Close()
-    }
+    Install-LocalTrustCertificate $bundle.Certificate ''
 
     Write-Host "Dang kiem tra va cai QLBS Kiosk cho phong $($bundle.RoomCode)..."
     $install = Start-Process -FilePath $exe -ArgumentList @('/install', '/server', $bundle.ServerUrl, '/room', $bundle.RoomCode) -Wait -PassThru

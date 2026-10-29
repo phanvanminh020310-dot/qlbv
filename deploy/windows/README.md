@@ -1,8 +1,8 @@
-# QLBS Kiosk 2.0.5 — WinForms workstation
+# QLBS Kiosk 2.0.6 — WinForms workstation
 
 `QLBS_Kiosk.exe` is the native Windows kiosk for an outpatient workstation. It does not use Edge Kiosk, WebView, a local unlock service, or the legacy `QLBS_Kiosk_Agent.exe`.
 
-## Operating policy (2.0.5)
+## Operating policy (2.0.6)
 
 - The kiosk applies to **every interactive Windows account**, including local/domain **Administrators** and UAC-filtered Administrator tokens. Nobody has to change to a standard account for it to run.
 - It overlays and hooks the desktop **only** when an **online** QLBV reconciliation confirms an assigned, published/locked shift that is **currently inside its exact time interval** for the configured room.
@@ -29,7 +29,7 @@ Installation, update, and uninstall still require UAC Administrator rights. This
 
 ## Install or update a workstation
 
-After the 2.0.5 release is published, download `QLBS_Kiosk_2.0.5.zip` and its SHA-256 checksum from the repository Release assets. Do not use GitHub's `Source code (zip)` as an EXE package.
+After the 2.0.6 release is published, download `QLBS_Kiosk_2.0.6.zip` and its SHA-256 checksum from the repository Release assets. Do not use GitHub's `Source code (zip)` as an EXE package.
 
 1. Extract to a local folder; do not launch directly inside the ZIP.
 2. Verify the `QLBS_Kiosk.exe` hash against `SHA256SUMS.txt`.
@@ -73,4 +73,4 @@ Removal keeps the room/terminal configuration by default. Add `/purge` only when
 - The Windows CI workflow compiles C# 5/.NET Framework, runs native self-tests, QR fixtures, and keyboard input checks.
 - Server/frontend checks and the physical acceptance checklist are described in [KIEM_THU_V2.md](KIEM_THU_V2.md) and [HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md).
 
-For a release, use **Actions → Kiosk standalone quality gate**, enable `publish_release`, and enter the new tag `kiosk-v2.0.5`. Never overwrite previous release assets.
+For a release, use **Actions → Kiosk standalone quality gate**, enable `publish_release`, and enter the new tag `kiosk-v2.0.6`. Never overwrite previous release assets.

@@ -2,7 +2,22 @@
 
 Tài liệu này dùng khi QLBV chạy bằng HTTPS trên IP nội bộ với certificate tự ký, ví dụ `https://172.16.13.75:3000`.
 
-Mục tiêu: CNTT tạo **một gói riêng đã kiểm tra certificate** cho từng phòng/server; tại mỗi PC chỉ cần giải nén và chạy `cai_dat_kiosk.bat`. Gói không tải certificate từ mạng, không tắt kiểm tra TLS của Windows và không chứa private key.
+Mục tiêu: CNTT cài public certificate đã kiểm tra vào máy trạm rồi mới để Kiosk dùng TLS chuẩn. Công cụ không tải certificate từ mạng, không tắt kiểm tra TLS của Windows và không chứa private key.
+
+## Cách nhanh — chép certificate vào ZIP gốc rồi chạy BAT
+
+Dùng khi CNTT trực tiếp quản lý việc chép file và muốn cấu hình phòng bằng form sẵn có:
+
+1. Giải nén `QLBS_Kiosk_2.0.6.zip` trên máy trạm hoặc USB CNTT.
+2. Chép **đúng** public certificate đã đối chiếu vào ngay thư mục đó với tên cố định:
+
+   ```text
+   QLBS_Server_Trust.cer
+   ```
+
+3. Nhấp phải `cai_dat_kiosk.bat` → **Run as administrator**. BAT tự phát hiện file này, kiểm tra certificate không chứa private key/còn hạn, cài vào `Local Computer → Trusted Root Certification Authorities`, rồi mở form Kiosk bình thường để nhập/chọn URL và mã phòng.
+
+Ví dụ cùng một certificate/server có thể dùng cho P1, P2, P3…; mỗi PC vẫn tự tạo terminal ID riêng. Kiểm tra SHA-256 certificate ở server trước khi chép. Đây là lựa chọn thuận tiện khi CNTT tự phân phối file; cách tạo gói riêng bên dưới pin thêm SHA-256, URL và mã phòng để triển khai hàng loạt chặt chẽ hơn.
 
 ## 1. Lấy đúng public certificate từ server
 
@@ -22,7 +37,7 @@ Certificate phải còn hạn và SAN phải chứa đúng IP/hostname sẽ nh�
 
 ## 2. Tạo gói riêng cho phòng
 
-1. Tải đúng asset `QLBS_Kiosk_2.0.5.zip`, kiểm tra checksum rồi giải nén trên một PC CNTT tin cậy.
+1. Tải đúng asset `QLBS_Kiosk_2.0.6.zip`, kiểm tra checksum rồi giải nén trên một PC CNTT tin cậy.
 2. Mở PowerShell tại thư mục vừa giải nén và chạy, thay URL/phòng/đường dẫn certificate đúng thực tế:
 
 ```powershell

@@ -10,7 +10,7 @@ on:
       release_tag:
         description: Component release tag matching the package version
         type: string
-        default: kiosk-v2.0.5
+        default: kiosk-v2.0.6
         required: true
   push:
     branches: [main]
@@ -131,7 +131,7 @@ jobs:
           & $csc @compileArgs
           if ($LASTEXITCODE -ne 0) { throw 'Windows compilation failed' }
           Copy-Item deploy/windows/QLBS_Kiosk.cs,deploy/windows/cai_dat_kiosk.bat,deploy/windows/cai_dat_kiosk.ps1,deploy/windows/tao_goi_cai_dat_kiosk.ps1,deploy/windows/go_bo_kiosk.bat,deploy/windows/README.md,deploy/windows/HUONG_DAN_SU_DUNG.md,deploy/windows/GOI_CAI_DAT_NOI_BO.md,deploy/windows/KIEM_THU_V2.md,deploy/windows/NOTICE.md $package
-          "QLBS Kiosk 2.0.5`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
+          "QLBS Kiosk 2.0.6`nSource commit: $env:GITHUB_SHA`nCompiler: $csc`nBuild: Windows CI / .NET Framework / C# 5`nAuthenticode: unsigned; hospital code-signing can be applied before distribution." | Set-Content "$package\BUILD_INFO.txt" -Encoding utf8
       - name: Native self-tests and off-screen WinForms rendering
         run: |
           $package = Join-Path $env:RUNNER_TEMP 'QLBS_Kiosk'
@@ -192,6 +192,10 @@ jobs:
           $created = New-SelfSignedCertificate -Type Custom -Subject 'CN=172.16.13.75' -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @('2.5.29.17={text}ipaddress=172.16.13.75') -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(30)
           try {
             Export-Certificate -Cert $created -FilePath $certificate -Type CERT | Out-Null
+            Copy-Item $certificate "$package\QLBS_Server_Trust.cer"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$package\cai_dat_kiosk.ps1" -TrustLocalCertificate -VerifyOnly
+            if ($LASTEXITCODE -ne 0) { throw 'Manual local-certificate path did not verify' }
+            Remove-Item "$package\QLBS_Server_Trust.cer" -Force
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$package\tao_goi_cai_dat_kiosk.ps1" -Server 'https://172.16.13.75:3000' -Room P2 -Certificate $certificate -Output $bundle
             if ($LASTEXITCODE -ne 0) { throw 'Site-package builder failed' }
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$bundle\cai_dat_kiosk.ps1" -VerifyOnly
@@ -206,12 +210,12 @@ jobs:
           Get-ChildItem $package -File | Sort-Object Name | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
           } | Set-Content "$package\SHA256SUMS.txt" -Encoding ascii
-          Compress-Archive -Path "$package\*" -DestinationPath "$env:RUNNER_TEMP\QLBS_Kiosk_2.0.5.zip" -Force
+          Compress-Archive -Path "$package\*" -DestinationPath "$env:RUNNER_TEMP\QLBS_Kiosk_2.0.6.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: QLBS-Kiosk-Windows-2.0.5
+          name: QLBS-Kiosk-Windows-2.0.6
           path: |
-            ${{ runner.temp }}/QLBS_Kiosk_2.0.5.zip
+            ${{ runner.temp }}/QLBS_Kiosk_2.0.6.zip
             ${{ runner.temp }}/kiosk-qa/self-test.txt
             ${{ runner.temp }}/kiosk-qa/pin-input.txt
             ${{ runner.temp }}/kiosk-qa/qr.png
@@ -235,7 +239,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v5
         with:
-          name: QLBS-Kiosk-Windows-2.0.5
+          name: QLBS-Kiosk-Windows-2.0.6
           path: release-artifact
       - name: Verify the exact CI build and prepare release assets
         env:

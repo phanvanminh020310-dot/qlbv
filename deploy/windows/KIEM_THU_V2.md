@@ -1,4 +1,4 @@
-# QLBS Kiosk 2.0.5 — phạm vi thay đổi và nghiệm thu bắt buộc
+# QLBS Kiosk 2.0.6 — phạm vi thay đổi và nghiệm thu bắt buộc
 
 ## Chính sách đã chốt
 
@@ -10,7 +10,7 @@
 
 ## Bằng chứng tự động
 
-1. `tests/test_pin_scope.py` kiểm tra version 2.0.5, không còn `AccountPolicy`/token-SID bypass, trạng thái `kioskRequired`, desktop release khi không có ca và khi offline, QR subtitle đã bỏ; đồng thời kiểm tra gói cài một lần pin SHA-256 public certificate, chỉ trust qua LocalMachine Root, không tải certificate từ LAN và không bỏ TLS validation.
+1. `tests/test_pin_scope.py` kiểm tra version 2.0.6, không còn `AccountPolicy`/token-SID bypass, trạng thái `kioskRequired`, desktop release khi không có ca và khi offline, QR subtitle đã bỏ; đồng thời kiểm tra gói cài một lần pin SHA-256 public certificate, chỉ trust qua LocalMachine Root, không tải certificate từ LAN và không bỏ TLS validation.
 2. Native self-test kiểm tra JSON nghiêm ngặt, terminal isolation, QR scan overlay, chuyển trạng thái ca hiện tại → mở Desktop, offline release, bàn phím và ma trận QR v1–v40.
 3. Backend regression kiểm tra roster published/exact time, không QR khi không có ca, hết ca, lỗi đối soát, PIN IT chỉ trong ca, và QR/face không vượt hết ca.
 4. Frontend typecheck/build kiểm tra debounce tìm người trực và phân trang độc lập danh sách kỳ lịch / ô trực.
@@ -26,4 +26,4 @@ CI không thay thế kiểm thử máy thật. Trên ít nhất hai PC (có mộ
 - [ ] Đăng nhập Administrator: nhận đúng cùng chính sách, không cần đổi sang User thường.
 - [ ] Kiểm tra hotkey/PIN rate-limit, DPI, nhiều màn hình, QR TTL/buffer, AI/PAD thật và giả, cài/gỡ/cập nhật giữ config/terminal ID.
 
-Các release cũ là tài sản lịch sử; phát hành thay đổi chính sách này bằng tag/asset mới `kiosk-v2.0.5`, không ghi đè release cũ.
+Các release cũ là tài sản lịch sử; phát hành thay đổi chính sách này bằng tag/asset mới `kiosk-v2.0.6`, không ghi đè release cũ.

@@ -1,4 +1,4 @@
-# QLBS Kiosk 2.0.5 — hướng dẫn vận hành
+# QLBS Kiosk 2.0.6 — hướng dẫn vận hành
 
 **Cập nhật 16/10/2026 · WinForms native · Bệnh viện quân y 4**
 
@@ -31,7 +31,7 @@ Trong System settings:
 
 ## 3. Cài hoặc cập nhật PC
 
-1. Tải asset phát hành **`QLBS_Kiosk_2.0.5.zip`** và checksum sau khi tag `kiosk-v2.0.5` được công bố. Không dùng Source code ZIP.
+1. Tải asset phát hành **`QLBS_Kiosk_2.0.6.zip`** và checksum sau khi tag `kiosk-v2.0.6` được công bố. Không dùng Source code ZIP.
 2. Nếu dùng HTTPS có certificate công khai/được Windows tin cậy, giải nén cục bộ, đối chiếu `Get-FileHash .\QLBS_Kiosk.exe -Algorithm SHA256` với `SHA256SUMS.txt`, rồi chạy EXE và nhập web origin/mã phòng.
 3. Nếu QLBV dùng certificate tự ký cho IP nội bộ, CNTT tạo một **gói cài một lần** đã pin public certificate theo [GOI_CAI_DAT_NOI_BO.md](GOI_CAI_DAT_NOI_BO.md). Tại mỗi PC chỉ giải nén và nhấp phải `cai_dat_kiosk.bat` → **Run as administrator**. Script kiểm tra hash/hạn/SAN certificate, cài trust rồi mới preflight/cài Kiosk; không chấp nhận certificate lấy trực tiếp từ mạng.
 
@@ -73,7 +73,7 @@ rem hoặc:
 | Có ca nhưng Kiosk không khóa | Kiểm tra QLBV API, giờ ca/timezone, room/terminal và trạng thái published/locked. Không tự đặt lại giờ PC để né đối soát. |
 | Mạng mất, Desktop mở | Đúng chính sách. PIN IT cũng không mở offline. Khôi phục mạng/API; chỉ ca hiện tại đã xác nhận mới đưa Kiosk trở lại. |
 | QR/face bị từ chối | Kiểm tra hồ sơ khuôn mặt, phân công đúng phòng/ca, nghỉ phép, PAD và hạn QR/buffer. |
-| Administrator vẫn thấy Kiosk | Đúng chính sách 2.0.5 nếu ca hiện tại được API xác nhận. Không đổi tài khoản để tránh Kiosk. |
+| Administrator vẫn thấy Kiosk | Đúng chính sách 2.0.6 nếu ca hiện tại được API xác nhận. Không đổi tài khoản để tránh Kiosk. |
 | Cài một lần báo certificate/SAN/hash | Dùng đúng gói riêng do CNTT tạo; không tự thay public certificate hoặc INI. Đối chiếu origin, hạn và SAN trên server. |
 | Cài/gỡ báo thiếu quyền | Mở bằng UAC Administrator; `/quiet` không tự nâng quyền. |
 

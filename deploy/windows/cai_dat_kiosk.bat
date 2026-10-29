@@ -6,7 +6,9 @@ rem Site-specific package: the reviewed public certificate, SHA-256 pin, origin 
 rem room are beside this BAT. It is trusted locally before native Kiosk preflight;
 rem this never weakens Windows TLS validation or downloads a certificate from LAN.
 if exist "%~dp0QLBS_Kiosk_Install.ini" goto SITE_PACKAGE
+if exist "%~dp0QLBS_Server_Trust.cer" goto TRUST_LOCAL_CERTIFICATE
 
+:GENERIC_PACKAGE
 rem Generic developer/release package. Prefer the release EXE; compile locally only if absent.
 rem GUI: double-click this BAT or QLBS_Kiosk.exe.
 rem Fleet: cai_dat_kiosk.bat /server https://qlbv.benhvien.vn /room PK01 /quiet /no-start
@@ -49,6 +51,16 @@ exit /b %errorlevel%
 :GUI
 start "" /wait "%KIOSK_EXE%" /setup
 exit /b %errorlevel%
+
+:TRUST_LOCAL_CERTIFICATE
+if not exist "%~dp0cai_dat_kiosk.ps1" (
+    echo [LOI] Bo cai bi thieu cai_dat_kiosk.ps1. Khong cai dat de tranh tin chung chi khong duoc kiem tra.
+    exit /b 1
+)
+echo Da tim thay QLBS_Server_Trust.cer. Dang cai chung chi da duoc CNTT chep vao thu muc bo cai...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0cai_dat_kiosk.ps1" -TrustLocalCertificate
+if errorlevel 1 exit /b %errorlevel%
+goto GENERIC_PACKAGE
 
 :SITE_PACKAGE
 if not exist "%~dp0cai_dat_kiosk.ps1" (

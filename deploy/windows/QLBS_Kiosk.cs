@@ -27,8 +27,8 @@ using Net.Codecrete.QrCodeGenerator;
 [assembly: AssemblyDescription("Xác thực ca trực — Bệnh viện quân y 4")]
 [assembly: AssemblyCompany("Bệnh viện quân y 4")]
 [assembly: AssemblyProduct("QLBS Kiosk")]
-[assembly: AssemblyVersion("2.0.5.0")]
-[assembly: AssemblyFileVersion("2.0.5.0")]
+[assembly: AssemblyVersion("2.0.6.0")]
+[assembly: AssemblyFileVersion("2.0.6.0")]
 [assembly: AssemblyCopyright(QLBS.Kiosk.ThirdParty.Notice)]
 
 namespace QLBS.Kiosk
@@ -45,7 +45,7 @@ namespace QLBS.Kiosk
 
     internal static class Program
     {
-        internal const string Version = "2.0.5";
+        internal const string Version = "2.0.6";
         internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "QLBS Kiosk");
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QLBS", "Kiosk");
         internal static readonly string ConfigPath = Path.Combine(DataDirectory, "config.ini");
