@@ -78,6 +78,13 @@ for (const [vp, tok, path, name] of [
   const periodFilterOk = await periodSearch.isVisible() && (await page.textContent('body')).includes('1 kỳ phù hợp');
   expectations.push(['bộ chọn kỳ có tìm kiếm và lọc được kỳ trong danh sách dài', periodFilterOk]);
   await page.keyboard.press('Escape');
+  const roomPicker = page.getByRole('combobox', { name: 'Tìm và chọn phòng khám' });
+  await roomPicker.click();
+  const roomOptions = page.getByRole('option');
+  expectations.push(['ô tìm phòng mở danh sách phòng để chọn', await roomOptions.count() > 1]);
+  await roomOptions.nth(1).click();
+  const selectedRoomOnly = (await page.textContent('body')).includes('1 phòng đang hiển thị');
+  expectations.push(['chọn phòng thu hẹp lịch về đúng phòng đó', selectedRoomOnly]);
   const assignTiles = page.locator('button[title^="Xếp bác sĩ:"]');
   expectations.push(['lịch theo ngày hiển thị các ca có thể bấm xếp trực tiếp', await assignTiles.count() > 0]);
   await assignTiles.first().click().catch(() => {});
@@ -99,6 +106,8 @@ for (const [vp, tok, path, name] of [
   expectations.push(['bảng lịch khám nhiều phòng không tràn ngang trên điện thoại', metrics.body <= metrics.viewport && metrics.root <= metrics.viewport]);
   expectations.push(['điện thoại vẫn hiển thị ca bấm trực tiếp để xếp bác sĩ', await page.locator('button[title^="Xếp bác sĩ:"]').count() > 0]);
   await page.screenshot({ path: '/tmp/shots/dien-thoai-xep-truc.png' });
+  await page.getByText('Chọn ngày xem lịch phòng khám', { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/shots/dien-thoai-lich-phong.png' });
   await ctx.close();
 }
 

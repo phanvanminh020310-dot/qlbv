@@ -6,13 +6,13 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ConsultationScheduleBoard } from "@/components/duty/consultation-schedule-board";
+import { RoomPicker } from "@/components/duty/room-picker";
 import { AssignDialog, CellDialog, QuickCreateNextPeriodDialog } from "@/components/duty/duty-dialogs";
 import { PeriodPicker } from "@/components/duty/period-picker";
 import { errorText, KpiTile, PhaseBadge, PhaseBanner, ShiftChip } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, EmptyState, Skeleton } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { useRealtimeInvalidate } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
 import { bkkTodayYmd, DUTY_KEYS, dutyApi, fmtDate, type GridSlot } from "@/lib/duty";
@@ -25,7 +25,7 @@ const cellKey = (roomId: number, date: string) => `${roomId}|${date}`;
 export default function LichTrucPage() {
   const can = useAuth((s) => s.can);
   const [periodId, setPeriodId] = useState<number | null>(null);
-  const [roomQuery, setRoomQuery] = useState("");
+  const [roomId, setRoomId] = useState<number | null>(null);
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [cell, setCell] = useState<{ key: CellKey; title: string; subtitle: string } | null>(null);
@@ -82,15 +82,12 @@ export default function LichTrucPage() {
   }, [g]);
 
   const rooms = useMemo(() => {
-    const needle = roomQuery.trim().toLocaleLowerCase("vi");
-    const selected = (g?.rooms ?? []).filter((room) =>
-      !needle || `${room.code} ${room.name} ${room.location}`.toLocaleLowerCase("vi").includes(needle),
-    );
+    const selected = (g?.rooms ?? []).filter((room) => roomId === null || room.id === roomId);
     if (!showMissingOnly) return selected;
     return selected.filter((room) =>
       (g?.slots ?? []).some((slot) => slot.roomId === room.id && slot.filled < slot.requiredCount),
     );
-  }, [g, roomQuery, showMissingOnly]);
+  }, [g, roomId, showMissingOnly]);
   const assignSlot = useMemo(() => g?.slots.find((s) => s.id === assignSlotId) ?? null, [g, assignSlotId]);
 
   const openCell = (roomId: number, date: string) => {
@@ -136,7 +133,7 @@ export default function LichTrucPage() {
                 onClick={() => {
                   if (currentIndex < sortedPeriods.length - 1) {
                     setPeriodId(sortedPeriods[currentIndex + 1].id);
-                    setRoomQuery("");
+                    setRoomId(null);
                   }
                 }}
                 title="Kỳ khám trước"
@@ -152,7 +149,7 @@ export default function LichTrucPage() {
                 onClick={() => {
                   if (currentPeriod) {
                     setPeriodId(currentPeriod.id);
-                    setRoomQuery("");
+                    setRoomId(null);
                   }
                 }}
                 disabled={!currentPeriod}
@@ -169,7 +166,7 @@ export default function LichTrucPage() {
                 onClick={() => {
                   if (currentIndex > 0) {
                     setPeriodId(sortedPeriods[currentIndex - 1].id);
-                    setRoomQuery("");
+                    setRoomId(null);
                   }
                 }}
                 title="Kỳ khám kế tiếp"
@@ -184,7 +181,7 @@ export default function LichTrucPage() {
                 value={periodId}
                 onChange={(id) => {
                   setPeriodId(id);
-                  setRoomQuery("");
+                  setRoomId(null);
                 }}
                 className="order-last col-span-3 w-full sm:order-none sm:col-auto sm:min-w-[15.5rem]"
               />
@@ -279,19 +276,24 @@ export default function LichTrucPage() {
             <CardHeader
               title={
                 <span className="flex flex-wrap items-center gap-2">
-                  <CalendarDays className="h-4 w-4 text-[var(--primary)]" /> Lịch bác sĩ khám bệnh · {fmtDate(g.period.startDate)} – {fmtDate(g.period.endDate)}
+                  <CalendarDays className="h-4 w-4 text-[var(--primary)]" />
+                  <span className="sm:hidden">Lịch theo phòng</span>
+                  <span className="hidden sm:inline">Lịch bác sĩ khám bệnh · {fmtDate(g.period.startDate)} – {fmtDate(g.period.endDate)}</span>
                   <PhaseBadge period={g.period} />
                 </span>
               }
               description={
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  {g.shifts.map((shift) => (
-                    <span key={shift.id} className="inline-flex items-center gap-1.5">
-                      <ShiftChip code={shift.code} color={shift.color} />
-                      <span>{shift.name} ({shift.startTime}–{shift.endTime})</span>
-                    </span>
-                  ))}
-                </span>
+                <>
+                  <span className="text-xs text-[var(--muted-foreground)] sm:hidden">Ca sáng · Ca chiều · Cả ngày</span>
+                  <span className="hidden flex-wrap items-center gap-x-3 gap-y-1 sm:flex">
+                    {g.shifts.map((shift) => (
+                      <span key={shift.id} className="inline-flex items-center gap-1.5">
+                        <ShiftChip code={shift.code} color={shift.color} />
+                        <span>{shift.name} ({shift.startTime}–{shift.endTime})</span>
+                      </span>
+                    ))}
+                  </span>
+                </>
               }
               actions={
                 <div className="grid w-full gap-2 print:hidden sm:flex sm:w-auto sm:items-center">
@@ -310,12 +312,11 @@ export default function LichTrucPage() {
                       {showMissingOnly ? "Đang xem vị trí thiếu" : `${g.summary.missing} vị trí cần xếp`}
                     </button>
                   ) : null}
-                  <Input
-                    aria-label="Tìm phòng khám"
-                    value={roomQuery}
-                    onChange={(event) => setRoomQuery(event.target.value)}
-                    placeholder="Tìm phòng khám..."
-                    className="h-9 w-full text-xs sm:h-8 sm:w-44"
+                  <RoomPicker
+                    rooms={g.rooms}
+                    value={roomId}
+                    onChange={setRoomId}
+                    className="w-full sm:w-64"
                   />
                 </div>
               }
