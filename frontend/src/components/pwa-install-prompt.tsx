@@ -95,7 +95,7 @@ export function PwaInstallPrompt() {
   return (
     <>
       <aside
-        className="fixed inset-x-3 bottom-3 z-[70] mx-auto max-w-xl rounded-2xl border border-teal-200 bg-white/95 p-3.5 shadow-xl backdrop-blur dark:border-teal-800 dark:bg-slate-950/95 sm:bottom-5 sm:p-4"
+        className="app-safe-bottom fixed inset-x-3 bottom-3 z-[70] mx-auto max-w-xl rounded-2xl border border-teal-200 bg-white/95 p-3.5 shadow-xl backdrop-blur dark:border-teal-800 dark:bg-slate-950/95 sm:bottom-5 sm:p-4"
         aria-label="Cài ứng dụng QLBS"
       >
         <div className="flex items-start gap-3">
@@ -126,7 +126,7 @@ export function PwaInstallPrompt() {
       </aside>
 
       {showInstructions ? (
-        <div className="fixed inset-0 z-[80] flex items-end bg-slate-950/40 p-3 sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-labelledby="pwa-install-title">
+        <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-[80] flex items-end overflow-y-auto bg-slate-950/40 p-3 sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-labelledby="pwa-install-title">
           <div className="w-full max-w-md rounded-2xl bg-[var(--card)] p-5 shadow-2xl">
             <div className="mb-2 flex items-center gap-2 text-teal-700 dark:text-teal-300">
               {isIos ? <Share className="h-5 w-5" /> : <Download className="h-5 w-5" />}

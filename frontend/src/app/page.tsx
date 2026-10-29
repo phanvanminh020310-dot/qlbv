@@ -11,7 +11,7 @@ export default function HomePage() {
     router.replace(tokenStore.access ? '/dashboard' : '/login');
   }, [router]);
   return (
-    <div className="flex min-h-dvh items-center justify-center text-sm text-[var(--muted-foreground)]">
+    <div className="app-viewport-min flex items-center justify-center text-sm text-[var(--muted-foreground)]">
       Đang mở hệ thống…
     </div>
   );

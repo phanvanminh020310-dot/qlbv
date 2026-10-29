@@ -571,7 +571,7 @@ export default function MobileScanPage() {
 
   if (sessionError) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
+      <div className="app-viewport-min app-safe-page bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
         <div className="h-16 w-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mb-4">
           <AlertTriangle className="h-8 w-8" />
         </div>
@@ -592,7 +592,7 @@ export default function MobileScanPage() {
 
   if (loadingSession) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
+      <div className="app-viewport-min app-safe-page bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
         <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-4" />
         <p className="text-sm font-semibold">
           Đang nạp phiên điểm danh phòng khám...
@@ -602,7 +602,7 @@ export default function MobileScanPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-md mx-auto">
+    <div className="app-viewport-min app-safe-page bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-md mx-auto">
       {/* Input ẩn hỗ trợ chụp ảnh trực tiếp nếu WebRTC bị chặn */}
       <input
         ref={fileInputRef}

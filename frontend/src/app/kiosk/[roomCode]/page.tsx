@@ -567,7 +567,7 @@ export default function KioskPage() {
   // Browser fallback cannot close a normal user tab automatically; native Kiosk hides all of its own windows.
   if (isUnlocked) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white p-6 text-center select-none animate-in fade-in duration-300">
+      <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-slate-950 text-white p-6 text-center select-none animate-in fade-in duration-300">
         <div className="max-w-md w-full space-y-6">
           <div className="size-20 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-500/60 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-500/10">
             <CheckCircle2 className="size-10" />
@@ -620,7 +620,7 @@ export default function KioskPage() {
   // --- TRẠNG THÁI 2: ĐANG KHOÁ (PHỦ TOÀN MÀN HÌNH BẢO VỆ MÁY TRẠM) ---
   return (
     <div
-      className={`relative min-h-screen w-screen flex flex-col justify-between overflow-hidden select-none transition-colors duration-300 ${
+      className={`app-viewport-min app-safe-page relative w-full max-w-full flex flex-col justify-between overflow-hidden select-none transition-colors duration-300 ${
         isDarkMode
           ? "bg-gradient-to-b from-slate-950 via-slate-900 to-teal-950/40 text-slate-100"
           : "bg-gradient-to-b from-slate-100 via-white to-teal-50 text-slate-900"
@@ -630,7 +630,7 @@ export default function KioskPage() {
       {showExitWarning && (
         <div
           onClick={() => KioskLockdown.enterFullscreen()}
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-xl p-6 text-center cursor-pointer"
+          className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-slate-950/95 backdrop-blur-xl p-6 text-center cursor-pointer"
         >
           <div className="h-20 w-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-amber-400 flex items-center justify-center mb-4">
             <Shield className="h-10 w-10 animate-pulse" />
@@ -922,7 +922,7 @@ export default function KioskPage() {
 
       {/* Hộp thoại mở khoá IT khẩn cấp */}
       {isITModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+        <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 backdrop-blur-md p-4">
           <form
             onSubmit={handleITOverride}
             className="w-full max-w-sm rounded-3xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl space-y-4"

@@ -41,6 +41,8 @@
   --warning: #d97706;
   --danger: #dc2626;
   --ring: #93c5fd;
+  /* Replaced by MobileViewportStabilizer on iPhone Safari. */
+  --qlbs-viewport-height: 100dvh;
 }
 
 .dark {
@@ -64,6 +66,8 @@
 
 html,
 body {
+  width: 100%;
+  min-width: 0;
   min-height: 100%;
   background: var(--background);
   color: var(--foreground);
@@ -73,39 +77,132 @@ html {
   /* Safari iPhone có thể tự tăng cỡ chữ sau xoay máy/tải lại, làm các cột nhảy bố cục. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 body {
-  overflow-x: clip;
+  overflow-x: hidden;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Assets must never make the document wider than the iPhone visual viewport. */
+img,
+video,
+canvas {
+  max-width: 100%;
 }
 
 /*
- * Safari iPhone thay đổi chiều cao visual viewport khi thanh địa chỉ thu/mở.
- * Vùng app dùng `svh` ổn định; chỉ `main` cuộn nên header/footer không dịch
- * theo thanh trình duyệt và không tạo cuộn ngang toàn trang.
+ * Safari iPhone changes the visual viewport as its browser chrome/keyboard
+ * appears. A common height is synchronised by MobileViewportStabilizer; the
+ * protected app then has one scrolling surface (`main`) while top bar/footer
+ * remain in the same flex frame. This removes the nested-page bounce, zoomed
+ * frame and header/footer drift seen on iOS without changing desktop/Android.
  */
 .app-shell {
+  min-width: 0;
   min-height: 100svh;
+  min-height: var(--qlbs-viewport-height, 100dvh);
+}
+
+.app-viewport-min {
+  min-height: 100svh;
+  min-height: var(--qlbs-viewport-height, 100dvh);
+}
+
+.app-viewport-fixed {
+  height: 100svh;
+  height: var(--qlbs-viewport-height, 100dvh);
+  bottom: auto;
 }
 
 @media (max-width: 1023px) {
   .app-shell {
-    height: 100svh;
-    min-height: 100svh;
+    width: 100%;
+    height: var(--qlbs-viewport-height, 100dvh);
+    min-height: 0;
+    max-width: 100%;
     overflow: hidden;
+    overscroll-behavior: none;
   }
 
   .app-shell-content {
+    min-width: 0;
     min-height: 0;
+    overflow: hidden;
   }
 
   .app-shell-main {
+    min-width: 0;
     min-height: 0;
+    max-width: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
-    overscroll-behavior-y: contain;
+    overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y pinch-zoom;
+  }
+
+  .app-shell-main > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+/* iOS zooms a focused form control below 16px. The runtime marker is added
+   only for iPhone/iPad Safari, so Android's already-stable form sizing stays
+   unchanged. It also covers native inputs outside the shared controls. */
+@media (max-width: 1023px) {
+  html.ios-visual-viewport input:not([type='range']):not([type='checkbox']):not([type='radio']),
+  html.ios-visual-viewport textarea,
+  html.ios-visual-viewport select {
+    font-size: 16px !important;
+  }
+}
+
+/* Covers the short pre-hydration interval (notably Login auto-focus) before
+   the runtime marker can be added. This WebKit feature is not supported by
+   Android Chromium. */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 1023px) {
+    input:not([type='range']):not([type='checkbox']):not([type='radio']),
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
+}
+
+@supports (padding: max(0px)) {
+  @media (max-width: 1023px) {
+    .app-shell-topbar {
+      min-height: calc(3.5rem + env(safe-area-inset-top));
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .app-shell-footer {
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    }
+
+    .app-safe-overlay {
+      padding-top: max(1rem, env(safe-area-inset-top));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+      padding-left: max(1rem, env(safe-area-inset-left));
+    }
+
+    .app-safe-page {
+      padding-top: max(1rem, env(safe-area-inset-top));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+      padding-left: max(1rem, env(safe-area-inset-left));
+    }
+
+    .app-safe-bottom {
+      bottom: max(0.75rem, env(safe-area-inset-bottom));
+    }
   }
 }
 

@@ -265,7 +265,7 @@ export default function PrintTemplatesPage() {
 
     if (loadingDetail) {
       return (
-        <div className="fixed inset-0 z-[45] flex items-center justify-center bg-[var(--background)]">
+        <div className="app-viewport-fixed fixed inset-x-0 top-0 z-[45] flex items-center justify-center overflow-hidden bg-[var(--background)]">
           <div className="w-full max-w-3xl space-y-3 p-6">
             <Skeleton className="h-10" />
             <Skeleton className="h-[60vh]" />

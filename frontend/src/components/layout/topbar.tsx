@@ -113,7 +113,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const unread = notifications?.unread ?? 0;
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-[var(--card)] px-3 lg:px-4">
+    <header className="app-shell-topbar sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-[var(--card)] px-3 lg:px-4">
       <button type="button" onClick={onOpenMenu} className="rounded-lg p-2 lg:hidden" aria-label="Mở menu">
         <Menu className="size-5" />
       </button>

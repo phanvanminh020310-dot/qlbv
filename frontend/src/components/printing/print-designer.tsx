@@ -803,7 +803,7 @@ export function PrintDesigner({
   /* ------------------------------------------------------------ Giao diện */
 
   return (
-    <div className="fixed inset-0 z-[45] flex flex-col bg-[var(--background)] text-[var(--foreground)]" data-testid="print-designer">
+    <div className="app-viewport-fixed fixed inset-x-0 top-0 z-[45] flex flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]" data-testid="print-designer">
       {/* Thanh tiêu đề */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b bg-[var(--card)] px-3">
         <div className="flex size-7 items-center justify-center rounded-md bg-[var(--primary)] text-[var(--primary-foreground)]">

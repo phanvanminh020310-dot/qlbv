@@ -124,7 +124,7 @@ export function PreviewDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900/95" role="dialog" aria-label="Xem trước bản in">
+    <div className="app-viewport-fixed fixed inset-x-0 top-0 z-[60] flex flex-col overflow-hidden bg-slate-900/95" role="dialog" aria-label="Xem trước bản in">
       <div className="flex items-center gap-2 border-b border-slate-700 bg-slate-800 px-3 py-2 text-white">
         <FileSearch className="size-4" />
         <div className="text-sm font-medium">Xem trước PDF{title ? ` — ${title}` : ''}</div>

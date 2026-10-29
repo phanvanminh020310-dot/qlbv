@@ -193,7 +193,7 @@ export function NotificationToaster(): ReactElement {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-[90] flex w-[min(92vw,380px)] flex-col gap-2"
+      className="app-safe-bottom pointer-events-none fixed bottom-4 right-4 z-[90] flex w-[min(92vw,380px)] flex-col gap-2"
     >
       {toasts.map((toast) => {
         const style = LEVEL_STYLE[toast.level] ?? LEVEL_STYLE.INFO;

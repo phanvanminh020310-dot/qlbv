@@ -43,7 +43,7 @@ export function Dialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
+    <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
       <div
         className={cn(
           'my-4 w-full rounded-[var(--radius-card)] border bg-[var(--card)] shadow-xl',
@@ -68,7 +68,7 @@ export function Dialog({
             <X className="size-4" />
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto px-4 py-4">{children}</div>
+        <div className="max-h-[calc(var(--qlbs-viewport-height,100dvh)-12rem)] overflow-y-auto px-4 py-4">{children}</div>
         {footer ? <div className="flex justify-end gap-2 border-t px-4 py-3">{footer}</div> : null}
       </div>
     </div>

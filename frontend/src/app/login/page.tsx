@@ -34,7 +34,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-svh lg:grid-cols-2">
+    <div className="app-viewport-min app-safe-page grid lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between bg-[var(--primary)] p-10 text-white lg:flex">
         <div className="flex items-center gap-3">
           <div className="flex size-11 items-center justify-center rounded-2xl bg-white/15">

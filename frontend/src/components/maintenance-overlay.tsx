@@ -64,7 +64,7 @@ export function MaintenanceOverlay() {
   if (!info || (done && window.__qlbsRestoring)) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]" role="alertdialog" aria-live="assertive">
+    <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-[2px]" role="alertdialog" aria-live="assertive">
       <div className="w-full max-w-md rounded-[var(--radius-card)] border bg-[var(--card)] p-6 text-center shadow-2xl">
         <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <DatabaseBackup className="size-6" />
