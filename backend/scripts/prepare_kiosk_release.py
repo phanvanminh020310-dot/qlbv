@@ -13,8 +13,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 REQUIRED_FILES = {
-    "QLBS_Kiosk.exe", "QLBS_Kiosk.cs", "cai_dat_kiosk.bat", "go_bo_kiosk.bat",
-    "README.md", "HUONG_DAN_SU_DUNG.md", "KIEM_THU_V2.md", "BUILD_INFO.txt", "NOTICE.md",
+    "QLBS_Kiosk.exe", "QLBS_Kiosk.cs", "cai_dat_kiosk.bat", "cai_dat_kiosk.ps1", "tao_goi_cai_dat_kiosk.ps1", "go_bo_kiosk.bat",
+    "README.md", "HUONG_DAN_SU_DUNG.md", "GOI_CAI_DAT_NOI_BO.md", "KIEM_THU_V2.md", "BUILD_INFO.txt", "NOTICE.md",
 }
 MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
 
@@ -94,8 +94,8 @@ def prepare(source: Path, destination: Path, tag: str, sha: str, repository: str
 **Tải `QLBS_Kiosk_{version}.zip` ở mục Assets bên dưới, không chọn Source code (zip).**
 
 - Một `QLBS_Kiosk.exe`; không cần Edge/WebView/Agent phụ, không cần webcam PC.
-- ZIP có EXE Windows, source C# 5, đúng hai BAT cài/gỡ, hướng dẫn mới và SHA-256.
-- [Cài nhanh](https://github.com/{repository}/blob/main/deploy/windows/README.md) · [Hướng dẫn từng bước](https://github.com/{repository}/blob/main/deploy/windows/HUONG_DAN_SU_DUNG.md).
+- ZIP có EXE Windows, source C# 5, đúng hai BAT cài/gỡ, script PowerShell tạo gói một lần cho certificate tự ký, hướng dẫn mới và SHA-256.
+- [Cài nhanh](https://github.com/{repository}/blob/main/deploy/windows/README.md) · [Hướng dẫn từng bước](https://github.com/{repository}/blob/main/deploy/windows/HUONG_DAN_SU_DUNG.md) · [Gói nội bộ một lần](https://github.com/{repository}/blob/main/deploy/windows/GOI_CAI_DAT_NOI_BO.md).
 - Cập nhật VPS 1 bằng `sudo bash deploy/update.sh` trước khi cài máy trạm; đặt PIN IT riêng, dùng đúng URL web gốc và mã phòng.
 - PC và điện thoại phải truy cập cùng web QLBV; HTTPS tin cậy cần cho camera tự mở. Dùng camera điện thoại quét QR, không dùng webcam PC.
 - Thành công thì ẩn toàn bộ kiosk, trả Desktop, không tự mở HIS; hết ca + grace tự khoá lại.

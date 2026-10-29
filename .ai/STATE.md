@@ -112,6 +112,7 @@
 | 30 | **SQL Console quản trị**: trang `/quan-tri/truy-van-sql`, schema browser, SELECT/WITH/EXPLAIN read-only, INSERT/UPDATE/DELETE transactional (lý do + `THUC THI`, WHERE bắt buộc), xuất Excel/CSV/JSON; chỉ `ADMIN`/`SUPER_ADMIN`, timeout, chống nhiều lệnh/DDL/ghi audit-migration và audit `SQL_CONSOLE`; không migration, không hồi tố dữ liệu | `36eb44a` |
 | 31 | **SQL Console — lọc nhanh kết quả**: lọc tức thời, không phân biệt hoa/thường hoặc dấu tiếng Việt trong tối đa 1.000 dòng xem trước; hiển thị số dòng khớp/trạng thái rỗng, không gọi lại API, không đổi SQL, dữ liệu CSDL hoặc tệp xuất | `03513a9` |
 | 32 | **Ổn định bố cục iPhone sau đăng nhập**: app shell dùng viewport ổn định `svh`; chỉ vùng nội dung cuộn, header/footer giữ vị trí; chặn Safari tự đổi cỡ chữ gây nhảy bố cục và cuộn ngang; trang đăng nhập/trạng thái nạp cũng dùng `svh` | (commit này) |
+| 33 | **QLBS Kiosk 2.0.5 — gói cài một lần cho certificate tự ký**: CNTT tạo gói riêng chỉ chứa public certificate đã đối chiếu, URL/phòng và pin SHA-256; máy trạm chạy một BAT để kiểm tra hash/hạn/SAN, trust vào LocalMachine Root rồi preflight/cài Kiosk. Không tải certificate qua LAN, không chứa private key và không bỏ TLS validation | (commit này) |
 
 Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-label].json.gz` v2.
 

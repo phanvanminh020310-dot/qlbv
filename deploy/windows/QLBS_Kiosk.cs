@@ -27,8 +27,8 @@ using Net.Codecrete.QrCodeGenerator;
 [assembly: AssemblyDescription("Xác thực ca trực — Bệnh viện quân y 4")]
 [assembly: AssemblyCompany("Bệnh viện quân y 4")]
 [assembly: AssemblyProduct("QLBS Kiosk")]
-[assembly: AssemblyVersion("2.0.4.0")]
-[assembly: AssemblyFileVersion("2.0.4.0")]
+[assembly: AssemblyVersion("2.0.5.0")]
+[assembly: AssemblyFileVersion("2.0.5.0")]
 [assembly: AssemblyCopyright(QLBS.Kiosk.ThirdParty.Notice)]
 
 namespace QLBS.Kiosk
@@ -45,7 +45,7 @@ namespace QLBS.Kiosk
 
     internal static class Program
     {
-        internal const string Version = "2.0.4";
+        internal const string Version = "2.0.5";
         internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "QLBS Kiosk");
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QLBS", "Kiosk");
         internal static readonly string ConfigPath = Path.Combine(DataDirectory, "config.ini");
@@ -378,7 +378,9 @@ namespace QLBS.Kiosk
                     if (response != null && (int)response.StatusCode == 401) throw new InvalidOperationException("PIN không đúng hoặc chưa được cấu hình trên máy chủ.");
                     if (response != null) throw new InvalidOperationException("Máy chủ đang chưa sẵn sàng (HTTP " + (int)response.StatusCode + ").");
                 }
-                throw new InvalidOperationException("Chưa kết nối được máy chủ. Kiểm tra mạng nội bộ và chứng chỉ HTTPS.");
+                if (ex.Status == WebExceptionStatus.TrustFailure || ex.Status == WebExceptionStatus.SecureChannelFailure)
+                    throw new InvalidOperationException("Windows chưa tin chứng chỉ HTTPS của máy chủ. Dùng gói cài một lần do CNTT tạo; không bỏ qua kiểm tra SSL.");
+                throw new InvalidOperationException("Chưa kết nối được máy chủ. Kiểm tra mạng nội bộ, cổng HTTPS và chứng chỉ.");
             }
             finally { Complete(request); request.Abort(); }
         }

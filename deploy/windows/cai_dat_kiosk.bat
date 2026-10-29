@@ -1,8 +1,13 @@
 @echo off
 setlocal DisableDelayedExpansion
-title QLBS Kiosk 2 - Cai dat may tram phong kham
+title QLBS Kiosk - Cai dat may tram phong kham
 
-rem Exactly one native application. Prefer the release EXE; compile locally only if absent.
+rem Site-specific package: the reviewed public certificate, SHA-256 pin, origin and
+rem room are beside this BAT. It is trusted locally before native Kiosk preflight;
+rem this never weakens Windows TLS validation or downloads a certificate from LAN.
+if exist "%~dp0QLBS_Kiosk_Install.ini" goto SITE_PACKAGE
+
+rem Generic developer/release package. Prefer the release EXE; compile locally only if absent.
 rem GUI: double-click this BAT or QLBS_Kiosk.exe.
 rem Fleet: cai_dat_kiosk.bat /server https://qlbv.benhvien.vn /room PK01 /quiet /no-start
 set "KIOSK_EXE=%~dp0QLBS_Kiosk.exe"
@@ -43,4 +48,12 @@ exit /b %errorlevel%
 
 :GUI
 start "" /wait "%KIOSK_EXE%" /setup
+exit /b %errorlevel%
+
+:SITE_PACKAGE
+if not exist "%~dp0cai_dat_kiosk.ps1" (
+    echo [LOI] Goi cai dat noi bo bi thieu cai_dat_kiosk.ps1. Khong cai dat de tranh tin chung chi khong duoc kiem tra.
+    exit /b 1
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0cai_dat_kiosk.ps1"
 exit /b %errorlevel%

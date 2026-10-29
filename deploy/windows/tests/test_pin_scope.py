@@ -7,7 +7,8 @@ import re
 import unittest
 from pathlib import Path
 
-SOURCE = Path(__file__).resolve().parents[1] / "QLBS_Kiosk.cs"
+WINDOWS_DIR = Path(__file__).resolve().parents[1]
+SOURCE = WINDOWS_DIR / "QLBS_Kiosk.cs"
 
 
 def class_block(text, name):
@@ -30,8 +31,8 @@ class NativeKioskPolicyTests(unittest.TestCase):
         cls.source = SOURCE.read_text(encoding="utf-8-sig")
 
     def test_version_and_all_account_runtime_policy_are_explicit(self):
-        self.assertIn('[assembly: AssemblyVersion("2.0.4.0")]', self.source)
-        self.assertIn('internal const string Version = "2.0.4";', self.source)
+        self.assertIn('[assembly: AssemblyVersion("2.0.5.0")]', self.source)
+        self.assertIn('internal const string Version = "2.0.5";', self.source)
         program = class_block(self.source, "Program")
         self.assertIn("including local/domain Administrators and UAC-filtered tokens", program)
         self.assertIn("no account-based runtime bypass", program)
@@ -67,6 +68,22 @@ class NativeKioskPolicyTests(unittest.TestCase):
         self.assertIn('"kioskRequired\\":true', selftest)
         self.assertIn("no active shift releases desktop", selftest)
         self.assertIn("offline releases desktop", selftest)
+
+    def test_site_bundle_installer_pins_a_reviewed_public_certificate(self):
+        bat = (WINDOWS_DIR / "cai_dat_kiosk.bat").read_text(encoding="utf-8-sig")
+        installer = (WINDOWS_DIR / "cai_dat_kiosk.ps1").read_text(encoding="utf-8-sig")
+        generator = (WINDOWS_DIR / "tao_goi_cai_dat_kiosk.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn('QLBS_Kiosk_Install.ini', bat)
+        self.assertIn('certificate_sha256', installer)
+        self.assertIn("X509Store('Root', 'LocalMachine')", installer)
+        self.assertIn("TrustFailure", self.source)
+        self.assertIn("SecureChannelFailure", self.source)
+        self.assertIn('never downloads or accepts a certificate from the network', installer)
+        self.assertNotIn('WebRequest', installer)
+        self.assertNotIn('Invoke-WebRequest', installer)
+        self.assertIn('QLBS_Server_Trust.cer', generator)
+        self.assertIn('does not contain a private key', generator)
+        self.assertIn('certificateData.HasPrivateKey', generator)
 
 
 if __name__ == "__main__":
