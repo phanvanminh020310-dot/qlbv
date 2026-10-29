@@ -281,7 +281,7 @@ export class DutyService {
     }
   }
 
-  /** Sao chép các ô trực (và phân công) từ kỳ nguồn sang kỳ đích */
+  /** Sao chép các ca khám (và phân công) từ kỳ nguồn sang kỳ đích */
   private async copyPeriodSlots(
     tx: Executor,
     actorUserId: number,
@@ -396,7 +396,7 @@ export class DutyService {
     return { copiedSlots, copiedAssignments };
   }
 
-  /** Tự động sinh ô trực chuẩn từ danh mục cho toàn bộ phòng và ca đang mở */
+  /** Tự động sinh ca khám chuẩn từ danh mục cho toàn bộ phòng và ca đang mở */
   private async autoGenerateStandardSlots(
     tx: Executor,
     actorUserId: number,
@@ -516,7 +516,7 @@ export class DutyService {
   /**
    * Nhân bản trực tiếp một kỳ lịch sang tuần mới:
    * Tự động tính khoảng ngày tuần tiếp theo (hoặc nhận ngày chỉ định),
-   * sao chép cấu trúc ô trực và tuỳ chọn sao chép cả người trực.
+   * sao chép cấu trúc ca khám và tuỳ chọn sao chép cả bác sĩ khám.
    */
   async clonePeriod(user: AccessContext, sourcePeriodId: number, dto: ClonePeriodDto) {
     const source = await this.core.getPeriod(sourcePeriodId);
@@ -606,7 +606,7 @@ export class DutyService {
         .select({ n: sql<number>`count(*)::int` })
         .from(dutySlots)
         .where(and(eq(dutySlots.periodId, id), or(lte(dutySlots.dutyDate, addDays(startDate, -1)), gte(dutySlots.dutyDate, addDays(endDate, 1)))));
-      if (n > 0) throw new ConflictException(`Còn ${n} ô trực nằm ngoài khoảng ngày mới — xoá các ô đó trước`);
+      if (n > 0) throw new ConflictException(`Còn ${n} ca khám nằm ngoài khoảng ngày mới — xoá các ca khám đó trước`);
     }
     const lockAt = dto.lockAt !== undefined ? parseInstant(dto.lockAt, 'Thời điểm chốt lịch') : p.lockAt;
     const opens =
@@ -642,7 +642,7 @@ export class DutyService {
   }
 
   /**
-   * Xoá cả kỳ lịch. Chặn khi đã có ca trực đã diễn ra hoặc đang diễn ra (giữ dữ liệu đối soát giờ).
+   * Xoá cả kỳ lịch. Chặn khi đã có ca khám đã diễn ra hoặc đang diễn ra (giữ dữ liệu đối soát giờ).
    * Bắt buộc lý do và gõ lại đúng tên kỳ. Nhật ký được giữ (mã kỳ về NULL, nội dung nằm trong detail).
    * Sau khi xoá thành công: nhân viên đã được xếp và người đang có yêu cầu nhường/đổi được thông báo.
    */
@@ -661,7 +661,7 @@ export class DutyService {
     const past = duties.filter((d) => d.dutyDate <= today).length;
     if (past > 0) {
       throw new ConflictException(
-        `Kỳ lịch đã có ${past} ca trực đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ trực. Hãy sửa từng ô thay vì xoá cả kỳ.`,
+        `Kỳ lịch đã có ${past} ca khám đã diễn ra hoặc đang diễn ra — không xoá để giữ dữ liệu đối soát giờ khám. Hãy sửa từng ca khám thay vì xoá cả kỳ.`,
       );
     }
     const [{ slotCount }] = await this.db.db
@@ -678,7 +678,7 @@ export class DutyService {
       cur.n += 1;
       perUser.set(d.userId, cur);
     }
-    const reason = dto.reason?.trim() || 'Xoá kỳ lịch trực';
+    const reason = dto.reason?.trim() || 'Xoá kỳ lịch khám';
     await this.db.transaction(async (tx) => {
       await this.core.log(tx, {
         periodId: id,
@@ -701,8 +701,8 @@ export class DutyService {
     if (p.status !== 'NHAP') {
       for (const [userId, { n }] of perUser) {
         this.core.notifyAfterCommit([userId], {
-          title: 'Kỳ lịch trực đã bị huỷ',
-          body: `${p.name} (${fmtDm(p.startDate)} – ${fmtDm(p.endDate)}) đã bị xoá: bạn mất ${n} ca trực. Lý do: ${reason}`,
+          title: 'Kỳ lịch khám đã bị huỷ',
+          body: `${p.name} (${fmtDm(p.startDate)} – ${fmtDm(p.endDate)}) đã bị xoá: bạn mất ${n} ca khám. Lý do: ${reason}`,
           level: 'WARNING',
           link: '/lich-truc/cua-toi',
           module: 'DUTY',
@@ -717,7 +717,7 @@ export class DutyService {
         ),
       ];
       this.core.notifyAfterCommit(others, {
-        title: 'Yêu cầu đổi trực đã bị huỷ',
+        title: 'Yêu cầu đổi lịch khám đã bị huỷ',
         body: `${p.name} đã bị xoá nên các yêu cầu nhường/đổi ca đang chờ không còn hiệu lực.`,
         level: 'INFO',
         link: '/lich-truc/yeu-cau',
@@ -729,12 +729,12 @@ export class DutyService {
     return { ok: true, notified: perUser.size };
   }
 
-  /** Công bố: NHAP → CONG_BO. Kiểm tra đủ người (nếu cấu hình bắt buộc) rồi báo cho từng người trực. */
+  /** Công bố: NHAP → CONG_BO. Kiểm tra đủ người (nếu cấu hình bắt buộc) rồi báo cho từng bác sĩ khám. */
   async publishPeriod(user: AccessContext, id: number, force: boolean) {
     const p = await this.core.getPeriod(id);
     if (p.status !== 'NHAP') throw new ConflictException('Kỳ lịch này đã được công bố');
     const rows = await this.core.loadSlots(this.db.db, eq(dutySlots.periodId, id));
-    if (!rows.length) throw new ConflictException('Kỳ lịch chưa có ô trực nào — hãy tạo ô trước khi công bố');
+    if (!rows.length) throw new ConflictException('Kỳ lịch chưa có ca khám nào — hãy tạo ca khám trước khi công bố');
     const missing = rows.filter((r) => Number(r.filled) < r.requiredCount);
     const rules = p.rules ?? DEFAULT_DUTY_RULES;
     if (missing.length && rules.requireFullBeforePublish && !force) {
@@ -742,7 +742,7 @@ export class DutyService {
         .slice(0, 5)
         .map((r) => `${fmtDm(r.dutyDate)} ${r.roomCode} ${r.shiftCode} (${r.filled}/${r.requiredCount})`)
         .join('; ');
-      throw new ConflictException(`Còn ${missing.length} ô thiếu người: ${sample}${missing.length > 5 ? '…' : ''}. Bổ sung người hoặc công bố có ghi nhận.`);
+      throw new ConflictException(`Còn ${missing.length} vị trí thiếu bác sĩ: ${sample}${missing.length > 5 ? '…' : ''}. Bổ sung bác sĩ hoặc công bố có ghi nhận.`);
     }
     const assigned = await this.db.db
       .select({ userId: dutyAssignments.userId })
@@ -761,14 +761,14 @@ export class DutyService {
         periodId: id,
         action: 'PUBLISH',
         actorId: user.id,
-        reason: missing.length && force ? 'Công bố có ghi nhận ô thiếu người' : '',
+        reason: missing.length && force ? 'Công bố có ghi nhận vị trí thiếu bác sĩ' : '',
         detail: { slots: rows.length, missing: missing.length, forced: force && missing.length > 0 },
       });
     });
     for (const [userId, n] of perUser) {
       this.core.notifyAfterCommit([userId], {
-        title: 'Đã công bố lịch trực',
-        body: `${p.name}: bạn có ${n} ca trực. Mở mục Lịch của tôi để xem chi tiết.`,
+        title: 'Đã công bố lịch khám',
+        body: `${p.name}: bạn có ${n} ca khám. Mở mục Lịch của tôi để xem chi tiết.`,
         level: 'INFO',
         link: '/lich-truc/cua-toi',
         module: 'DUTY',
@@ -816,16 +816,16 @@ export class DutyService {
     return { ok: true };
   }
 
-  /* ================================================================ Ô trực */
+  /* ================================================================ Ca khám */
 
   private async roomsByIds(ids: number[]) {
     return this.db.db.select().from(dutyRooms).where(inArray(dutyRooms.id, ids));
   }
 
-  /** Tạo hàng loạt ô: ngày (theo thứ) × phòng × ca × vai trò, bỏ qua ngày nghỉ và ô đã có */
+  /** Tạo hàng loạt ô: ngày (theo thứ) × phòng × ca × vai trò, bỏ qua ngày nghỉ và ca khám đã có */
   async generateSlots(user: AccessContext, periodId: number, dto: GenerateSlotsDto) {
     const p = await this.core.getPeriod(periodId);
-    if (this.core.phaseOf(p).locked) throw new ConflictException('Kỳ lịch đã chốt — không thể thêm ô trực');
+    if (this.core.phaseOf(p).locked) throw new ConflictException('Kỳ lịch đã chốt — không thể thêm ca khám');
     const roomIds = [...new Set(dto.roomIds)];
     const shiftIds = [...new Set(dto.shiftIds)];
     const roleIds = [...new Set(dto.roleIds)];
@@ -833,14 +833,14 @@ export class DutyService {
 
     const rooms = await this.roomsByIds(roomIds);
     if (rooms.length !== roomIds.length) throw new NotFoundException('Có phòng khám không tồn tại');
-    this.core.ensureManageSchedule(user, 'Sinh ô trực');
+    this.core.ensureManageSchedule(user, 'Sinh ca khám');
     for (const r of rooms) {
       if (!r.active) throw new BadRequestException(`Phòng ${r.code} đang tắt — bật lại trong danh mục trước`);
     }
     const shifts = await this.db.db.select().from(dutyShiftTypes).where(inArray(dutyShiftTypes.id, shiftIds));
-    if (shifts.length !== shiftIds.length || shifts.some((s) => !s.active)) throw new BadRequestException('Ca trực không tồn tại hoặc đang tắt');
+    if (shifts.length !== shiftIds.length || shifts.some((s) => !s.active)) throw new BadRequestException('Ca khám không tồn tại hoặc đang tắt');
     const roles = await this.db.db.select().from(dutyRoles).where(inArray(dutyRoles.id, roleIds));
-    if (roles.length !== roleIds.length || roles.some((r) => !r.active)) throw new BadRequestException('Vai trò trực không tồn tại hoặc đang tắt');
+    if (roles.length !== roleIds.length || roles.some((r) => !r.active)) throw new BadRequestException('Vai trò khám không tồn tại hoặc đang tắt');
 
     const closed = new Set(
       (
@@ -854,7 +854,7 @@ export class DutyService {
       (d) => weekdays.includes(isoWeekday(d)) && !(dto.skipClosedDays !== false && closed.has(d)),
     );
     const total = days.length * rooms.length * shifts.length * roles.length;
-    if (total > 4000) throw new BadRequestException(`Lần tạo này sinh ${total} ô (tối đa 4000) — hãy chia nhỏ phạm vi`);
+    if (total > 4000) throw new BadRequestException(`Lần tạo này sinh ${total} ca khám (tối đa 4000) — hãy chia nhỏ phạm vi`);
     const values: Array<typeof dutySlots.$inferInsert> = [];
     for (const d of days) {
       for (const r of rooms) {
@@ -882,11 +882,11 @@ export class DutyService {
 
   async createSlot(user: AccessContext, periodId: number, dto: SlotDto) {
     const p = await this.core.getPeriod(periodId);
-    if (this.core.phaseOf(p).locked) throw new ConflictException('Kỳ lịch đã chốt — không thể thêm ô trực');
-    if (dto.dutyDate < p.startDate || dto.dutyDate > p.endDate) throw new BadRequestException('Ngày trực nằm ngoài kỳ lịch');
+    if (this.core.phaseOf(p).locked) throw new ConflictException('Kỳ lịch đã chốt — không thể thêm ca khám');
+    if (dto.dutyDate < p.startDate || dto.dutyDate > p.endDate) throw new BadRequestException('Ngày khám nằm ngoài kỳ lịch');
     const [room] = await this.roomsByIds([dto.roomId]);
     if (!room) throw new NotFoundException('Không tìm thấy phòng khám');
-    this.core.ensureManageSchedule(user, `Tạo ô trực cho phòng ${room.code}`);
+    this.core.ensureManageSchedule(user, `Tạo ca khám cho phòng ${room.code}`);
     const [dup] = await this.db.db
       .select({ id: dutySlots.id })
       .from(dutySlots)
@@ -900,7 +900,7 @@ export class DutyService {
         ),
       )
       .limit(1);
-    if (dup) throw new ConflictException('Ô trực này đã tồn tại');
+    if (dup) throw new ConflictException('Ca khám này đã tồn tại');
     const [row] = await this.db.db
       .insert(dutySlots)
       .values({ periodId, dutyDate: dto.dutyDate, roomId: dto.roomId, shiftId: dto.shiftId, roleId: dto.roleId, requiredCount: dto.requiredCount ?? 1, note: dto.note ?? '' })
@@ -912,8 +912,8 @@ export class DutyService {
 
   async updateSlot(user: AccessContext, slotId: number, dto: UpdateSlotDto) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageSchedule(user, `Sửa ô trực phòng ${s.roomCode}`);
-    if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không sửa ô trực');
+    this.core.ensureManageSchedule(user, `Sửa ca khám phòng ${s.roomCode}`);
+    if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không sửa ca khám');
     // requiredCount là chỉ tiêu, không phải sức chứa: có thể hạ chỉ tiêu xuống
     // dưới số người đã phân công mà không gỡ hay làm thay đổi bất kỳ ai.
     await this.db.db
@@ -927,13 +927,13 @@ export class DutyService {
 
   async deleteSlot(user: AccessContext, slotId: number, dto: ForceDto) {
     const s = await this.core.getSlot(slotId);
-    this.core.ensureManageSchedule(user, `Xoá ô trực phòng ${s.roomCode}`);
-    if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không xoá ô trực');
+    this.core.ensureManageSchedule(user, `Xoá ca khám phòng ${s.roomCode}`);
+    if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) throw new ConflictException('Kỳ lịch đã chốt — không xoá ca khám');
     const people = await this.assignmentsOfSlots([slotId]);
     if (people.length && !dto.force) {
-      throw new ConflictException(`Ô đang có ${people.length} người trực. Gỡ phân công trước, hoặc xoá kèm lý do`);
+      throw new ConflictException(`Ô đang có ${people.length} bác sĩ khám. Gỡ phân công trước, hoặc xoá kèm lý do`);
     }
-    if (people.length && !dto.reason?.trim()) throw new BadRequestException('Vui lòng ghi lý do xoá ô đang có người trực');
+    if (people.length && !dto.reason?.trim()) throw new BadRequestException('Vui lòng ghi lý do xoá ca khám đang có bác sĩ');
     await this.db.db.transaction(async (tx) => {
       await tx.delete(dutySlots).where(eq(dutySlots.id, slotId));
       await this.core.log(tx, {
@@ -948,7 +948,7 @@ export class DutyService {
     if (people.length && s.periodStatus !== 'NHAP') {
       for (const p of people) {
         this.core.notifyAfterCommit([p.userId], {
-          title: 'Ca trực đã bị huỷ',
+          title: 'Ca khám đã bị huỷ',
           body: `Ca ${s.shiftCode} · ${s.roomCode} ngày ${fmtDate(s.dutyDate)} đã được huỷ khỏi lịch.`,
           level: 'WARNING',
           link: '/lich-truc/cua-toi',
@@ -961,7 +961,7 @@ export class DutyService {
     return { ok: true };
   }
 
-  /** Người đang trực trong các ô (kèm tên, chức danh, khoa) */
+  /** Người đang trong ca khám trong các ca khám (kèm tên, chức danh, khoa) */
   async assignmentsOfSlots(slotIds: number[]) {
     if (!slotIds.length) return [];
     return this.db
@@ -1029,7 +1029,7 @@ export class DutyService {
     const s = await this.core.getSlot(slotId);
     this.core.ensureManageSchedule(user, `Xếp người cho phòng ${s.roomCode}`);
     const { locked } = this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt });
-    if (locked) throw new ConflictException('Kỳ lịch đã chốt — chỉ đổi người trực qua mục Đổi trực khẩn (KHTH)');
+    if (locked) throw new ConflictException('Kỳ lịch đã chốt — chỉ đổi bác sĩ khám qua mục Đổi lịch khám khẩn (KHTH)');
     if (dto.force) {
       if (!this.core.isAll(user)) throw new ForbiddenException('Chỉ điều phối toàn viện mới được bỏ qua ràng buộc');
       if (!dto.reason || dto.reason.trim().length < 5) throw new BadRequestException('Bỏ qua ràng buộc phải ghi lý do (tối thiểu 5 ký tự)');
@@ -1076,7 +1076,7 @@ export class DutyService {
     });
     if (s.periodStatus !== 'NHAP') {
       this.core.notifyAfterCommit([dto.userId], {
-        title: 'Bạn được xếp lịch trực',
+        title: 'Bạn được xếp lịch khám',
         body: `${DAY_LABEL[isoWeekday(s.dutyDate)]} ${fmtDate(s.dutyDate)} · ${s.roomCode} · ${s.shiftCode} (${s.roleName})`,
         level: 'INFO',
         link: '/lich-truc/cua-toi',
@@ -1092,12 +1092,12 @@ export class DutyService {
     const [a] = await this.db.db.select().from(dutyAssignments).where(eq(dutyAssignments.id, assignmentId)).limit(1);
     if (!a) throw new NotFoundException('Không tìm thấy phân công');
     const s = await this.core.getSlot(a.slotId);
-    this.core.ensureManageSchedule(user, `Gỡ người trực tại phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Gỡ bác sĩ khám tại phòng ${s.roomCode}`);
     const assignedUser = (await this.core.loadUsers(this.db.db, [a.userId])).get(a.userId);
     if (!assignedUser) throw new NotFoundException('Không tìm thấy nhân viên được phân công');
     this.core.ensureManageDept(user, assignedUser.departmentId, `Nhân viên ${assignedUser.fullName}`);
     if (this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt }).locked) {
-      throw new ConflictException('Kỳ lịch đã chốt — chỉ gỡ người trực qua mục Đổi trực khẩn (KHTH)');
+      throw new ConflictException('Kỳ lịch đã chốt — chỉ gỡ bác sĩ khám qua mục Đổi lịch khám khẩn (KHTH)');
     }
     await this.db.db.transaction(async (tx) => {
       await tx.delete(dutyAssignments).where(eq(dutyAssignments.id, assignmentId));
@@ -1113,7 +1113,7 @@ export class DutyService {
     });
     if (s.periodStatus !== 'NHAP') {
       this.core.notifyAfterCommit([a.userId], {
-        title: 'Bạn được gỡ khỏi ca trực',
+        title: 'Bạn được gỡ khỏi ca khám',
         body: `${fmtDate(s.dutyDate)} · ${s.roomCode} · ${s.shiftCode}${reason ? ` — ${reason}` : ''}`,
         level: 'WARNING',
         link: '/lich-truc/cua-toi',
@@ -1185,7 +1185,7 @@ export class DutyService {
     return { ok: true };
   }
 
-  /** Các ô của kỳ kèm kết quả kiểm tra cho chính người dùng (để hiển thị "có thể đăng ký" hay lý do) */
+  /** Các ca khám của kỳ kèm kết quả kiểm tra cho chính người dùng (để hiển thị "có thể đăng ký" hay lý do) */
   async myOptions(user: AccessContext, periodId: number) {
     const p = await this.getPeriodView(user, periodId);
     const rows = await this.core.loadSlots(this.db.db, eq(dutySlots.periodId, periodId));
@@ -1220,14 +1220,14 @@ export class DutyService {
     // Phòng khám là tài nguyên dùng chung: người xếp lịch khoa nhìn và thao tác
     // được với mọi phòng. Danh sách nhân viên vẫn bị giới hạn nghiêm ngặt theo
     // khoa/phạm vi người xếp lịch để không thể xếp nhân sự khoa khác.
-    this.core.ensureManageSchedule(user, `Chọn người trực cho phòng ${s.roomCode}`);
+    this.core.ensureManageSchedule(user, `Chọn bác sĩ khám cho phòng ${s.roomCode}`);
     const conds: SQL[] = [eq(users.active, true), isNull(users.deletedAt)];
     const isDepartmentScheduler = this.core.isDepartmentScheduler(user);
     if (isDepartmentScheduler || !this.core.isAll(user)) {
       const departmentIds = this.core.scopeDeptIds(user);
       if (!departmentIds.length) {
         throw new ForbiddenException(
-          'Tài khoản xếp lịch chưa được gán phạm vi khoa. Liên hệ quản trị để gán khoa trước khi chọn người trực.',
+          'Tài khoản xếp lịch chưa được gán phạm vi khoa. Liên hệ quản trị để gán khoa trước khi chọn bác sĩ khám.',
         );
       }
       conds.push(inArray(users.departmentId, departmentIds));
@@ -1287,12 +1287,12 @@ export class DutyService {
   /**
    * Bảng quan sát ca đang diễn ra. Chỉ dùng lịch đã công bố/chốt và cùng hàm
    * shiftInterval với Kiosk, vì vậy không thể biến ca sắp tới hay ca đã hết
-   * thành trạng thái "đang trực". Dữ liệu điểm danh được lấy từ bản ghi AI
+   * thành trạng thái "đang trong ca khám". Dữ liệu điểm danh được lấy từ bản ghi AI
    * đã lưu, không dựa vào trạng thái RAM của một máy trạm.
    */
   async liveMonitor(user: AccessContext) {
     if (!this.core.canManageAny(user)) {
-      throw new ForbiddenException('Bạn chưa có quyền theo dõi xác thực ca trực.');
+      throw new ForbiddenException('Bạn chưa có quyền theo dõi xác thực ca khám.');
     }
 
     // Vai trò điều phối khoa/data-scope DEPT phải luôn bị giới hạn, kể cả khi
@@ -1303,7 +1303,7 @@ export class DutyService {
     const departmentIds = this.core.scopeDeptIds(user);
     if (!canSeeAll && !departmentIds.length) {
       throw new ForbiddenException(
-        'Tài khoản chưa được gán phạm vi khoa để theo dõi xác thực ca trực. Vui lòng liên hệ quản trị viên.',
+        'Tài khoản chưa được gán phạm vi khoa để theo dõi xác thực ca khám. Vui lòng liên hệ quản trị viên.',
       );
     }
 
@@ -1497,7 +1497,7 @@ export class DutyService {
 
   /* ================================================================ Lưới lịch */
 
-  /** Toàn bộ dữ liệu một kỳ cho màn hình lịch: phòng, ca, vai trò, ngày, ô, người trực, ngày nghỉ */
+  /** Toàn bộ dữ liệu một kỳ cho màn hình lịch: phòng, ca, vai trò, ngày, ô, bác sĩ khám, ngày nghỉ */
   async grid(user: AccessContext, periodId: number) {
     const p = await this.getPeriodView(user, periodId);
     const { locked, phase } = this.core.phaseOf(p);
@@ -1588,7 +1588,7 @@ export class DutyService {
     return this.absenceWorkflow.list(user, q);
   }
 
-  /** Ca trực của người này bị ảnh hưởng bởi khoảng nghỉ (từ hôm nay trở đi) */
+  /** Ca khám của người này bị ảnh hưởng bởi khoảng nghỉ (từ hôm nay trở đi) */
   async affectedByAbsence(userId: number, startDate: string, endDate: string) {
     const from = startDate > bangkokToday() ? startDate : bangkokToday();
     if (from > endDate) return [];
@@ -1674,7 +1674,7 @@ export class DutyService {
   /* ================================================================ Tổng hợp & xuất */
 
   async summary(user: AccessContext, periodId: number) {
-    if (!this.core.canManageAny(user)) throw new ForbiddenException('Chỉ người quản lý lịch mới xem được tổng hợp giờ trực');
+    if (!this.core.canManageAny(user)) throw new ForbiddenException('Chỉ người quản lý lịch mới xem được tổng hợp giờ khám');
     await this.getPeriodView(user, periodId);
     const rows = await this.db.db
       .select({
@@ -1723,12 +1723,12 @@ export class DutyService {
   async exportWorkbook(user: AccessContext, periodId: number): Promise<{ buffer: Buffer; fileName: string }> {
     const g = await this.grid(user, periodId);
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'QLBS — Lịch trực';
+    wb.creator = 'QLBS — Lịch bác sĩ khám';
     wb.created = new Date();
-    const ws = wb.addWorksheet('Lịch trực', { views: [{ state: 'frozen', xSplit: 1, ySplit: 2 }] });
+    const ws = wb.addWorksheet('Lịch khám', { views: [{ state: 'frozen', xSplit: 1, ySplit: 2 }] });
     const dayCols = g.days;
     ws.columns = [{ header: 'Phòng khám', key: 'room', width: 16 }, ...dayCols.map((d, i) => ({ header: `${d.label}\n${fmtDm(d.date)}`, key: `d${i}`, width: 26 }))];
-    ws.getRow(1).values = [`LỊCH TRỰC — ${g.period.name}`];
+    ws.getRow(1).values = [`LỊCH BÁC SĨ KHÁM — ${g.period.name}`];
     ws.mergeCells(1, 1, 1, dayCols.length + 1);
     ws.getRow(1).font = { bold: true, size: 14 };
     ws.getRow(1).alignment = { horizontal: 'center' };
@@ -1744,7 +1744,7 @@ export class DutyService {
       for (const d of dayCols) {
         const lines: string[] = [];
         for (const s of g.slots.filter((x) => x.roomId === room.id && x.dutyDate === d.date).sort((a, b) => a.start - b.start)) {
-          const names = s.assignments.map((a) => a.fullName).join(', ') || '— chưa có người —';
+          const names = s.assignments.map((a) => a.fullName).join(', ') || '— chưa xếp bác sĩ —';
           lines.push(`${s.shiftCode}: ${names}`);
         }
         maxLines = Math.max(maxLines, lines.length);
@@ -1760,20 +1760,20 @@ export class DutyService {
         if (col > 1 && dayCols[col - 2]?.closed) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
       });
     }
-    const s2 = wb.addWorksheet('Tổng hợp giờ trực');
+    const s2 = wb.addWorksheet('Tổng hợp giờ khám');
     s2.columns = [
       { header: 'Họ và tên', key: 'fullName', width: 28 },
       { header: 'Chức danh', key: 'title', width: 18 },
       { header: 'Khoa', key: 'departmentName', width: 24 },
       { header: 'Số ca', key: 'shifts', width: 10 },
       { header: 'Ca đêm', key: 'nights', width: 10 },
-      { header: 'Số ngày trực', key: 'days', width: 14 },
+      { header: 'Số ngày khám', key: 'days', width: 14 },
       { header: 'Tổng giờ', key: 'hours', width: 12 },
     ];
     const sum = await this.summary(user, periodId);
     s2.addRows(sum.items);
     s2.getRow(1).font = { bold: true };
-    const fileName = `lich-truc-${g.period.startDate}_${g.period.endDate}.xlsx`;
+    const fileName = `lich-kham-${g.period.startDate}_${g.period.endDate}.xlsx`;
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     await this.core.log(this.db.db, { periodId, action: 'EXPORT', actorId: user.id, detail: { fileName } });
     return { buffer, fileName };

@@ -175,15 +175,15 @@ export default function TheoDoiXacThucPage() {
   }), [monitor.data?.rooms, search, status]);
 
   if (!canMonitor) {
-    return <EmptyState title="Bạn chưa có quyền theo dõi xác thực ca trực" description="Trang này dành cho người được phân công quản lý hoặc điều phối lịch trực." />;
+    return <EmptyState title="Bạn chưa có quyền theo dõi xác thực ca khám" description="Trang này dành cho người được phân công quản lý hoặc điều phối lịch khám." />;
   }
 
   const summary = monitor.data?.summary;
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Theo dõi xác thực ca trực"
-        description="Quan sát các phòng đang trong ca. Mở khẩn cấp IT được ghi riêng, không bao giờ thay thế xác thực khuôn mặt."
+        title="Theo dõi xác thực ca khám"
+        description="Quan sát các phòng đang trong ca khám. Mở khẩn cấp IT được ghi riêng, không bao giờ thay thế xác thực khuôn mặt."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <RealtimeDot className="rounded-full border bg-[var(--card)] px-2.5 py-1.5 shadow-sm" />
@@ -230,7 +230,7 @@ export default function TheoDoiXacThucPage() {
       ) : monitor.data?.rooms.length ? (
         <EmptyState title="Không có phòng khớp bộ lọc" description="Thử đổi từ khoá tìm kiếm hoặc trạng thái theo dõi." />
       ) : (
-        <EmptyState title="Hiện không có ca trực nào đang diễn ra" description="Chỉ các ô trực đã công bố hoặc chốt và đang trong đúng khung giờ mới xuất hiện tại đây." />
+        <EmptyState title="Hiện không có ca khám nào đang diễn ra" description="Chỉ các ca khám đã công bố hoặc chốt và đang trong đúng khung giờ mới xuất hiện tại đây." />
       )}
     </div>
   );

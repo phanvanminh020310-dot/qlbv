@@ -1,8 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Lock, PencilLine, Send } from "lucide-react";
-import type { ReactNode } from "react";
+import { AlertTriangle, Check, ChevronDown, Lock, PencilLine, Search, Send } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Dialog } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ApiRequestError } from "@/lib/api";
 import {
   DUTY_KEYS,
@@ -16,7 +18,7 @@ import {
   type RequestStatus,
 } from "@/lib/duty";
 import { Badge } from "@/components/ui/card";
-import { Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 
 /** Thông báo lỗi thân thiện từ API */
 export function errorText(e: unknown): string {
@@ -66,21 +68,21 @@ export function PhaseBanner({ period, canManage }: { period: DutyPeriod; canMana
           icon: <PencilLine className="mt-0.5 h-4.5 w-4.5 shrink-0" />,
           title: "Bản nháp — chưa công bố",
           text: canManage
-            ? "Hoàn tất phân công rồi công bố để nhân viên xem và đăng ký ca."
-            : "Lịch đang được lập, sẽ được công bố sớm.",
+            ? "Hoàn tất xếp bác sĩ rồi công bố để nhân viên xem và đăng ký ca khám."
+            : "Lịch khám đang được lập, sẽ được công bố sớm.",
         }
       : period.phase === "MO"
         ? {
             cls: "border-teal-200 bg-teal-50 text-teal-900 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100",
             icon: <Send className="mt-0.5 h-4.5 w-4.5 shrink-0" />,
             title: "Đã công bố — còn có thể điều chỉnh",
-            text: `Chốt lịch lúc ${fmtDateTime(period.lockAt)}. Sau mốc này, đổi trực phải qua yêu cầu ngoại lệ gửi KHTH.`,
+            text: `Chốt lịch khám lúc ${fmtDateTime(period.lockAt)}. Sau mốc này, đổi lịch khám phải qua yêu cầu ngoại lệ gửi KHTH.`,
           }
         : {
             cls: "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100",
             icon: <Lock className="mt-0.5 h-4.5 w-4.5 shrink-0" />,
-            title: "Lịch đã chốt",
-            text: `Chốt lúc ${fmtDateTime(period.lockedAt ?? period.lockAt)}. Cần đổi trực: gửi yêu cầu ngoại lệ tới KHTH (có thể đánh dấu khẩn).`,
+            title: "Lịch khám đã chốt",
+            text: `Chốt lúc ${fmtDateTime(period.lockedAt ?? period.lockAt)}. Cần đổi bác sĩ khám: gửi yêu cầu ngoại lệ tới KHTH (có thể đánh dấu khẩn).`,
           };
   return (
     <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${cfg.cls}`} role="status">
@@ -93,12 +95,15 @@ export function PhaseBanner({ period, canManage }: { period: DutyPeriod; canMana
   );
 }
 
-/** Ô chọn nhân viên từ danh bạ (nguồn: /duty/staff) */
+/**
+ * Chọn bác sĩ từ danh bạ bằng tìm kiếm thay vì native dropdown. Danh sách vẫn
+ * gọn và nhanh khi bệnh viện có hàng trăm bác sĩ/nhân viên.
+ */
 export function StaffSelect({
   value,
   onChange,
   exclude = [],
-  placeholder = "— Chọn nhân viên —",
+  placeholder = "— Chọn bác sĩ —",
   id,
   disabled,
 }: {
@@ -114,24 +119,84 @@ export function StaffSelect({
     queryFn: () => dutyApi.staff(),
     staleTime: 60_000,
   });
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = data.find((person) => person.id === value) ?? null;
+  const people = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("vi");
+    return data
+      .filter((person) => !exclude.includes(person.id))
+      .filter((person) => !needle || `${person.fullName} ${person.title} ${person.departmentName}`.toLocaleLowerCase("vi").includes(needle))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"));
+  }, [data, exclude, query]);
+
   return (
-    <Select
-      id={id}
-      disabled={disabled}
-      value={value ? String(value) : ""}
-      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-    >
-      <option value="">{placeholder}</option>
-      {data
-        .filter((u) => !exclude.includes(u.id))
-        .map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.fullName}
-            {u.title ? ` — ${u.title}` : ""}
-            {u.departmentName ? ` (${u.departmentName})` : ""}
-          </option>
-        ))}
-    </Select>
+    <>
+      <button
+        id={id}
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setQuery("");
+          setOpen(true);
+        }}
+        className="flex h-9.5 w-full items-center gap-2 rounded-lg border bg-[var(--card)] px-3 py-1 text-left text-sm shadow-sm transition-colors hover:border-[var(--primary)] hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
+        aria-haspopup="dialog"
+      >
+        <span className={`min-w-0 flex-1 truncate ${selected ? "" : "text-[var(--muted-foreground)]"}`}>
+          {selected ? `${selected.fullName}${selected.title ? ` — ${selected.title}` : ""}` : placeholder}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-[var(--muted-foreground)]" />
+      </button>
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        size="md"
+        title="Chọn bác sĩ"
+        description="Gõ tên, chức danh hoặc khoa để tìm nhanh trong toàn bộ danh bạ được phép xếp."
+      >
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-[var(--muted-foreground)]" />
+            <Input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Tìm bác sĩ hoặc khoa..."
+              className="pl-8"
+            />
+          </div>
+          <div className="max-h-[min(52vh,28rem)] divide-y overflow-y-auto rounded-xl border">
+            {people.map((person) => {
+              const active = selected?.id === person.id;
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(person.id);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${active ? "bg-[var(--accent)]" : "hover:bg-[var(--muted)]/65"}`}
+                >
+                  <span className={`flex size-6 shrink-0 items-center justify-center rounded-full border ${active ? "border-[var(--primary)] bg-[var(--primary)] text-white" : "border-[var(--border)] text-transparent"}`}>
+                    <Check className="size-3.5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{person.fullName}</span>
+                    <span className="block truncate text-xs text-[var(--muted-foreground)]">
+                      {[person.title, person.departmentName].filter(Boolean).join(" · ") || "Chưa cập nhật chức danh/khoa"}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+            {!people.length ? <div className="px-4 py-10 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy bác sĩ phù hợp.</div> : null}
+          </div>
+          {selected ? <Button variant="ghost" size="sm" onClick={() => { onChange(null); setOpen(false); }}>Bỏ chọn</Button> : null}
+        </div>
+      </Dialog>
+    </>
   );
 }
 

@@ -225,7 +225,7 @@ export interface LiveMonitorResponse {
 
 export const PHASE_LABEL: Record<Phase, string> = { NHAP: 'Bản nháp', MO: 'Đã công bố', CHOT: 'Đã chốt' };
 export const PHASE_TONE: Record<Phase, 'muted' | 'info' | 'success'> = { NHAP: 'muted', MO: 'info', CHOT: 'success' };
-export const REQUEST_TYPE_LABEL: Record<RequestType, string> = { NHUONG: 'Nhường ca', DOI: 'Đổi ca', NGOAI_LE: 'Ngoại lệ (KHTH)' };
+export const REQUEST_TYPE_LABEL: Record<RequestType, string> = { NHUONG: 'Nhường ca khám', DOI: 'Đổi ca khám', NGOAI_LE: 'Ngoại lệ (KHTH)' };
 export const REQUEST_STATUS_LABEL: Record<RequestStatus, string> = {
   CHO_NGUOI_NHAN: 'Chờ người nhận',
   CHO_DUYET: 'Chờ duyệt',
@@ -244,7 +244,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   DANG_KY: 'Tự đăng ký',
   PHAN_CONG: 'Phân công',
   NHUONG: 'Nhận nhường',
-  DOI: 'Đổi ca',
+  DOI: 'Đổi ca khám',
   NGOAI_LE: 'Thay (ngoại lệ)',
   DIEU_CHINH: 'Điều chỉnh',
 };
@@ -256,32 +256,32 @@ export const ABSENCE_REASON_LABEL: Record<string, string> = {
   KHAC: 'Lý do khác',
 };
 export const ACTION_LABEL: Record<string, string> = {
-  PERIOD_CREATE: 'Tạo kỳ lịch',
-  PERIOD_UPDATE: 'Sửa kỳ lịch',
-  SLOTS_GENERATE: 'Sinh ô trực',
-  SLOT_CREATE: 'Thêm ô trực',
-  SLOT_UPDATE: 'Sửa ô trực',
-  SLOT_DELETE: 'Xoá ô trực',
-  ASSIGN: 'Xếp người trực',
-  UNASSIGN: 'Gỡ người trực',
-  SELF_REGISTER: 'Tự đăng ký ca',
-  SELF_UNREGISTER: 'Huỷ đăng ký ca',
-  PUBLISH: 'Công bố lịch',
-  LOCK: 'Chốt lịch',
-  UNLOCK: 'Mở chốt',
-  REQUEST_NHUONG: 'Yêu cầu nhường ca',
-  REQUEST_DOI: 'Yêu cầu đổi ca',
+  PERIOD_CREATE: 'Tạo kỳ lịch khám',
+  PERIOD_UPDATE: 'Sửa kỳ lịch khám',
+  SLOTS_GENERATE: 'Sinh ca khám',
+  SLOT_CREATE: 'Thêm ca khám',
+  SLOT_UPDATE: 'Sửa ca khám',
+  SLOT_DELETE: 'Xoá ca khám',
+  ASSIGN: 'Xếp bác sĩ khám',
+  UNASSIGN: 'Gỡ bác sĩ khám',
+  SELF_REGISTER: 'Tự đăng ký ca khám',
+  SELF_UNREGISTER: 'Huỷ đăng ký ca khám',
+  PUBLISH: 'Công bố lịch khám',
+  LOCK: 'Chốt lịch khám',
+  UNLOCK: 'Mở chốt lịch khám',
+  REQUEST_NHUONG: 'Yêu cầu nhường ca khám',
+  REQUEST_DOI: 'Yêu cầu đổi ca khám',
   REQUEST_NGOAI_LE: 'Yêu cầu ngoại lệ',
   REQUEST_ACCEPTED: 'Người nhận đồng ý',
   REQUEST_DECLINED: 'Người nhận từ chối',
   REQUEST_CANCELLED: 'Huỷ yêu cầu',
   REQUEST_REJECTED: 'Từ chối yêu cầu',
-  HANDOVER: 'Nhường ca (đã duyệt)',
-  SWAP: 'Đổi ca (đã duyệt)',
+  HANDOVER: 'Nhường ca khám (đã duyệt)',
+  SWAP: 'Đổi ca khám (đã duyệt)',
   EXCEPTION: 'Xử lý ngoại lệ',
   OVERRIDE: 'Điều chỉnh trực tiếp',
   ABSENCE: 'Ghi nhận nghỉ phép',
-  EXPORT: 'Xuất lịch',
+  EXPORT: 'Xuất lịch khám',
 };
 
 /* ------------------------------------------------------------------ Thời gian (múi giờ Asia/Bangkok) */
@@ -333,11 +333,25 @@ export function isoWeekRange(year: number, week: number): { startDate: string; e
   };
 }
 
-/** Tự động sinh tên chuẩn cho kỳ lịch theo tuần ISO: "Tuần 43 (19/10 – 25/10/2026) - Tháng 10" */
+/**
+ * Tên ngắn, thống nhất cho kỳ lịch khám mới. Ngày tháng đã đủ nhận diện kỳ,
+ * không lặp lại "tháng" hay khoảng ngày dài trong mọi dropdown.
+ */
 export function smartPeriodTitle(startDate: string, endDate: string): string {
   const { year, week } = isoWeekNumber(startDate);
-  const [, m] = startDate.split('-').map(Number);
-  return `Tuần ${week} (${fmtDm(startDate)} – ${fmtDm(endDate)}/${year}) - Tháng ${String(m).padStart(2, '0')}`;
+  return `Khám T${week} · ${fmtDm(startDate)}–${fmtDm(endDate)}/${year}`;
+}
+
+/** Nhãn trình bày ngắn cho cả kỳ cũ lẫn kỳ mới — không cần sửa dữ liệu lịch sử. */
+export function periodShortLabel(period: Pick<DutyPeriod, 'startDate' | 'endDate' | 'isoWeek'>): string {
+  const { week } = isoWeekNumber(period.startDate);
+  const weekNumber = period.isoWeek ?? week;
+  const startYear = period.startDate.slice(0, 4);
+  const endYear = period.endDate.slice(0, 4);
+  const dateRange = endYear === startYear
+    ? `${fmtDm(period.startDate)}–${fmtDm(period.endDate)}/${startYear}`
+    : `${fmtDm(period.startDate)}/${startYear}–${fmtDm(period.endDate)}/${endYear}`;
+  return `Khám T${weekNumber} · ${dateRange}`;
 }
 
 export const fmtDate = (ymd: string) => {
@@ -488,7 +502,7 @@ export const DUTY_KEYS = {
   rooms: ['duty-rooms'] as const,
 };
 
-/** Bảng màu cho ca trực: dịu mắt, tươi mát, đủ tương phản với chữ trắng trên ô lịch */
+/** Bảng màu cho ca khám: dịu mắt, tươi mát, đủ tương phản với chữ trắng trên ô lịch */
 export const SHIFT_PALETTE: { value: string; label: string }[] = [
   { value: '#0F766E', label: 'Ngọc lam' },
   { value: '#0E7490', label: 'Xanh cổ vịt' },

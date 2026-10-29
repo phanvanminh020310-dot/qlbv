@@ -31,7 +31,7 @@ const uiName = `Kỳ giao diện ${Date.now().toString(36).toUpperCase()}`;
 const uiCreate = await fetch(`${API}/duty/periods`, {
   method: 'POST',
   headers: adminJson,
-  body: JSON.stringify({ name: uiName, startDate: addDays(todayBkk, 60), endDate: addDays(todayBkk, 65), lockAt: new Date(Date.now() + 90 * 24 * 3600e3).toISOString() }),
+  body: JSON.stringify({ name: uiName, startDate: addDays(todayBkk, 60), endDate: addDays(todayBkk, 65), lockAt: new Date(Date.now() + 90 * 24 * 3600e3).toISOString(), autoGenerateSlots: true }),
 });
 const uiPeriod = (await uiCreate.json()).data;
 
@@ -67,16 +67,51 @@ for (const [vp, tok, path, name] of [
   await ctx.close();
 }
 
-// 2) Nhân viên thường không vào được Kỳ lịch và Danh mục (kể cả nhập URL trực tiếp)
+// 2) Quản trị xếp bác sĩ: bấm thẳng ca sáng/chiều mở danh sách bác sĩ, không qua hộp quản lý trung gian.
+{
+  const ctx = await browser.newContext(desk);
+  const page = await open(ctx, admin, '/lich-truc', 'xep-truc-tiep', { wait: 1800 });
+  await page.getByRole('button', { name: 'Để sau' }).click().catch(() => {});
+  await page.getByRole('button', { name: 'Kỳ lịch khám' }).click();
+  const periodSearch = page.getByPlaceholder('Ví dụ: tuần 42, 14/10, khám...');
+  await periodSearch.fill(uiName);
+  const periodFilterOk = await periodSearch.isVisible() && (await page.textContent('body')).includes('1 kỳ phù hợp');
+  expectations.push(['bộ chọn kỳ có tìm kiếm và lọc được kỳ trong danh sách dài', periodFilterOk]);
+  await page.keyboard.press('Escape');
+  const assignTiles = page.locator('button[title^="Xếp bác sĩ:"]');
+  expectations.push(['lịch theo ngày hiển thị các ca có thể bấm xếp trực tiếp', await assignTiles.count() > 0]);
+  await assignTiles.first().click().catch(() => {});
+  await page.waitForTimeout(600);
+  const body = await page.textContent('body');
+  expectations.push(['bấm ca mở trực tiếp danh sách xếp bác sĩ', body.includes('Xếp bác sĩ khám') && body.includes('Chọn bác sĩ')]);
+  expectations.push(['không còn bước “Quản lý người trực” trung gian', !body.includes('Quản lý người trực')]);
+  await page.screenshot({ path: '/tmp/shots/xep-truc-tiep.png' });
+  await page.keyboard.press('Escape');
+  await ctx.close();
+}
+
+// 3) Điện thoại: bảng nhiều phòng vẫn cuộn dọc trong khung, không tạo thanh cuộn ngang.
+{
+  const ctx = await browser.newContext(phone);
+  const page = await open(ctx, admin, '/lich-truc', 'dien-thoai-xep-truc', { wait: 1800 });
+  await page.getByRole('button', { name: 'Để sau' }).click().catch(() => {});
+  const metrics = await page.evaluate(() => ({ body: document.body.scrollWidth, root: document.documentElement.scrollWidth, viewport: window.innerWidth }));
+  expectations.push(['bảng lịch khám nhiều phòng không tràn ngang trên điện thoại', metrics.body <= metrics.viewport && metrics.root <= metrics.viewport]);
+  expectations.push(['điện thoại vẫn hiển thị ca bấm trực tiếp để xếp bác sĩ', await page.locator('button[title^="Xếp bác sĩ:"]').count() > 0]);
+  await page.screenshot({ path: '/tmp/shots/dien-thoai-xep-truc.png' });
+  await ctx.close();
+}
+
+// 4) Nhân viên thường không vào được Kỳ lịch và Danh mục (kể cả nhập URL trực tiếp)
 for (const [path, name, text] of [
-  ['/lich-truc/ky-lich', 'nv-ky-lich', 'Trang này dành cho người quản lý lịch trực'],
-  ['/lich-truc/danh-muc', 'nv-danh-muc', 'Trang này dành cho người quản trị danh mục trực'],
+  ['/lich-truc/ky-lich', 'nv-ky-lich', 'Trang này dành cho người quản lý lịch khám'],
+  ['/lich-truc/danh-muc', 'nv-danh-muc', 'Trang này dành cho người quản trị danh mục lịch khám'],
 ]) {
   const ctx = await browser.newContext(desk);
   const page = await open(ctx, emp, path, name);
   const body = await page.textContent('body');
   expectations.push([`nhân viên thường thấy thông báo chặn ở ${path}`, body.includes(text)]);
-  expectations.push([`nhân viên thường không thấy tab Giờ trực ở ${path}`, !body.includes('Giờ trực') || !body.includes('Nhật ký')]);
+  expectations.push([`nhân viên thường không thấy tab Giờ trực ở ${path}`, !body.includes('Khối lượng khám') || !body.includes('Nhật ký')]);
   await page.screenshot({ path: `/tmp/shots/${name}.png` });
   await ctx.close();
 }
@@ -85,9 +120,9 @@ for (const [path, name, text] of [
 {
   const ctx = await browser.newContext(desk);
   const page = await open(ctx, admin, '/lich-truc/danh-muc', 'danh-muc');
-  await page.getByText('Ca trực', { exact: true }).first().click();
+  await page.getByText('Ca khám', { exact: true }).first().click();
   await page.waitForTimeout(500);
-  await page.getByRole('button', { name: /Thêm ca trực/ }).first().click();
+  await page.getByRole('button', { name: /Thêm ca khám/ }).first().click();
   await page.waitForTimeout(600);
   const swatches = await page.getByRole('radio').count();
   expectations.push(['bảng màu ca có 12 ô màu để chọn', swatches === 12]);
@@ -101,10 +136,10 @@ for (const [path, name, text] of [
 {
   const ctx = await browser.newContext(desk);
   const page = await open(ctx, admin, '/lich-truc/ky-lich', 'ky-lich-xoa');
-  await page.getByRole('button', { name: /Xoá kỳ lịch/ }).first().click().catch(() => {});
+  await page.getByRole('button', { name: /Xoá kỳ khám/ }).first().click().catch(() => {});
   await page.waitForTimeout(600);
   const body = await page.textContent('body');
-  expectations.push(['hộp thoại xoá kỳ có ô gõ lại tên để xác nhận', body.includes('Gõ lại tên kỳ lịch')]);
+  expectations.push(['hộp thoại xoá kỳ hiển thị cảnh báo và nút xác nhận', body.includes('Xác nhận xoá kỳ lịch khám') && body.includes('Xác nhận xoá')]);
   await page.screenshot({ path: '/tmp/shots/ky-lich-xoa.png' });
   await page.keyboard.press('Escape');
   await ctx.close();
@@ -117,6 +152,6 @@ if (uiPeriod?.id) {
 const bad = expectations.filter(([, ok]) => !ok);
 for (const [label, ok] of expectations) console.log(ok ? '  ✔' : '  ✘', label);
 if (problems.length) console.log(problems.join('\n'));
-else console.log('KHÔNG CÓ LỖI CONSOLE — đã chụp ảnh các trang lịch trực');
+else console.log('KHÔNG CÓ LỖI CONSOLE — đã chụp ảnh các trang lịch khám');
 console.log(bad.length ? `\nCó ${bad.length} kiểm tra giao diện không đạt` : '\nTất cả kiểm tra giao diện đạt');
 process.exit(bad.length || problems.length ? 1 : 0);

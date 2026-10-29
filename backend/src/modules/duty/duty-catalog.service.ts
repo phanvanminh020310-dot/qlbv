@@ -125,12 +125,12 @@ export class DutyCatalogService {
 
   async removeRoom(id: number) {
     const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.roomId, id));
-    if (n > 0) throw new ConflictException(`Phòng đã có ${n} ô trực — hãy tắt hoạt động thay vì xoá`);
+    if (n > 0) throw new ConflictException(`Phòng đã có ${n} ca khám — hãy tắt hoạt động thay vì xoá`);
     await this.db.db.delete(dutyRooms).where(eq(dutyRooms.id, id));
     return { ok: true };
   }
 
-  /* ============================================================ Ca trực */
+  /* ============================================================ Ca khám */
 
   private shiftTimes(startTime: string, endTime: string) {
     if (!HHMM.test(startTime) || !HHMM.test(endTime)) throw new BadRequestException('Giờ phải dạng HH:MM');
@@ -201,7 +201,7 @@ export class DutyCatalogService {
 
   async updateShift(id: number, dto: UpdateShiftDto) {
     const [cur] = await this.db.db.select().from(dutyShiftTypes).where(eq(dutyShiftTypes.id, id)).limit(1);
-    if (!cur) throw new NotFoundException('Không tìm thấy ca trực');
+    if (!cur) throw new NotFoundException('Không tìm thấy ca khám');
     if (dto.code !== undefined) await this.assertUniqueCode('shifts', dto.code, id);
     const timeChanged =
       (dto.startTime !== undefined && dto.startTime !== cur.startTime) ||
@@ -211,7 +211,7 @@ export class DutyCatalogService {
       const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.shiftId, id));
       if (n > 0) {
         throw new ConflictException(
-          `Ca đã được dùng trong ${n} ô trực — không đổi giờ hay tính chất ca đêm để giữ đúng số giờ đã ghi nhận. Hãy tắt ca này và tạo ca mới.`,
+          `Ca đã được dùng trong ${n} ca khám — không đổi giờ hay tính chất ca đêm để giữ đúng số giờ đã ghi nhận. Hãy tắt ca này và tạo ca mới.`,
         );
       }
     }
@@ -238,12 +238,12 @@ export class DutyCatalogService {
 
   async removeShift(id: number) {
     const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.shiftId, id));
-    if (n > 0) throw new ConflictException(`Ca đã được dùng trong ${n} ô trực — hãy tắt hoạt động thay vì xoá`);
+    if (n > 0) throw new ConflictException(`Ca đã được dùng trong ${n} ca khám — hãy tắt hoạt động thay vì xoá`);
     await this.db.db.delete(dutyShiftTypes).where(eq(dutyShiftTypes.id, id));
     return { ok: true };
   }
 
-  /* ============================================================ Vai trò trực */
+  /* ============================================================ Vai trò khám */
 
   async listRoles(q: CatalogQueryDto) {
     const { page, pageSize, offset } = pageOf(q);
@@ -298,14 +298,14 @@ export class DutyCatalogService {
 
   async updateRole(id: number, dto: UpdateRoleDto) {
     const [cur] = await this.db.db.select().from(dutyRoles).where(eq(dutyRoles.id, id)).limit(1);
-    if (!cur) throw new NotFoundException('Không tìm thấy vai trò trực');
+    if (!cur) throw new NotFoundException('Không tìm thấy vai trò khám');
     if (dto.code !== undefined) await this.assertUniqueCode('roles', dto.code, id);
     await this.assertTitle(dto.requiredTitle);
     if (dto.requiredTitle !== undefined && dto.requiredTitle !== cur.requiredTitle) {
       const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.roleId, id));
       if (n > 0) {
         throw new ConflictException(
-          `Vai trò đã dùng trong ${n} ô trực — không đổi chức danh yêu cầu để không làm sai các phân công hiện có. Hãy tạo vai trò mới.`,
+          `Vai trò đã dùng trong ${n} ca khám — không đổi chức danh yêu cầu để không làm sai các phân công hiện có. Hãy tạo vai trò mới.`,
         );
       }
     }
@@ -322,7 +322,7 @@ export class DutyCatalogService {
 
   async removeRole(id: number) {
     const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.roleId, id));
-    if (n > 0) throw new ConflictException(`Vai trò đã được dùng trong ${n} ô trực — hãy tắt hoạt động thay vì xoá`);
+    if (n > 0) throw new ConflictException(`Vai trò đã được dùng trong ${n} ca khám — hãy tắt hoạt động thay vì xoá`);
     await this.db.db.delete(dutyRoles).where(eq(dutyRoles.id, id));
     return { ok: true };
   }
@@ -349,10 +349,10 @@ export class DutyCatalogService {
     if (d && d.id !== exceptId) throw new ConflictException(`Ngày ${date} đã có trong danh mục ngày nghỉ`);
   }
 
-  /** Ngày đã có ô trực thì không được đánh dấu là ngày nghỉ (tránh lịch mâu thuẫn) */
+  /** Ngày đã có ca khám thì không được đánh dấu là ngày nghỉ (tránh lịch mâu thuẫn) */
   private async assertNoSlotsOn(date: string) {
     const [{ n }] = await this.db.db.select({ n: sql<number>`count(*)::int` }).from(dutySlots).where(eq(dutySlots.dutyDate, date));
-    if (n > 0) throw new ConflictException(`Ngày ${fmtDm(date)} đã có ${n} ô trực — hãy xoá các ô đó trước khi đánh dấu ngày nghỉ`);
+    if (n > 0) throw new ConflictException(`Ngày ${fmtDm(date)} đã có ${n} ca khám — hãy xoá các ca khám đó trước khi đánh dấu ngày nghỉ`);
   }
 
   async createClosedDay(dto: ClosedDayDto) {

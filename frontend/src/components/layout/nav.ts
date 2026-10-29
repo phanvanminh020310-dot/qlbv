@@ -105,14 +105,14 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Lịch trực',
+    label: 'Lịch khám bệnh',
     items: [
-      { href: '/lich-truc', label: 'Lịch trực tuần', icon: CalendarDays, permission: 'duty.view' },
-      { href: '/lich-truc/cua-toi', label: 'Lịch của tôi', icon: UserCheck, permission: 'duty.view' },
-      { href: '/lich-truc/theo-doi-xac-thuc', label: 'Theo dõi xác thực', icon: Radio, permission: 'duty.manage', anyPermissions: ['duty.manage-all'] },
-      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch trực', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },
-      { href: '/lich-truc/ky-lich', label: 'Kỳ lịch & công bố', icon: CalendarRange, permission: 'duty.period.manage' },
-      { href: '/lich-truc/danh-muc', label: 'Danh mục trực', icon: Settings2, permission: 'duty.catalog.manage' },
+      { href: '/lich-truc', label: 'Lịch bác sĩ khám', icon: CalendarDays, permission: 'duty.view' },
+      { href: '/lich-truc/cua-toi', label: 'Lịch khám của tôi', icon: UserCheck, permission: 'duty.view' },
+      { href: '/lich-truc/theo-doi-xac-thuc', label: 'Theo dõi ca khám', icon: Radio, permission: 'duty.manage', anyPermissions: ['duty.manage-all'] },
+      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch khám', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },
+      { href: '/lich-truc/ky-lich', label: 'Kỳ lịch khám', icon: CalendarRange, permission: 'duty.period.manage' },
+      { href: '/lich-truc/danh-muc', label: 'Danh mục lịch khám', icon: Settings2, permission: 'duty.catalog.manage' },
     ],
   },
   {

@@ -28,7 +28,7 @@ const dayOf = (ymd: string) =>
 
 /**
  * Trang cá nhân chỉ để đọc. Bác sĩ/điều dưỡng xem các ca đã được người xếp
- * lịch phân công; mọi thay đổi lịch được thực hiện bởi người xếp lịch trực khoa.
+ * lịch phân công; mọi thay đổi được thực hiện bởi người xếp lịch khám của khoa.
  */
 export default function LichCuaToiPage() {
   const can = useAuth((s) => s.can);
@@ -46,13 +46,13 @@ export default function LichCuaToiPage() {
     return { upcoming, past, nextShift: upcoming[0] };
   }, [me.data?.assignments]);
 
-  if (!canView) return <EmptyState title="Bạn chưa có quyền xem lịch trực" />;
+  if (!canView) return <EmptyState title="Bạn chưa có quyền xem lịch khám" />;
 
   return (
     <>
       <PageHeader
         title="Lịch của tôi"
-        description="Các ca trực đã được phân công. Nếu cần điều chỉnh lịch hoặc báo nghỉ/bận, vui lòng liên hệ Người xếp lịch trực khoa."
+        description="Các ca khám đã được phân công. Nếu cần điều chỉnh lịch hoặc báo nghỉ/bận, vui lòng liên hệ Người xếp lịch khám của khoa."
       />
 
       {me.isLoading ? (
@@ -70,17 +70,17 @@ export default function LichCuaToiPage() {
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <KpiTile
-              label="Ca sắp tới"
+              label="Ca khám sắp tới"
               value={upcoming.length}
               hint={
                 nextShift
                   ? `Tiếp theo: ${dayOf(nextShift.dutyDate)} ${fmtDm(nextShift.dutyDate)}`
-                  : "Chưa có ca sắp tới"
+                  : "Chưa có ca khám sắp tới"
               }
               tone="info"
             />
             <KpiTile
-              label="Kỳ lịch đang hiển thị"
+              label="Kỳ lịch khám đang hiển thị"
               value={
                 me.data.periods.filter((period) => period.status !== "NHAP")
                   .length
@@ -88,17 +88,17 @@ export default function LichCuaToiPage() {
               hint="Kỳ đã công bố hoặc đã chốt"
             />
             <KpiTile
-              label="Ca đã hoàn thành"
+              label="Ca khám đã hoàn thành"
               value={past.length}
-              hint="Theo dữ liệu lịch trực"
+              hint="Theo dữ liệu lịch khám"
               tone="success"
             />
           </div>
 
           <Card>
             <CardHeader
-              title="Ca trực sắp tới"
-              description="Lịch chỉ đọc; thông tin phòng, giờ trực và vai trò được cập nhật ngay khi người xếp lịch phân công."
+              title="Ca khám sắp tới"
+              description="Lịch chỉ đọc; thông tin phòng, giờ khám và vai trò được cập nhật ngay khi người xếp lịch phân công."
               actions={
                 upcoming.length ? (
                   <Badge tone="brand">{upcoming.length} ca</Badge>
@@ -108,8 +108,8 @@ export default function LichCuaToiPage() {
             <CardBody>
               {upcoming.length === 0 ? (
                 <EmptyState
-                  title="Bạn chưa có ca trực sắp tới"
-                  description="Khi được phân công, ca trực sẽ xuất hiện tại đây."
+                  title="Bạn chưa có ca khám sắp tới"
+                  description="Khi được phân công, ca khám sẽ xuất hiện tại đây."
                 />
               ) : (
                 <ul className="grid gap-3 xl:grid-cols-2">
@@ -124,7 +124,7 @@ export default function LichCuaToiPage() {
           {past.length ? (
             <Card>
               <CardHeader
-                title="Ca đã hoàn thành gần đây"
+                title="Ca khám đã hoàn thành gần đây"
                 description="Bản ghi tham khảo, chỉ đọc."
               />
               <CardBody>

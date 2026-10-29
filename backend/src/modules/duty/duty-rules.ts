@@ -2,7 +2,7 @@
  * LÕI NGHIỆP VỤ LỊCH TRỰC — hàm thuần, không truy vấn CSDL (dễ kiểm thử).
  *
  * - Thời gian vận hành cố định Asia/Bangkok (UTC+7, không có giờ mùa hè); mọi mốc quy về mili-giây UTC.
- * - `evaluateCandidate` trả về danh sách VI PHẠM: lỗi (ERROR) chặn xếp trực, cảnh báo (WARNING) chỉ báo.
+ * - `evaluateCandidate` trả về danh sách VI PHẠM: lỗi (ERROR) chặn xếp khám, cảnh báo (WARNING) chỉ báo.
  * - Tuần tính theo ISO (Thứ 2 → Chủ nhật) để khớp cách lập lịch tuần trong thực tế.
  */
 import type { DutyRules } from '../../db/schema/duty';
@@ -161,14 +161,18 @@ export function isoWeekRange(year: number, week: number): { startDate: string; e
   };
 }
 
-/** Tự động sinh tên chuẩn cho kỳ lịch theo tuần ISO: "Tuần 43 (19/10 – 25/10/2026) - Tháng 10" */
+/** Tự động sinh tên gọn cho kỳ lịch khám mới; dữ liệu kỳ cũ không bị thay đổi. */
 export function smartPeriodTitle(startDate: string, endDate: string): string {
-  const { year, week } = isoWeekNumber(startDate);
-  const [, m] = parseYmd(startDate);
-  return `Tuần ${week} (${fmtDm(startDate)} – ${fmtDm(endDate)}/${year}) - Tháng ${String(m).padStart(2, '0')}`;
+  const { week } = isoWeekNumber(startDate);
+  const startYear = startDate.slice(0, 4);
+  const endYear = endDate.slice(0, 4);
+  const dateRange = endYear === startYear
+    ? `${fmtDm(startDate)}–${fmtDm(endDate)}/${startYear}`
+    : `${fmtDm(startDate)}/${startYear}–${fmtDm(endDate)}/${endYear}`;
+  return `Khám T${week} · ${dateRange}`;
 }
 
-/** Mốc chốt lịch mặc định: Chủ nhật 17:00 trước tuần trực (giờ Việt Nam +07:00). */
+/** Mốc chốt lịch mặc định: Chủ nhật 17:00 trước tuần khám (giờ Việt Nam +07:00). */
 export function defaultLockAt(startDate: string): string {
   // ISO: Thứ 2 = 1 … Chủ nhật = 7. Với kỳ tuần bắt đầu Thứ 2, lùi 1 ngày
   // để các khoa có trọn Thứ bảy và Chủ nhật hoàn thiện lịch. Kỳ tuỳ chỉnh
@@ -206,7 +210,7 @@ export interface Violation {
   message: string;
 }
 
-/** Ô trực đã nạp đủ thông tin để kiểm tra */
+/** Ca khám đã nạp đủ thông tin để kiểm tra */
 export interface EngineSlot {
   id: number;
   periodId: number;
@@ -258,7 +262,7 @@ export interface EvaluateInput {
   /** Ca hiện có của người này (đã loại trừ những ca sẽ bị thay thế trong cùng thao tác) */
   duties: EngineDuty[];
   absences: EngineAbsence[];
-  /** Số ca / ca đêm đã có trong kỳ, KHÔNG kể ô đang xét */
+  /** Số ca / ca đêm đã có trong kỳ, KHÔNG kể ca khám đang xét */
   periodShifts: number;
   periodNights: number;
   alreadyInSlot: boolean;
@@ -280,7 +284,7 @@ export interface EvaluateResult {
 const normTitle = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 /**
- * Kiểm tra một người có được xếp vào một ô trực hay không.
+ * Kiểm tra một người có được xếp vào một ca khám hay không.
  * Quy tắc "ca liền kề" (gap = 0): hai ca ban ngày liền nhau trong cùng ngày được phép (ví dụ Sáng + Chiều);
  * nếu một trong hai là ca đêm thì bắt buộc có khoảng nghỉ.
  */
@@ -288,7 +292,7 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
   const errors: Violation[] = [];
   const warnings: Violation[] = [];
   const { slot: s, user: u, rules: r } = i;
-  // Không tự so với chính ô đang xét (người đã có trong ô sẽ bị ALREADY_IN_SLOT)
+  // Không tự so với chính ca khám đang xét (người đã có trong ca khám sẽ bị ALREADY_IN_SLOT)
   const duties = i.duties.filter((d) => d.slotId !== s.id);
   const err = (code: ViolationCode, message: string) => errors.push({ code, severity: 'ERROR', message });
   const warn = (code: ViolationCode, message: string) => warnings.push({ code, severity: 'WARNING', message });
@@ -354,12 +358,12 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
   }
   const dayHours = sameDay.reduce((a, d) => a + d.hours, 0) + s.hours;
   if (r.maxHoursPerDay > 0 && dayHours > r.maxHoursPerDay + 1e-9) {
-    err('HOURS_PER_DAY', `Ngày ${fmtDm(s.dutyDate)} thành ${fmtH(dayHours)} giờ trực, tối đa ${r.maxHoursPerDay} giờ/ngày`);
+    err('HOURS_PER_DAY', `Ngày ${fmtDm(s.dutyDate)} thành ${fmtH(dayHours)} giờ khám, tối đa ${r.maxHoursPerDay} giờ/ngày`);
   }
   const wk = weekStart(s.dutyDate);
   const weekHours = duties.filter((d) => weekStart(d.dutyDate) === wk).reduce((a, d) => a + d.hours, 0) + s.hours;
   if (r.maxHoursPerWeek > 0 && weekHours > r.maxHoursPerWeek + 1e-9) {
-    err('HOURS_PER_WEEK', `Tuần ${fmtDm(wk)} thành ${fmtH(weekHours)} giờ trực, tối đa ${r.maxHoursPerWeek} giờ/tuần`);
+    err('HOURS_PER_WEEK', `Tuần ${fmtDm(wk)} thành ${fmtH(weekHours)} giờ khám, tối đa ${r.maxHoursPerWeek} giờ/tuần`);
   }
   if (r.maxShiftsPerPeriod > 0 && i.periodShifts + 1 > r.maxShiftsPerPeriod) {
     err('SHIFTS_PER_PERIOD', `Vượt ${r.maxShiftsPerPeriod} ca trong kỳ lịch`);

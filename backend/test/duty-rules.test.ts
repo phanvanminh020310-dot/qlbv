@@ -282,7 +282,9 @@ test('tính số tuần ISO và khoảng ngày tuần tự động', () => {
   assert.equal(r43.startDate, '2026-10-19');
   assert.equal(r43.endDate, '2026-10-25');
 
-  assert.equal(smartPeriodTitle('2026-10-19', '2026-10-25'), 'Tuần 43 (19/10 – 25/10/2026) - Tháng 10');
+  assert.equal(smartPeriodTitle('2026-10-19', '2026-10-25'), 'Khám T43 · 19/10–25/10/2026');
+  // Tuần giao năm phải hiện đủ cả hai năm để không gây nhầm kỳ lịch.
+  assert.equal(smartPeriodTitle('2026-12-28', '2027-01-03'), 'Khám T53 · 28/12/2026–03/01/2027');
   // Kỳ tuần bắt đầu Thứ 2: chốt vào chiều Chủ nhật ngay trước tuần trực.
   assert.equal(defaultLockAt('2026-10-19'), '2026-10-18T17:00:00+07:00');
   // Không lệch tuần tại năm mới và ngày Chủ nhật tuỳ chỉnh vẫn là chính ngày đó.

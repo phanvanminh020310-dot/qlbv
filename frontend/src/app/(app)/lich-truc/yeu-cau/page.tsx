@@ -70,8 +70,8 @@ export default function YeuCauPage() {
           </div>
           <div className="mt-2 text-sm">
             <span className="font-semibold">{r.requesterName}</span>
-            {r.type === "NHUONG" ? <> nhường ca cho <span className="font-semibold">{r.targetName}</span></> : null}
-            {r.type === "DOI" ? <> đổi ca với <span className="font-semibold">{r.targetName}</span></> : null}
+            {r.type === "NHUONG" ? <> nhường ca khám cho <span className="font-semibold">{r.targetName}</span></> : null}
+            {r.type === "DOI" ? <> đổi ca khám với <span className="font-semibold">{r.targetName}</span></> : null}
             {r.type === "NGOAI_LE" ? <> cần thay <span className="font-semibold">{r.targetName ?? r.requesterName}</span></> : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-[var(--muted-foreground)]">
@@ -146,8 +146,8 @@ export default function YeuCauPage() {
   return (
     <>
       <PageHeader
-        title="Yêu cầu lịch trực"
-        description="Duyệt nghỉ/bận và bố trí người thay, nhường/đổi ca và xử lý ngoại lệ sau khi chốt."
+        title="Yêu cầu lịch khám"
+        description="Duyệt nghỉ/bận và bố trí bác sĩ thay, nhường/đổi ca khám và xử lý ngoại lệ sau khi chốt."
         actions={
           isKhth ? (
             <Button variant="outline" onClick={() => setOverride(true)}>
@@ -168,7 +168,7 @@ export default function YeuCauPage() {
           open
           onClose={() => setReview(null)}
           title={review.kind === "approve" ? (review.row.type === "NGOAI_LE" ? "Duyệt ngoại lệ" : "Duyệt đổi / nhường ca") : review.kind === "decline" ? "Từ chối đề nghị" : "Từ chối yêu cầu"}
-          description={review.row.type === "NGOAI_LE" ? "Hệ thống sẽ gỡ người cần thay và xếp người thay. Nếu người thay vi phạm ràng buộc, bạn có thể bỏ qua kèm lý do." : "Sau khi duyệt, lịch trực được cập nhật ngay và thông báo tới các bên."}
+          description={review.row.type === "NGOAI_LE" ? "Hệ thống sẽ gỡ người cần thay và xếp người thay. Nếu người thay vi phạm ràng buộc, bạn có thể bỏ qua kèm lý do." : "Sau khi duyệt, lịch khám được cập nhật ngay và thông báo tới các bên."}
           noteLabel={review.kind === "approve" ? "Ghi chú (không bắt buộc)" : "Lý do từ chối"}
           requireNote={review.kind === "reject"}
           confirmText={review.kind === "approve" ? "Duyệt" : "Từ chối"}

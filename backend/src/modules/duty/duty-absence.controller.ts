@@ -17,7 +17,7 @@ import type { AccessContext } from "../../common/types/access-context";
 import { AbsenceReviewDto } from "./duty.dto";
 import { DutyAbsenceService } from "./duty-absence.service";
 
-@ApiTags("Lịch trực khám bệnh")
+@ApiTags("Lịch bác sĩ khám bệnh")
 @ApiBearerAuth()
 @Controller("duty/absence-requests")
 export class DutyAbsenceController {
@@ -60,7 +60,7 @@ export class DutyAbsenceController {
     module: "DUTY",
     action: "REJECT",
     entity: "duty_absence_request",
-    description: "Từ chối nghỉ/bận, không thay đổi ca trực",
+    description: "Từ chối nghỉ/bận, không thay đổi ca khám",
   })
   reject(
     @CurrentUser() user: AccessContext,

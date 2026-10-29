@@ -5,7 +5,7 @@ import type { AccessContext } from '../../common/types/access-context';
 import { OverrideDto, RequestCreateDto, RequestQueryDto, RequestRespondDto } from './duty.dto';
 import { DutyRequestService } from './duty-request.service';
 
-@ApiTags('Lịch trực khám bệnh')
+@ApiTags('Lịch bác sĩ khám bệnh')
 @ApiBearerAuth()
 @Controller('duty')
 export class DutyRequestController {
@@ -20,7 +20,7 @@ export class DutyRequestController {
 
   @Post('requests')
   @RequirePermissions('duty.register')
-  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_request', description: 'Tạo yêu cầu nhường/đổi/ngoại lệ ca trực' })
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_request', description: 'Tạo yêu cầu nhường/đổi/ngoại lệ ca khám' })
   create(@CurrentUser() user: AccessContext, @Body() dto: RequestCreateDto) {
     return this.service.create(user, dto);
   }
@@ -41,29 +41,29 @@ export class DutyRequestController {
 
   @Post('requests/:id/cancel')
   @RequirePermissions('duty.register')
-  @Audit({ module: 'DUTY', action: 'CANCEL', entity: 'duty_request', description: 'Huỷ yêu cầu ca trực' })
+  @Audit({ module: 'DUTY', action: 'CANCEL', entity: 'duty_request', description: 'Huỷ yêu cầu ca khám' })
   cancel(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.cancel(user, id);
   }
 
   @Post('requests/:id/approve')
   @RequirePermissions(['duty.swap.approve', 'duty.exception.resolve'], 'any')
-  @Audit({ module: 'DUTY', action: 'APPROVE', entity: 'duty_request', description: 'Duyệt yêu cầu ca trực' })
+  @Audit({ module: 'DUTY', action: 'APPROVE', entity: 'duty_request', description: 'Duyệt yêu cầu ca khám' })
   approve(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: RequestRespondDto) {
     return this.service.approve(user, id, dto ?? {});
   }
 
   @Post('requests/:id/reject')
   @RequirePermissions(['duty.swap.approve', 'duty.exception.resolve'], 'any')
-  @Audit({ module: 'DUTY', action: 'REJECT', entity: 'duty_request', description: 'Từ chối yêu cầu ca trực' })
+  @Audit({ module: 'DUTY', action: 'REJECT', entity: 'duty_request', description: 'Từ chối yêu cầu ca khám' })
   reject(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: RequestRespondDto) {
     return this.service.reject(user, id, dto ?? {});
   }
 
   @Post('exceptions/override')
   @RequirePermissions('duty.exception.resolve')
-  @Audit({ module: 'DUTY', action: 'OVERRIDE', entity: 'duty_assignment', description: 'Điều chỉnh người trực trực tiếp (ngoại lệ, có lý do)' })
-  @ApiOperation({ summary: 'KHTH đổi người trực trực tiếp, kể cả sau khi chốt (bắt buộc lý do)' })
+  @Audit({ module: 'DUTY', action: 'OVERRIDE', entity: 'duty_assignment', description: 'Điều chỉnh bác sĩ khám trực tiếp (ngoại lệ, có lý do)' })
+  @ApiOperation({ summary: 'KHTH đổi bác sĩ khám trực tiếp, kể cả sau khi chốt (bắt buộc lý do)' })
   override(@CurrentUser() user: AccessContext, @Body() dto: OverrideDto) {
     return this.service.override(user, dto);
   }

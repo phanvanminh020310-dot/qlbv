@@ -1,6 +1,6 @@
 /**
- * Lớp lõi dùng chung cho phân hệ lịch trực: phạm vi quyền, nạp dữ liệu theo lô,
- * đánh giá ràng buộc theo cặp (ô trực × người), thông báo và nhật ký nghiệp vụ.
+ * Lớp lõi dùng chung cho phân hệ lịch khám: phạm vi quyền, nạp dữ liệu theo lô,
+ * đánh giá ràng buộc theo cặp (ca khám × người), thông báo và nhật ký nghiệp vụ.
  */
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
@@ -37,18 +37,18 @@ import {
   type EvaluateResult,
 } from './duty-rules';
 
-/** Một cặp cần đánh giá: ô trực + người + ngữ cảnh kỳ (quy tắc, đã chốt chưa) */
+/** Một cặp cần đánh giá: ca khám + người + ngữ cảnh kỳ (quy tắc, đã chốt chưa) */
 export interface PairCtx {
   slot: EngineSlot;
   user: EngineUser;
   rules: DutyRules;
   locked: boolean;
   registrationBlocked?: string | null;
-  /** Phân công trực tiếp được phép vượt chỉ tiêu người của ô; tự đăng ký thì không. */
+  /** Phân công trực tiếp được phép vượt chỉ tiêu người của ca khám; tự đăng ký thì không. */
   ignoreSlotCapacity?: boolean;
 }
 
-/** Dòng ô trực đã join đủ danh mục */
+/** Dòng ca khám đã join đủ danh mục */
 export type SlotRow = Awaited<ReturnType<DutyCoreService['loadSlots']>>[number];
 
 const pushTo = <T>(map: Map<number | string, T[]>, key: number | string, value: T) => {
@@ -111,14 +111,14 @@ export class DutyCoreService {
 
   ensureManageSchedule(u: AccessContext, what = 'Thao tác lập lịch'): void {
     if (!this.canManageAny(u)) {
-      throw new ForbiddenException(`${what} yêu cầu quyền xếp lịch trực`);
+      throw new ForbiddenException(`${what} yêu cầu quyền xếp lịch khám`);
     }
   }
 
   /** Giữ tên hàm tương thích cho luồng duyệt nhân sự/nghỉ, không dùng cho phòng. */
   ensureManageDept(u: AccessContext, departmentId: number | null, what = 'Nhân viên này'): void {
     if (!this.canManageDept(u, departmentId)) {
-      throw new ForbiddenException(`${what} nằm ngoài phạm vi khoa bạn được phân công quản lý lịch trực`);
+      throw new ForbiddenException(`${what} nằm ngoài phạm vi khoa bạn được phân công quản lý lịch khám`);
     }
   }
 
@@ -142,7 +142,7 @@ export class DutyCoreService {
     return status !== 'NHAP' || this.canManageAny(u);
   }
 
-  /* ------------------------------------------------------------ Ô trực */
+  /* ------------------------------------------------------------ Ca khám */
 
   slotSelect() {
     return {
@@ -197,7 +197,7 @@ export class DutyCoreService {
 
   async getSlot(id: number, c: Executor = this.db.db): Promise<SlotRow> {
     const [row] = await this.loadSlots(c, eq(dutySlots.id, id));
-    if (!row) throw new NotFoundException('Không tìm thấy ô trực');
+    if (!row) throw new NotFoundException('Không tìm thấy ca khám');
     return row;
   }
 
@@ -253,7 +253,7 @@ export class DutyCoreService {
     return map;
   }
 
-  /** Ca của các người dùng trong khoảng ngày (mọi kỳ), trừ các ô bị loại trừ */
+  /** Ca của các người dùng trong khoảng ngày (mọi kỳ), trừ các ca khám bị loại trừ */
   async loadDuties(c: Executor, userIds: number[], from: string, to: string, exclude: number[] = []) {
     const map = new Map<number, EngineDuty[]>();
     if (!userIds.length) return map;
@@ -307,7 +307,7 @@ export class DutyCoreService {
     return map;
   }
 
-  /** Số ca / ca đêm đã có trong từng kỳ của người dùng (không kể ô loại trừ) */
+  /** Số ca / ca đêm đã có trong từng kỳ của người dùng (không kể ca khám loại trừ) */
   async loadPeriodCounts(c: Executor, periodIds: number[], userIds: number[], exclude: number[] = []) {
     const map = new Map<string, { shifts: number; nights: number }>();
     if (!periodIds.length || !userIds.length) return map;
@@ -345,7 +345,7 @@ export class DutyCoreService {
   }
 
   /**
-   * Đánh giá hàng loạt các cặp (ô × người). Khoá kết quả: `${slotId}:${userId}`.
+   * Đánh giá hàng loạt các cặp (ca khám × nhân sự). Khoá kết quả: `${slotId}:${userId}`.
    * `excludeSlotIds`: các ca của người này sẽ bị gỡ trong cùng thao tác (đổi/nhường ca).
    */
   async evaluatePairs(c: Executor, pairs: PairCtx[], opts: { excludeSlotIds?: number[]; now?: number } = {}) {
@@ -390,7 +390,7 @@ export class DutyCoreService {
     return out;
   }
 
-  /** Ghép dữ liệu thành PairCtx cho một ô (dùng cho nhiều người) */
+  /** Ghép dữ liệu thành PairCtx cho một ca khám (dùng cho nhiều người) */
   pairsFor(
     slotRow: SlotRow,
     users: EngineUser[],
@@ -442,7 +442,7 @@ export class DutyCoreService {
   notifyAfterCommit(userIds: Array<number | null | undefined>, input: NotifyInput): void {
     const ids = [...new Set(userIds.filter((x): x is number => typeof x === 'number' && x > 0))];
     if (!ids.length) return;
-    void this.notifier.notify(ids, input).catch((e) => this.logger.warn(`Gửi thông báo lịch trực lỗi: ${(e as Error).message}`));
+    void this.notifier.notify(ids, input).catch((e) => this.logger.warn(`Gửi thông báo lịch khám lỗi: ${(e as Error).message}`));
   }
 
   /* ------------------------------------------------------------ Nhật ký & realtime */

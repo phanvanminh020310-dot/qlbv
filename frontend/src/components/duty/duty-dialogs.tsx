@@ -17,6 +17,7 @@ import {
   fmtDm,
   addDaysYmd,
   isoWeekday,
+  periodShortLabel,
   smartPeriodTitle,
   REQUEST_TYPE_LABEL,
   SOURCE_LABEL,
@@ -26,6 +27,7 @@ import {
   type GridSlot,
   type RequestType,
 } from "@/lib/duty";
+import { PeriodPicker } from "./period-picker";
 import { errorText, ShiftChip, StaffSelect, ViolationList } from "./duty-shared";
 
 /** Thứ trong tuần của một ngày YYYY-MM-DD */
@@ -34,7 +36,7 @@ export function dayName(ymd: string): string {
   return weekdayLabel(d === 0 ? 7 : d);
 }
 
-/** Làm mới mọi dữ liệu lịch trực sau khi thay đổi */
+/** Làm mới mọi dữ liệu lịch khám sau khi thay đổi */
 export function useRefreshDuty() {
   const qc = useQueryClient();
   return () => {
@@ -60,11 +62,11 @@ export function useDutyActions() {
     refresh,
     assign: run<{ slotId: number; userId: number; force?: boolean; reason?: string }>(
       (v) => dutyApi.assign(v.slotId, { userId: v.userId, force: v.force, reason: v.reason }),
-      (v) => (v.force ? "Đã xếp người trực (bỏ qua ràng buộc, đã ghi nhật ký)" : "Đã xếp người trực"),
+      (v) => (v.force ? "Đã xếp bác sĩ khám (bỏ qua ràng buộc, đã ghi nhật ký)" : "Đã xếp bác sĩ khám"),
     ),
-    unassign: run<{ assignmentId: number }>((v) => dutyApi.unassign(v.assignmentId), "Đã gỡ người trực khỏi ca"),
-    register: run<{ slotId: number }>((v) => dutyApi.register(v.slotId), "Đã đăng ký ca trực"),
-    unregister: run<{ slotId: number }>((v) => dutyApi.unregister(v.slotId), "Đã huỷ đăng ký ca"),
+    unassign: run<{ assignmentId: number }>((v) => dutyApi.unassign(v.assignmentId), "Đã gỡ bác sĩ khỏi ca khám"),
+    register: run<{ slotId: number }>((v) => dutyApi.register(v.slotId), "Đã đăng ký ca khám"),
+    unregister: run<{ slotId: number }>((v) => dutyApi.unregister(v.slotId), "Đã huỷ đăng ký ca khám"),
     accept: run<{ id: number }>(
       (v) => dutyApi.acceptRequest(v.id),
       "Đã đồng ý. Yêu cầu đang chờ Trưởng khoa/Điều phối duyệt",
@@ -75,7 +77,7 @@ export function useDutyActions() {
   };
 }
 
-/* ================================================================== Xếp người trực */
+/* ================================================================== Xếp bác sĩ khám */
 
 export function AssignDialog({
   open,
@@ -135,25 +137,25 @@ export function AssignDialog({
       open={open}
       onClose={onClose}
       size="lg"
-      title={`Xếp người trực · ${slot.roomCode} · ${slot.shiftCode}`}
+      title={`Xếp bác sĩ khám · ${slot.roomCode} · ${slot.shiftCode}`}
       description={`${dayName(slot.dutyDate)} ${fmtDate(slot.dutyDate)} · ${slot.startTime}–${slot.endTime} · ${slot.roleName} · chỉ tiêu ${slot.requiredCount} người`}
     >
       <div className="space-y-5">
         {locked ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-            Kỳ lịch đã chốt. Muốn đổi người trực, hãy dùng mục <b>Yêu cầu đổi trực</b> (ngoại lệ) để gửi KHTH.
+            Kỳ lịch đã chốt. Muốn đổi bác sĩ khám, hãy dùng mục <b>Yêu cầu đổi lịch khám</b> (ngoại lệ) để gửi KHTH.
           </div>
         ) : null}
 
         <section>
           <div className="mb-2 flex items-center justify-between">
-            <h4 className="text-sm font-semibold">Đang trực</h4>
+            <h4 className="text-sm font-semibold">Bác sĩ đã xếp</h4>
             <Badge tone={targetMet ? "success" : "warning"}>
               Đã xếp {slot.filled} · chỉ tiêu {slot.requiredCount}
             </Badge>
           </div>
           {slot.assignments.length === 0 ? (
-            <div className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-[var(--muted-foreground)]">Chưa có người trực</div>
+            <div className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-[var(--muted-foreground)]">Chưa xếp bác sĩ</div>
           ) : (
             <ul className="divide-y rounded-lg border">
               {slot.assignments.map((a) => (
@@ -185,11 +187,12 @@ export function AssignDialog({
         {!locked ? (
           <section>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold">Chọn người trực</h4>
+              <h4 className="text-sm font-semibold">Chọn bác sĩ</h4>
               <div className="space-y-1">
                 <Input
+                  autoFocus
                   className="h-8 w-56 text-sm"
-                  placeholder="Tìm theo tên…"
+                  placeholder="Tìm bác sĩ..."
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                 />
@@ -200,14 +203,14 @@ export function AssignDialog({
             </div>
             {targetMet ? (
               <div className="mb-2 text-xs text-emerald-700 dark:text-emerald-300">
-                Ô đã đạt chỉ tiêu. Người xếp lịch vẫn có thể thêm người trực khi cần.
+                Ca khám đã đủ chỉ tiêu. Người xếp lịch vẫn có thể thêm bác sĩ khi cần.
               </div>
             ) : null}
             {cand.isLoading ? (
               <div className="py-6 text-center text-sm text-[var(--muted-foreground)]">Đang kiểm tra ràng buộc…</div>
             ) : cand.isError ? (
               <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-                Không tải được danh sách người trực: {errorText(cand.error)}
+                Không tải được danh sách bác sĩ: {errorText(cand.error)}
               </div>
             ) : (
               <ul className="max-h-[52vh] divide-y overflow-y-auto rounded-lg border">
@@ -255,7 +258,7 @@ export function AssignDialog({
               </ul>
             )}
             <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
-              Bạn có thể xếp cho mọi phòng khám; danh sách này chỉ gồm nhân viên thuộc khoa bạn phụ trách. Hệ thống vẫn kiểm tra trùng giờ, khoảng nghỉ, chức danh, nghỉ phép và giới hạn giờ.
+              Bạn có thể xếp cho mọi phòng khám; danh sách chỉ gồm người thuộc phạm vi khoa bạn phụ trách. Hệ thống vẫn kiểm tra trùng giờ, khoảng nghỉ, chức danh, nghỉ phép và giới hạn giờ.
             </p>
           </section>
         ) : null}
@@ -288,7 +291,7 @@ export function CellDialog({
   return (
     <Dialog open={open} onClose={onClose} size="lg" title={title} description={subtitle}>
       <div className="space-y-3">
-        {slots.length === 0 ? <div className="py-8 text-center text-sm text-[var(--muted-foreground)]">Không có ca trực</div> : null}
+        {slots.length === 0 ? <div className="py-8 text-center text-sm text-[var(--muted-foreground)]">Không có ca khám</div> : null}
         {slots.map((s) => {
           const mine = s.assignments.some((a) => a.userId === v.userId);
           return (
@@ -319,16 +322,16 @@ export function CellDialog({
                     <span className="ml-1 text-[var(--muted-foreground)]">{a.title}</span>
                   </li>
                 ))}
-                {s.assignments.length === 0 ? <li className="text-xs text-[var(--muted-foreground)]">Chưa có người trực</li> : null}
+                {s.assignments.length === 0 ? <li className="text-xs text-[var(--muted-foreground)]">Chưa xếp bác sĩ</li> : null}
               </ul>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {v.canManage && !locked ? (
                   <Button size="sm" variant="outline" onClick={() => onAssign(s)}>
-                    Quản lý người trực
+                    Xếp bác sĩ
                   </Button>
                 ) : null}
-                {v.canManage && locked ? <span className="text-xs text-[var(--muted-foreground)]">Đã chốt — không đổi người trực tại đây</span> : null}
+                {v.canManage && locked ? <span className="text-xs text-[var(--muted-foreground)]">Đã chốt — không đổi bác sĩ tại đây</span> : null}
               </div>
             </div>
           );
@@ -533,7 +536,7 @@ export function ReviewDialog({
       <div className="space-y-3">
         {withReplacement ? (
           <div className="space-y-1.5">
-            <Label>Người thay trực</Label>
+            <Label>Bác sĩ thay khám</Label>
             <StaffSelect value={replacement} onChange={setReplacement} placeholder="— Giữ người thay đã đề xuất —" />
           </div>
         ) : null}
@@ -569,7 +572,7 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
   const override = useMutation({
     mutationFn: () => dutyApi.override({ slotId, removeUserId, addUserId, reason: reason.trim(), force }),
     onSuccess: (res) => {
-      toast.success(res.forced ? "Đã điều chỉnh (bỏ qua ràng buộc, đã ghi nhật ký)" : "Đã điều chỉnh người trực");
+      toast.success(res.forced ? "Đã điều chỉnh (bỏ qua ràng buộc, đã ghi nhật ký)" : "Đã điều chỉnh bác sĩ khám");
       setReason("");
       setForce(false);
       actions.refresh();
@@ -577,8 +580,8 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
     onError: (e) => toast.error(errorText(e)),
   });
   const submit = () => {
-    if (!slotId) return toast.error("Chọn ca cần điều chỉnh");
-    if (!removeUserId && !addUserId) return toast.error("Chọn người cần gỡ hoặc người cần thêm");
+    if (!slotId) return toast.error("Chọn ca khám cần điều chỉnh");
+    if (!removeUserId && !addUserId) return toast.error("Chọn bác sĩ cần gỡ hoặc bác sĩ cần thêm");
     if (reason.trim().length < 10) return toast.error("Ghi lý do điều chỉnh (tối thiểu 10 ký tự)");
     override.mutate();
   };
@@ -587,8 +590,8 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
       open={open}
       onClose={onClose}
       size="lg"
-      title="Điều chỉnh người trực trực tiếp"
-      description="Dành cho tài khoản Điều phối lịch trực (KHTH): đổi người trực ngay, kể cả sau khi chốt. Mọi thay đổi được ghi nhật ký kèm lý do."
+      title="Điều chỉnh bác sĩ khám trực tiếp"
+      description="Dành cho tài khoản Điều phối lịch khám (KHTH): đổi bác sĩ khám ngay, kể cả sau khi chốt. Mọi thay đổi được ghi nhật ký kèm lý do."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Đóng</Button>
@@ -599,16 +602,17 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="ov-period">Kỳ lịch</Label>
-            <Select id="ov-period" value={String(periodId || "")} onChange={(e) => { setPeriodId(Number(e.target.value)); setSlotId(0); }}>
-              <option value="">— Chọn kỳ —</option>
-              {(periods.data ?? []).filter((p) => p.status !== "NHAP").map((p) => (
-                <option key={p.id} value={p.id}>{p.name}{p.phase === "CHOT" ? " (đã chốt)" : ""}</option>
-              ))}
-            </Select>
+            <Label htmlFor="ov-period">Kỳ lịch khám</Label>
+            <PeriodPicker
+              id="ov-period"
+              periods={(periods.data ?? []).filter((period) => period.status !== "NHAP")}
+              value={periodId || null}
+              onChange={(id) => { setPeriodId(id); setSlotId(0); }}
+              placeholder="Chọn kỳ đã công bố"
+            />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ov-slot">Ca trực</Label>
+            <Label htmlFor="ov-slot">Ca khám</Label>
             <Select id="ov-slot" value={String(slotId || "")} onChange={(e) => { setSlotId(Number(e.target.value)); setRemoveUserId(null); }} disabled={!periodId}>
               <option value="">— Chọn ca —</option>
               {slots.map((s) => (
@@ -644,7 +648,7 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
           <input type="checkbox" className="mt-0.5" checked={force} onChange={(e) => setForce(e.target.checked)} />
           <span>Bỏ qua ràng buộc nếu người được thêm vi phạm (ví dụ quá giờ, sai chức danh). Chỉ dùng khi đã có sự thống nhất của lãnh đạo.</span>
         </label>
-        {slot && slot.assignments.length === 0 ? <ViolationList warnings={["Ca chưa có người trực"]} /> : null}
+        {slot && slot.assignments.length === 0 ? <ViolationList warnings={["Ca khám chưa có bác sĩ"]} /> : null}
       </div>
     </Dialog>
   );
@@ -687,7 +691,7 @@ export function QuickCreateNextPeriodDialog({
       return dutyApi.createPeriod(body);
     },
     onSuccess: (res) => {
-      toast.success(`Đã tạo "${res?.name || "tuần trực mới"}" thành công!`);
+      toast.success(`Đã tạo "${res?.name || "kỳ lịch khám mới"}" thành công!`);
       refresh();
       if (res?.id) onCreated(res.id);
       onClose();
@@ -697,7 +701,7 @@ export function QuickCreateNextPeriodDialog({
 
   if (suggest.isLoading) {
     return (
-      <Dialog open onClose={onClose} title="Đang tính toán thông số tuần tiếp theo...">
+      <Dialog open onClose={onClose} title="Đang chuẩn bị kỳ lịch khám kế tiếp...">
         <div className="py-8 space-y-3">
           <Skeleton className="h-6 w-3/4 mx-auto" />
           <Skeleton className="h-20 w-full" />
@@ -713,8 +717,8 @@ export function QuickCreateNextPeriodDialog({
       open
       onClose={onClose}
       size="lg"
-      title="⚡ Tự động tạo lịch trực tuần mới (1-Click)"
-      description="Hệ thống tự động tính số tuần ISO, ngày Thứ Hai → Chủ Nhật và mốc chốt chuẩn y tế."
+      title="⚡ Tạo kỳ lịch khám mới (1 chạm)"
+      description="Hệ thống tự động tính tuần ISO, ngày Thứ Hai → Chủ Nhật và mốc chốt cho lịch khám."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
@@ -760,7 +764,7 @@ export function QuickCreateNextPeriodDialog({
         {/* Tùy chọn kế thừa */}
         <div className="space-y-2.5">
           <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            Tùy chọn tự động hóa ô trực & phân công
+            Tùy chọn tự động hóa ca khám & phân công
           </Label>
 
           {data.lastPeriod ? (
@@ -786,13 +790,13 @@ export function QuickCreateNextPeriodDialog({
                     <Badge tone="success">Khuyên dùng</Badge>
                   </div>
                   <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                    Tự động tạo {data.lastPeriod.slotCount} ô trực theo đúng các phòng và ca trực của tuần trước.
+                    Tự động tạo {data.lastPeriod.slotCount} ca khám theo đúng các phòng và khung giờ khám của kỳ trước.
                   </p>
                   {mode === "copy" && (
                     <div className="mt-3 pt-2.5 border-t border-dashed flex items-center gap-2">
                       <Switch checked={copyAssignments} onCheckedChange={setCopyAssignments} />
                       <span onClick={() => setCopyAssignments(!copyAssignments)} className="text-xs cursor-pointer font-medium">
-                        Sao chép cả danh sách bác sĩ/nhân viên đã xếp tuần trước ({data.lastPeriod.filledCount} lượt trực)
+                        Sao chép cả danh sách bác sĩ/nhân viên đã xếp ở kỳ trước ({data.lastPeriod.filledCount} lượt phân công)
                       </span>
                     </div>
                   )}
@@ -818,9 +822,9 @@ export function QuickCreateNextPeriodDialog({
                 className="mt-1"
               />
               <div className="flex-1 text-sm">
-                <div className="font-semibold">Tự động sinh toàn bộ ô trực từ danh mục</div>
+                <div className="font-semibold">Tự động sinh toàn bộ ca khám từ danh mục</div>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Tạo ô trực cho mọi phòng khám và ca trực đang hoạt động trong toàn bộ 7 ngày của tuần (bỏ qua ngày nghỉ lễ).
+                  Tạo ca khám cho mọi phòng và khung giờ đang hoạt động trong toàn bộ 7 ngày (bỏ qua ngày nghỉ lễ).
                 </p>
               </div>
             </div>
@@ -843,9 +847,9 @@ export function QuickCreateNextPeriodDialog({
                 className="mt-1"
               />
               <div className="flex-1 text-sm">
-                <div className="font-semibold">Chỉ tạo kỳ trống</div>
+                <div className="font-semibold">Chỉ tạo kỳ khám trống</div>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Tạo khung kỳ lịch nháp, cấu hình ô trực thủ công sau.
+                  Tạo khung kỳ lịch nháp, cấu hình ca khám thủ công sau.
                 </p>
               </div>
             </div>
@@ -854,7 +858,7 @@ export function QuickCreateNextPeriodDialog({
 
         {/* Chỉnh sửa tên nếu muốn */}
         <div className="pt-2">
-          <Label htmlFor="quick-name" className="text-xs">Tên kỳ lịch (tùy chỉnh nếu cần):</Label>
+          <Label htmlFor="quick-name" className="text-xs">Tên kỳ lịch khám (tùy chỉnh nếu cần):</Label>
           <Input
             id="quick-name"
             placeholder={data.name}
@@ -899,7 +903,7 @@ export function ClonePeriodDialog({
         copyAssignments,
       }),
     onSuccess: (res) => {
-      toast.success(`Đã nhân bản "${period.name}" sang "${res.name}" thành công!`);
+      toast.success(`Đã nhân bản "${periodShortLabel(period)}" sang "${periodShortLabel(res)}" thành công!`);
       refresh();
       if (res.id) onCloned(res.id);
       onClose();
@@ -912,8 +916,8 @@ export function ClonePeriodDialog({
       open
       onClose={onClose}
       size="md"
-      title="Nhân bản kỳ lịch sang tuần mới"
-      description={`Sao chép toàn bộ cấu trúc ô trực từ "${period.name}" sang khoảng ngày mới.`}
+      title="Nhân bản kỳ lịch khám sang tuần mới"
+      description={`Sao chép toàn bộ cấu trúc ca khám từ "${periodShortLabel(period)}" sang khoảng ngày mới.`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
@@ -925,7 +929,7 @@ export function ClonePeriodDialog({
     >
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="cl-name">Tên kỳ lịch mới</Label>
+          <Label htmlFor="cl-name">Tên kỳ lịch khám mới</Label>
           <Input id="cl-name" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -952,7 +956,7 @@ export function ClonePeriodDialog({
         <div className="flex items-center gap-2 pt-2">
           <Switch checked={copyAssignments} onCheckedChange={setCopyAssignments} />
           <span onClick={() => setCopyAssignments(!copyAssignments)} className="cursor-pointer text-sm font-normal">
-            Sao chép cả phân công người trực từ kỳ này
+            Sao chép cả phân công bác sĩ từ kỳ này
           </span>
         </div>
       </div>

@@ -21,7 +21,7 @@ export function AbsenceDialog({ open, onClose }: { open: boolean; onClose: () =>
   const save = useMutation({
     mutationFn: () => dutyApi.createAbsence({ startDate, endDate, reason, note: note.trim() }),
     onSuccess: () => {
-      toast.success("Đã gửi yêu cầu chờ duyệt. Ca trực hiện tại vẫn giữ nguyên.");
+      toast.success("Đã gửi yêu cầu chờ duyệt. Ca khám hiện tại vẫn giữ nguyên.");
       refresh();
       onClose();
     },

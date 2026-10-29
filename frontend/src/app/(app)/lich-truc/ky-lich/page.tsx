@@ -22,6 +22,7 @@ import {
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ClonePeriodDialog, QuickCreateNextPeriodDialog, useRefreshDuty } from "@/components/duty/duty-dialogs";
+import { PeriodPicker } from "@/components/duty/period-picker";
 import { DeletePeriodDialog } from "@/components/duty/delete-period-dialog";
 import { CurrentWeekBadge, errorText, KpiTile, PhaseBadge, ShiftChip } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
@@ -49,6 +50,7 @@ import {
   isoWeekNumber,
   isoWeekRange,
   nextMondayYmd,
+  periodShortLabel,
   smartPeriodTitle,
   weekdayLabel,
   type DutyPeriod,
@@ -173,8 +175,8 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
       open
       onClose={onClose}
       size="lg"
-      title={isEdit ? "Sửa cấu hình kỳ lịch" : "Tạo kỳ lịch trực mới"}
-      description="Quản lý thời gian, mốc chốt và thiết lập tự động hóa phân công trực tuần."
+      title={isEdit ? "Sửa cấu hình kỳ lịch" : "Tạo kỳ lịch khám mới"}
+      description="Quản lý thời gian, mốc chốt và tự động hóa phân công bác sĩ khám."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
@@ -186,7 +188,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
             }}
             disabled={save.isPending}
           >
-            {isEdit ? "Lưu thay đổi" : "Tạo kỳ lịch"}
+            {isEdit ? "Lưu thay đổi" : "Tạo kỳ lịch khám"}
           </Button>
         </>
       }
@@ -194,7 +196,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
       <div className="space-y-5">
         {locked ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-            Kỳ lịch đã chốt: chỉ sửa được tên và ghi chú. Muốn đổi thời gian hay ràng buộc, hãy mở chốt trước.
+            Kỳ lịch khám đã chốt: chỉ sửa được tên và ghi chú. Muốn đổi thời gian hay ràng buộc, hãy mở chốt trước.
           </div>
         ) : null}
 
@@ -232,7 +234,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
               <div className="space-y-1">
                 <Label htmlFor="w-year" className="text-xs">Năm</Label>
                 <Select id="w-year" value={String(selectedYear)} onChange={(e) => onSelectYear(Number(e.target.value))}>
-                  {[initialYear - 1, initialYear, initialYear + 1].map((y) => (
+                  {Array.from({ length: 6 }, (_, index) => initialYear - 1 + index).map((y) => (
                     <option key={y} value={y}>Năm {y}</option>
                   ))}
                 </Select>
@@ -254,8 +256,8 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="p-name">Tên kỳ lịch *</Label>
-            <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ví dụ: Tuần 42 (12/10 – 18/10/2026) - Tháng 10" />
+            <Label htmlFor="p-name">Tên kỳ lịch khám *</Label>
+            <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ví dụ: Khám T42 · 12/10–18/10/2026" />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="p-start">Từ ngày (Thứ 2)</Label>
@@ -277,37 +279,39 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
           </div>
         </div>
 
-        {/* Khối tự động hóa sinh ô trực khi tạo mới */}
+        {/* Khối tự động hóa sinh ca khám khi tạo mới */}
         {!isEdit ? (
           <div className="rounded-xl border p-3.5 space-y-3 bg-[var(--card)]">
             <div className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-              Tự động hóa ô trực & phân công
+              Tự động hóa ca khám & phân công
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <div>
                   <div className="font-medium">Sao chép cấu trúc từ kỳ trước</div>
-                  <div className="text-xs text-[var(--muted-foreground)]">Lấy các ô trực từ một kỳ đã có sang kỳ này</div>
+                  <div className="text-xs text-[var(--muted-foreground)]">Lấy các ca khám từ một kỳ đã có sang kỳ này</div>
                 </div>
-                <Select
-                  className="w-48 text-xs"
-                  value={copyPeriodId}
-                  onChange={(e) => {
-                    setCopyPeriodId(e.target.value);
-                    if (e.target.value) setAutoGenSlots(false);
-                  }}
-                >
-                  <option value="">— Không sao chép —</option>
-                  {(existingPeriods.data ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </Select>
+                <div className="w-full sm:w-64">
+                  <PeriodPicker
+                    periods={existingPeriods.data ?? []}
+                    value={copyPeriodId ? Number(copyPeriodId) : null}
+                    onChange={(id) => {
+                      setCopyPeriodId(String(id));
+                      setAutoGenSlots(false);
+                    }}
+                    placeholder="Chọn kỳ để sao chép"
+                    label="Sao chép cấu trúc từ kỳ trước"
+                  />
+                  {copyPeriodId ? (
+                    <button type="button" onClick={() => setCopyPeriodId("")} className="mt-1 text-xs font-medium text-[var(--primary)] hover:underline">Không sao chép</button>
+                  ) : null}
+                </div>
               </div>
 
               {copyPeriodId ? (
                 <div className="pl-3 pt-1 border-l-2 border-teal-500">
                   <ToggleRow
-                    label="Sao chép cả danh sách người trực từ kỳ đó"
+                    label="Sao chép cả danh sách bác sĩ đã xếp từ kỳ đó"
                     checked={copyAssigns}
                     onChange={setCopyAssigns}
                   />
@@ -316,7 +320,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
 
               {!copyPeriodId ? (
                 <ToggleRow
-                  label="Tự động sinh toàn bộ ô trực từ danh mục (mọi phòng và ca active)"
+                  label="Tự động sinh toàn bộ ca khám từ danh mục (mọi phòng và ca đang dùng)"
                   checked={autoGenSlots}
                   onChange={setAutoGenSlots}
                 />
@@ -326,12 +330,12 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
         ) : null}
 
         <div>
-          <h4 className="mb-2 text-sm font-semibold">Ràng buộc xếp trực</h4>
+          <h4 className="mb-2 text-sm font-semibold">Ràng buộc xếp lịch khám</h4>
           <div className="grid gap-3 sm:grid-cols-3">
             <NumField label="Ca tối đa / ngày" value={rules.maxShiftsPerDay} onChange={(v) => set("maxShiftsPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
-            <NumField label="Giờ trực tối đa / ngày" value={rules.maxHoursPerDay} onChange={(v) => set("maxHoursPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
-            <NumField label="Giờ trực tối đa / tuần" value={rules.maxHoursPerWeek} onChange={(v) => set("maxHoursPerWeek", num(v))} hint="Mặc định 0 = không giới hạn" />
-            <NumField label="Nghỉ tối thiểu giữa hai ca (giờ)" value={rules.minRestHours} onChange={(v) => set("minRestHours", num(v))} hint="Mặc định 0; ca đêm liền kề vẫn bị chặn" />
+            <NumField label="Giờ khám tối đa / ngày" value={rules.maxHoursPerDay} onChange={(v) => set("maxHoursPerDay", num(v))} hint="Mặc định 0 = không giới hạn" />
+            <NumField label="Giờ khám tối đa / tuần" value={rules.maxHoursPerWeek} onChange={(v) => set("maxHoursPerWeek", num(v))} hint="Mặc định 0 = không giới hạn" />
+            <NumField label="Nghỉ tối thiểu giữa hai ca khám (giờ)" value={rules.minRestHours} onChange={(v) => set("minRestHours", num(v))} hint="Mặc định 0; ca đêm liền kề vẫn bị chặn" />
             <NumField label="Ca tối đa / kỳ" value={rules.maxShiftsPerPeriod} onChange={(v) => set("maxShiftsPerPeriod", num(v))} hint="Mặc định 0 = không giới hạn" />
             <NumField label="Ca đêm tối đa / kỳ" value={rules.maxNightShiftsPerPeriod} onChange={(v) => set("maxNightShiftsPerPeriod", num(v))} hint="Mặc định 0 = không giới hạn" />
           </div>
@@ -347,7 +351,7 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
             <div className="space-y-2 pt-1">
               <ToggleRow label="Cho phép nhân viên tự đăng ký ca trống" checked={rules.allowSelfRegister} onChange={(v) => set("allowSelfRegister", v)} />
               <ToggleRow label="Đổi/nhường ca cần Trưởng khoa duyệt" checked={rules.swapNeedsApproval} onChange={(v) => set("swapNeedsApproval", v)} />
-              <ToggleRow label="Chặn công bố khi còn ô thiếu người" checked={rules.requireFullBeforePublish} onChange={(v) => set("requireFullBeforePublish", v)} />
+              <ToggleRow label="Chặn công bố khi còn vị trí thiếu bác sĩ" checked={rules.requireFullBeforePublish} onChange={(v) => set("requireFullBeforePublish", v)} />
             </div>
           </div>
         </div>
@@ -380,7 +384,7 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
   );
 }
 
-/* ================================================================== Sinh ô hàng loạt */
+/* ================================================================== Sinh ca khám hàng loạt */
 
 function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: () => void; periodId: number }) {
   const refresh = useRefreshDuty();
@@ -395,7 +399,7 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
   const gen = useMutation({
     mutationFn: () => dutyApi.generate(periodId, { roomIds, shiftIds, roleIds, weekdays, requiredCount: required, skipClosedDays: skipClosed }),
     onSuccess: (r) => {
-      toast.success(`Đã tạo ${r.created} ô trực${r.skipped ? ` (bỏ qua ${r.skipped} ô đã có hoặc nghỉ)` : ""}`);
+      toast.success(`Đã tạo ${r.created} ca khám${r.skipped ? ` (bỏ qua ${r.skipped} ca đã có hoặc ngày nghỉ)` : ""}`);
       refresh();
       onClose();
     },
@@ -407,21 +411,21 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
       open={open}
       onClose={onClose}
       size="lg"
-      title="Sinh ô trực hàng loạt"
-      description="Hệ thống tạo ô cho mọi ngày × phòng × ca × vai trò đã chọn. Ngày nghỉ lễ sẽ được bỏ qua."
+      title="Sinh ca khám hàng loạt"
+      description="Hệ thống tạo ca khám cho mọi ngày × phòng × khung giờ × vai trò đã chọn. Ngày nghỉ lễ sẽ được bỏ qua."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
           <Button disabled={!total || gen.isPending} onClick={() => gen.mutate()}>
-            <Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ô trực"}
+            <Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <CheckGroup label="Phòng khám" items={catalog.rooms} selected={roomIds} onToggle={(v) => toggle(roomIds, v, setRoomIds)} />
-        <CheckGroup label="Ca trực" items={catalog.shifts} selected={shiftIds} onToggle={(v) => toggle(shiftIds, v, setShiftIds)} />
-        <CheckGroup label="Vai trò trực" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} />
+        <CheckGroup label="Ca khám" items={catalog.shifts} selected={shiftIds} onToggle={(v) => toggle(shiftIds, v, setShiftIds)} />
+        <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} />
         <div>
           <Label className="mb-1.5 block text-xs">Các ngày trong tuần</Label>
           <div className="flex flex-wrap gap-1.5">
@@ -438,7 +442,7 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <NumField label="Chỉ tiêu người trực mỗi ô" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Không giới hạn số người mà người xếp lịch có thể phân công" />
+          <NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Không giới hạn số bác sĩ mà người xếp lịch có thể phân công" />
           <div className="flex items-end gap-2 pb-2">
             <Switch checked={skipClosed} onCheckedChange={setSkipClosed} />
             <span className="text-sm">Bỏ qua ngày nghỉ lễ</span>
@@ -497,7 +501,7 @@ function useCatalogOptions(enabled: boolean) {
   };
 }
 
-/* ================================================================== Thêm một ô lẻ */
+/* ================================================================== Thêm một ca khám */
 
 function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => void; period: DutyPeriod }) {
   const refresh = useRefreshDuty();
@@ -511,7 +515,7 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
     mutationFn: () =>
       dutyApi.createSlot(period.id, { dutyDate: date, roomId: Number(roomId), shiftId: Number(shiftId), roleId: Number(roleId), requiredCount: Number(required) || 1 }),
     onSuccess: () => {
-      toast.success("Đã thêm ô trực");
+      toast.success("Đã thêm ca khám");
       refresh();
       onClose();
     },
@@ -521,17 +525,17 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
     <Dialog
       open={open}
       onClose={onClose}
-      title="Thêm ô trực"
+      title="Thêm ca khám"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!roomId || !shiftId || !roleId || create.isPending} onClick={() => create.mutate()}>Thêm ô</Button>
+          <Button disabled={!roomId || !shiftId || !roleId || create.isPending} onClick={() => create.mutate()}>Thêm ca</Button>
         </>
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label htmlFor="s-date">Ngày trực</Label>
+          <Label htmlFor="s-date">Ngày khám</Label>
           <Input id="s-date" type="date" min={period.startDate} max={period.endDate} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -542,7 +546,7 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="s-shift">Ca trực</Label>
+          <Label htmlFor="s-shift">Ca khám</Label>
           <Select id="s-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)}>
             <option value="">— Chọn —</option>
             {catalog.shifts.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -555,7 +559,7 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
             {catalog.roles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </Select>
         </div>
-        <NumField label="Chỉ tiêu người trực" value={Number(required)} onChange={setRequired} hint="Không giới hạn số người mà người xếp lịch có thể phân công" />
+        <NumField label="Chỉ tiêu bác sĩ" value={Number(required)} onChange={setRequired} hint="Không giới hạn số bác sĩ mà người xếp lịch có thể phân công" />
       </div>
     </Dialog>
   );
@@ -643,7 +647,7 @@ export default function KyLichPage() {
   const PERIODS_PAGE_SIZE = 8;
 
   const canManage = can("duty.period.manage");
-  /** Giờ trực tổng hợp và nhật ký chỉ dành cho người quản lý lịch */
+  /** Khối lượng khám tổng hợp và nhật ký chỉ dành cho người quản lý lịch */
   const canOversee = can("duty.manage") || can("duty.manage-all");
   const periods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: can("duty.view") });
   const allPeriods = useMemo(() => periods.data ?? [], [periods.data]);
@@ -731,14 +735,14 @@ export default function KyLichPage() {
     }
   };
 
-  if (!canOversee && !canManage) return <EmptyState title="Trang này dành cho người quản lý lịch trực" />;
+  if (!canOversee && !canManage) return <EmptyState title="Trang này dành cho người quản lý lịch khám" />;
   const g = grid.data;
 
   return (
     <>
       <PageHeader
-        title="Kỳ lịch & công bố"
-        description="Tạo kỳ lịch tuần, sinh ô trực, phân công, công bố và chốt lịch. Theo dõi giờ trực công bằng và nhật ký thay đổi."
+        title="Kỳ lịch khám & công bố"
+        description="Tạo kỳ lịch khám, sinh ca khám, phân công, công bố và chốt lịch. Theo dõi khối lượng khám công bằng và nhật ký thay đổi."
         actions={
           canManage ? (
             <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
@@ -746,7 +750,7 @@ export default function KyLichPage() {
                 onClick={() => setQuickCreateOpen(true)}
                 className="w-full bg-emerald-600 text-white font-medium shadow-sm hover:bg-emerald-700 sm:w-auto"
               >
-                <Sparkles className="h-4 w-4 mr-1" /> Tạo tuần tiếp theo
+                <Sparkles className="h-4 w-4 mr-1" /> Tạo kỳ khám kế tiếp
               </Button>
               <Button onClick={() => setCreating(true)} variant="outline" className="w-full sm:w-auto">
                 <CalendarPlus className="h-4 w-4" /> Tùy chỉnh kỳ lịch
@@ -760,11 +764,11 @@ export default function KyLichPage() {
       {!periods.isLoading && !periods.data?.length ? (
         <EmptyState
           title="Chưa có kỳ lịch nào"
-          description="Tạo kỳ lịch đầu tiên để bắt đầu."
+          description="Tạo kỳ lịch khám đầu tiên để bắt đầu."
           action={
             canManage ? (
               <Button onClick={() => setQuickCreateOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-                <Sparkles className="h-4 w-4" /> Tạo kỳ lịch tuần đầu tiên
+                <Sparkles className="h-4 w-4" /> Tạo kỳ lịch khám tuần đầu tiên
               </Button>
             ) : undefined
           }
@@ -776,12 +780,12 @@ export default function KyLichPage() {
           <CardHeader
             title={
               <div className="flex items-center gap-2 text-base">
-                <span>Danh mục kỳ lịch trực</span>
+                <span>Danh mục kỳ lịch khám</span>
                 <Badge tone="muted">{filteredPeriods.length}/{allPeriods.length} kỳ</Badge>
                 <span className="text-xs font-normal text-[var(--muted-foreground)]">Danh sách kỳ lịch</span>
               </div>
             }
-            description="Lọc danh sách kỳ lịch riêng; chọn một kỳ để xem ô trực, giờ trực và nhật ký ở phần chi tiết bên dưới."
+            description="Lọc danh sách kỳ lịch riêng; chọn một kỳ để xem ca khám, khối lượng và nhật ký ở phần chi tiết bên dưới."
             actions={
               <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                 <div className="relative col-span-2 sm:col-auto">
@@ -896,7 +900,7 @@ export default function KyLichPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-semibold">{p.name}</span>
+                          <span className="font-semibold">{periodShortLabel(p)}</span>
                           {isCur ? <CurrentWeekBadge /> : null}
                           <span className="rounded bg-[var(--muted)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--muted-foreground)]">T{weekNum}</span>
                         </div>
@@ -905,7 +909,7 @@ export default function KyLichPage() {
                       <PhaseBadge period={p} />
                     </div>
                     <div className="mt-3">
-                      <div className="mb-1 flex items-center justify-between text-xs"><span>Tiến độ xếp trực</span><span className={isFull ? "font-semibold text-emerald-600" : "font-semibold text-amber-600"}>{p.filledCount ?? 0}/{p.requiredCount ?? 0} · {percent}%</span></div>
+                      <div className="mb-1 flex items-center justify-between text-xs"><span>Tiến độ xếp bác sĩ</span><span className={isFull ? "font-semibold text-emerald-600" : "font-semibold text-amber-600"}>{p.filledCount ?? 0}/{p.requiredCount ?? 0} · {percent}%</span></div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={isFull ? "h-full bg-emerald-500" : "h-full bg-amber-500"} style={{ width: `${percent}%` }} /></div>
                     </div>
                   </button>
@@ -918,10 +922,10 @@ export default function KyLichPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr>
-                    <Th>Kỳ lịch</Th>
+                    <Th>Kỳ khám</Th>
                     <Th>Thời gian</Th>
                     <Th>Trạng thái</Th>
-                    <Th>Tiến độ xếp trực</Th>
+                    <Th>Tiến độ xếp bác sĩ</Th>
                     <Th>Mốc chốt</Th>
                     <Th className="text-right">Thao tác</Th>
                   </tr>
@@ -947,7 +951,7 @@ export default function KyLichPage() {
                       >
                         <Td className="font-medium">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-[13px]">{p.name}</span>
+                            <span className="font-semibold text-[13px]">{periodShortLabel(p)}</span>
                             {isCur ? <CurrentWeekBadge /> : null}
                             <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-[var(--muted)] text-[var(--muted-foreground)]">
                               T{weekNum}
@@ -1034,7 +1038,7 @@ export default function KyLichPage() {
             <CardHeader
               title={
                 <span className="flex flex-wrap items-center gap-2">
-                  {selected.name} <PhaseBadge period={selected} />
+                  {periodShortLabel(selected)} <PhaseBadge period={selected} />
                 </span>
               }
               description={`${fmtDate(selected.startDate)} – ${fmtDate(selected.endDate)} · Mốc chốt: ${fmtDateTime(selected.lockAt)}${selected.publishedAt ? ` · Công bố: ${fmtDateTime(selected.publishedAt)}` : ""}`}
@@ -1046,10 +1050,10 @@ export default function KyLichPage() {
                         <Pencil className="h-4 w-4" /> Cấu hình
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => setGenerating(true)}>
-                        <Wand2 className="h-4 w-4" /> Sinh ô
+                        <Wand2 className="h-4 w-4" /> Sinh ca
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => setAddingSlot(true)}>
-                        <Plus className="h-4 w-4" /> Thêm ô
+                        <Plus className="h-4 w-4" /> Thêm ca
                       </Button>
                       <Button size="sm" onClick={() => { setForcePublish(false); setConfirmPublish(true); }}>
                         <Send className="h-4 w-4" /> Công bố
@@ -1073,7 +1077,7 @@ export default function KyLichPage() {
                   ) : null}
                   {canManage ? (
                     <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40" onClick={() => setDeleteOpen(true)}>
-                      <Trash2 className="h-4 w-4" /> Xoá kỳ lịch
+                      <Trash2 className="h-4 w-4" /> Xoá kỳ khám
                     </Button>
                   ) : null}
                 </div>
@@ -1082,9 +1086,9 @@ export default function KyLichPage() {
             <CardBody>
               {g ? (
                 <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <KpiTile label="Ô trực" value={g.summary.slots} />
-                  <KpiTile label="Vị trí cần người" value={g.summary.required} />
-                  <KpiTile label="Đã xếp" value={g.summary.filled} tone="success" />
+                  <KpiTile label="Ca khám" value={g.summary.slots} />
+                  <KpiTile label="Vị trí cần bác sĩ" value={g.summary.required} />
+                  <KpiTile label="Đã xếp bác sĩ" value={g.summary.filled} tone="success" />
                   <KpiTile label="Còn thiếu" value={g.summary.missing} tone={g.summary.missing ? "warning" : "default"} />
                 </div>
               ) : null}
@@ -1094,7 +1098,7 @@ export default function KyLichPage() {
                 items={[
                   {
                     key: "slots",
-                    label: "Ô trực",
+                    label: "Ca khám",
                     content: (
                       <SlotsTable
                         key={selected.id}
@@ -1105,7 +1109,7 @@ export default function KyLichPage() {
                       />
                     ),
                   },
-                  ...(canOversee ? [{ key: "hours", label: "Giờ trực", content: <HoursTab data={summary.data} loading={summary.isLoading} /> },
+                  ...(canOversee ? [{ key: "hours", label: "Khối lượng khám", content: <HoursTab data={summary.data} loading={summary.isLoading} /> },
                   { key: "logs", label: "Nhật ký", content: <LogsTab logs={logs.data} loading={logs.isLoading} canView={canOversee} /> }] : []),
                 ]}
               />
@@ -1153,19 +1157,19 @@ export default function KyLichPage() {
       {selected ? (
         <ConfirmDialog
           open={confirmPublish}
-          title="Công bố lịch trực"
+          title="Công bố lịch khám"
           confirmText="Công bố"
           onClose={() => setConfirmPublish(false)}
           onConfirm={() => {
-            run(() => dutyApi.publish(selected.id, forcePublish), "Đã công bố lịch. Người trực đã được thông báo.", () => setConfirmPublish(false));
+            run(() => dutyApi.publish(selected.id, forcePublish), "Đã công bố lịch. Bác sĩ khám đã được thông báo.", () => setConfirmPublish(false));
           }}
           message={
             <div className="space-y-3">
-              <p>Sau khi công bố, nhân viên thấy lịch và có thể đăng ký ca trống. Thông báo sẽ gửi tới từng người được xếp trực.</p>
+              <p>Sau khi công bố, nhân viên thấy lịch và có thể đăng ký ca trống. Thông báo sẽ gửi tới từng bác sĩ được xếp khám.</p>
               {g && g.summary.missing > 0 ? (
                 <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/60 p-2.5 text-xs dark:border-amber-800 dark:bg-amber-950/30">
                   <input type="checkbox" className="mt-0.5" checked={forcePublish} onChange={(e) => setForcePublish(e.target.checked)} />
-                  <span>Còn {g.summary.missing} ô chưa đủ người. Vẫn công bố (việc này được ghi vào nhật ký).</span>
+                  <span>Còn {g.summary.missing} vị trí chưa đủ bác sĩ. Vẫn công bố (việc này được ghi vào nhật ký).</span>
                 </label>
               ) : null}
             </div>
@@ -1176,11 +1180,11 @@ export default function KyLichPage() {
       {selected ? (
         <ConfirmDialog
           open={confirmLock}
-          title="Chốt lịch trực"
+          title="Chốt lịch khám"
           confirmText="Chốt lịch"
           onClose={() => setConfirmLock(false)}
           onConfirm={() => run(() => dutyApi.lock(selected.id), "Đã chốt lịch", () => setConfirmLock(false))}
-          message="Sau khi chốt, nhân viên không tự đăng ký hay đổi ca được nữa. Muốn đổi người trực phải gửi yêu cầu ngoại lệ tới KHTH."
+          message="Sau khi chốt, nhân viên không tự đăng ký hay đổi ca được nữa. Muốn đổi bác sĩ khám phải gửi yêu cầu ngoại lệ tới KHTH."
         />
       ) : null}
 
@@ -1214,7 +1218,7 @@ export default function KyLichPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="u-reason">Lý do *</Label>
-              <Textarea id="u-reason" rows={3} value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Ví dụ: Bổ sung bác sĩ trực thay sau sự cố" />
+              <Textarea id="u-reason" rows={3} value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Ví dụ: Bổ sung bác sĩ khám thay sau sự cố" />
             </div>
           </div>
         </Dialog>
@@ -1223,21 +1227,21 @@ export default function KyLichPage() {
       {deleteSlot ? (
         <ConfirmDialog
           open={!!deleteSlot}
-          title="Xoá ô trực"
-          confirmText="Xoá ô"
+          title="Xoá ca khám"
+          confirmText="Xoá ca"
           onClose={() => setDeleteSlot(null)}
           onConfirm={() => {
             const hasPeople = deleteSlot.assignments.length > 0;
             run(
-              () => dutyApi.deleteSlot(deleteSlot.id, hasPeople ? { force: true, reason: "Xoá ô theo điều chỉnh kế hoạch trực" } : {}),
-              "Đã xoá ô trực",
+              () => dutyApi.deleteSlot(deleteSlot.id, hasPeople ? { force: true, reason: "Xoá ca theo điều chỉnh kế hoạch khám" } : {}),
+              "Đã xoá ca khám",
               () => setDeleteSlot(null),
             );
           }}
           message={
             deleteSlot.assignments.length
-              ? `Ô này đang có ${deleteSlot.assignments.length} người trực. Xoá sẽ gỡ họ khỏi ca và thông báo cho từng người.`
-              : "Xoá ô trực này khỏi kỳ lịch?"
+              ? `Ca này đang có ${deleteSlot.assignments.length} bác sĩ. Xoá sẽ gỡ họ khỏi ca khám và thông báo cho từng người.`
+              : "Xoá ca khám này khỏi kỳ lịch?"
           }
         />
       ) : null}
@@ -1255,13 +1259,13 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
   const visibleSlots = slots.slice((safePage - 1) * SLOT_PAGE_SIZE, safePage * SLOT_PAGE_SIZE);
 
   if (loading) return <Skeleton className="h-40 w-full" />;
-  if (!slots.length) return <EmptyState title="Chưa có ô trực" description="Dùng nút Sinh ô hoặc Thêm ô để tạo lịch." />;
+  if (!slots.length) return <EmptyState title="Chưa có ca khám" description="Dùng nút Sinh ca hoặc Thêm ca để tạo lịch khám." />;
   return (
     <div className="overflow-hidden rounded-xl border">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-[var(--muted)]/15 px-3 py-2.5">
         <div>
-          <h3 className="text-sm font-semibold">Danh sách ô trực</h3>
-          <p className="text-xs text-[var(--muted-foreground)]">Phân trang độc lập với danh sách kỳ lịch để giữ bảng nhẹ khi một kỳ có nhiều phòng và ca.</p>
+          <h3 className="text-sm font-semibold">Danh sách ca khám</h3>
+          <p className="text-xs text-[var(--muted-foreground)]">Phân trang độc lập với danh sách kỳ lịch để giữ bảng nhẹ khi một kỳ có nhiều phòng và ca khám.</p>
         </div>
         <Badge tone="muted">{slots.length} ô</Badge>
       </div>
@@ -1273,8 +1277,8 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
               <Badge tone={s.filled >= s.requiredCount ? "success" : "warning"}>{s.filled}/{s.requiredCount}</Badge>
             </div>
             <div className="mt-2 flex items-center gap-1.5"><ShiftChip code={s.shiftCode} color={s.shiftColor} /><span className="text-xs">{s.startTime}–{s.endTime}</span></div>
-            <div className="mt-2 text-xs text-[var(--muted-foreground)]">{s.assignments.map((a) => a.fullName).join(", ") || "Chưa có người trực"}</div>
-            {canEdit ? <div className="mt-2 flex justify-end"><Button size="sm" variant="ghost" onClick={() => onDelete(s)}><Trash2 className="h-4 w-4" /> Xoá ô</Button></div> : null}
+            <div className="mt-2 text-xs text-[var(--muted-foreground)]">{s.assignments.map((a) => a.fullName).join(", ") || "Chưa xếp bác sĩ"}</div>
+            {canEdit ? <div className="mt-2 flex justify-end"><Button size="sm" variant="ghost" onClick={() => onDelete(s)}><Trash2 className="h-4 w-4" /> Xoá ca</Button></div> : null}
           </div>
         ))}
       </div>
@@ -1286,7 +1290,7 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
             <Th>Phòng</Th>
             <Th>Ca</Th>
             <Th>Vai trò</Th>
-            <Th>Người trực</Th>
+            <Th>Bác sĩ khám</Th>
             <Th>Đủ</Th>
             {canEdit ? <Th className="text-right">&nbsp;</Th> : null}
           </tr>
@@ -1310,7 +1314,7 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
               </Td>
               {canEdit ? (
                 <Td className="text-right">
-                  <Button size="sm" variant="ghost" onClick={() => onDelete(s)} title="Xoá ô">
+                  <Button size="sm" variant="ghost" onClick={() => onDelete(s)} title="Xoá ca">
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </Td>
@@ -1325,7 +1329,7 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
         page={safePage}
         pageSize={SLOT_PAGE_SIZE}
         onPage={setPage}
-        noun="ô trực"
+        noun="ca khám"
       />
     </div>
   );
@@ -1333,11 +1337,11 @@ function SlotsTable({ slots, loading, canEdit, onDelete }: { slots: GridSlot[]; 
 
 function HoursTab({ data, loading }: { data?: { items: { userId: number; fullName: string; title: string; departmentName: string; shifts: number; nights: number; hours: number; days: number }[]; fairness: { people: number; maxHours: number; minHours: number; gapHours: number } }; loading: boolean }) {
   if (loading || !data) return <Skeleton className="h-40 w-full" />;
-  if (!data.items.length) return <EmptyState title="Chưa có ai được xếp trực" />;
+  if (!data.items.length) return <EmptyState title="Chưa có bác sĩ được xếp khám" />;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiTile label="Người trực" value={data.fairness.people} />
+        <KpiTile label="Bác sĩ khám" value={data.fairness.people} />
         <KpiTile label="Nhiều giờ nhất" value={hoursText(data.fairness.maxHours)} />
         <KpiTile label="Ít giờ nhất" value={hoursText(data.fairness.minHours)} />
         <KpiTile label="Chênh lệch" value={hoursText(data.fairness.gapHours)} tone={data.fairness.gapHours > 24 ? "warning" : "success"} hint="Càng nhỏ càng công bằng" />
@@ -1352,7 +1356,7 @@ function HoursTab({ data, loading }: { data?: { items: { userId: number; fullNam
               <Th>Nhân viên</Th>
               <Th>Chức danh</Th>
               <Th>Khoa</Th>
-              <Th className="text-right">Ngày trực</Th>
+              <Th className="text-right">Ngày khám</Th>
               <Th className="text-right">Số ca</Th>
               <Th className="text-right">Ca đêm</Th>
               <Th className="text-right">Tổng giờ</Th>

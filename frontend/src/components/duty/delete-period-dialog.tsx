@@ -24,7 +24,7 @@ export function DeletePeriodDialog({
   const mut = useMutation({
     mutationFn: () =>
       dutyApi.deletePeriod(period.id, {
-        reason: "Xoá kỳ lịch trực",
+        reason: "Xoá kỳ lịch khám",
         confirmName: period.name,
       }),
     onSuccess: (r) => {
@@ -39,7 +39,7 @@ export function DeletePeriodDialog({
     <Dialog
       open
       onClose={onClose}
-      title="Xác nhận xoá kỳ lịch trực"
+      title="Xác nhận xoá kỳ lịch khám"
       description={`${period.name} · ${fmtDate(period.startDate)} – ${fmtDate(period.endDate)}`}
       footer={
         <>
@@ -66,7 +66,7 @@ export function DeletePeriodDialog({
               Bạn có chắc chắn muốn xoá kỳ lịch &quot;{period.name}&quot;?
             </p>
             <p className="text-xs text-rose-800 dark:text-rose-300">
-              Thao tác này sẽ xoá hoàn toàn <strong>{period.slotCount ?? 0} ô trực</strong> và{" "}
+              Thao tác này sẽ xoá hoàn toàn <strong>{period.slotCount ?? 0} ca khám</strong> và{" "}
               <strong>{period.filledCount ?? 0} lượt phân công</strong> trong kỳ.
             </p>
             <ul className="list-disc space-y-0.5 pl-4 text-xs text-rose-700 dark:text-rose-300/80">
@@ -76,7 +76,7 @@ export function DeletePeriodDialog({
                 <li>Kỳ nháp chưa công bố nên nhân viên không nhận thông báo.</li>
               )}
               <li>Nhật ký thao tác được lưu trữ lại để đối soát hệ thống.</li>
-              <li>Không xoá được nếu đã có ca trực đã diễn ra hoặc đang diễn ra.</li>
+              <li>Không xoá được nếu đã có ca khám đã diễn ra hoặc đang diễn ra.</li>
             </ul>
           </div>
         </div>

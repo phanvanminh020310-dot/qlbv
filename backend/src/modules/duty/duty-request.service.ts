@@ -24,7 +24,7 @@ const ADVISORY_NS = 9301;
 const SWAP_TYPES: DutyRequestType[] = ['NHUONG', 'DOI'];
 const OPEN_STATUSES: DutyRequestStatus[] = ['CHO_NGUOI_NHAN', 'CHO_DUYET'];
 
-/** Khóa ô và khóa người theo thứ tự cố định để tránh deadlock */
+/** Khóa ca khám và khóa người theo thứ tự cố định để tránh deadlock */
 async function lockAll(tx: Tx, slotIds: number[], userIds: number[]) {
   for (const id of [...new Set(slotIds)].sort((a, b) => a - b)) {
     await tx.execute(sql`select id from duty_slots where id = ${id} for update`);
@@ -66,7 +66,7 @@ export class DutyRequestService {
     return row ?? null;
   }
 
-  /** Kiểm tra một người có thể nhận ô (sau khi người khác rời ô / gỡ ca khác) */
+  /** Kiểm tra một người có thể nhận ca khám (sau khi người khác rời ô / gỡ ca khác) */
   private async checkMove(
     tx: Tx | DbService['db'],
     slotId: number,
@@ -224,7 +224,7 @@ export class DutyRequestService {
       const other = await this.core.getSlot(dto.targetSlotId);
       if (other.periodId !== slot.periodId) throw new BadRequestException('Hai ca phải thuộc cùng một kỳ lịch');
       const theirs = await this.assignmentOf(dto.targetSlotId, targetUserId);
-      if (!theirs) throw new ConflictException('Người đổi ca không còn trực ca đã chọn');
+      if (!theirs) throw new ConflictException('Người đổi ca không còn trong ca khám đã chọn');
       if (this.core.toEngineSlot(other).start <= Date.now()) throw new ConflictException('Ca của người đổi đã bắt đầu');
       targetSlotId = dto.targetSlotId;
       const a = await this.checkMove(this.db.db, dto.slotId, targetUserId, { filledDelta: -1, exclude: [dto.targetSlotId] });
@@ -272,7 +272,7 @@ export class DutyRequestService {
     if (dto.type === 'NGOAI_LE') {
       const holders = await this.core.holderIds(['duty.exception.resolve']);
       this.core.notifyAfterCommit(holders.filter((id) => id !== user.id), {
-        title: dto.urgent ? 'Đổi trực KHẨN — cần KHTH xử lý' : 'Yêu cầu ngoại lệ đổi trực',
+        title: dto.urgent ? 'Đổi lịch khám KHẨN — cần KHTH xử lý' : 'Yêu cầu ngoại lệ đổi lịch khám',
         body: `${who}: ${where}. ${dto.reason}`,
         level: dto.urgent ? 'ERROR' : 'WARNING',
         link: '/lich-truc/yeu-cau',
@@ -281,7 +281,7 @@ export class DutyRequestService {
       });
     } else {
       this.core.notifyAfterCommit([targetUserId], {
-        title: dto.type === 'NHUONG' ? 'Có đề nghị nhận ca trực' : 'Có đề nghị đổi ca trực',
+        title: dto.type === 'NHUONG' ? 'Có đề nghị nhận ca khám' : 'Có đề nghị đổi ca khám',
         body: `${who} đề nghị ${dto.type === 'NHUONG' ? 'nhường' : 'đổi'} ca ${where}. Mở "Lịch của tôi" để đồng ý hoặc từ chối.`,
         level: 'INFO',
         link: '/lich-truc/cua-toi',
@@ -341,7 +341,7 @@ export class DutyRequestService {
       const approvers = await this.core.holderIds(['duty.swap.approve', 'duty.manage-all']);
       this.core.notifyAfterCommit(approvers, {
         title: 'Đổi/nhường ca chờ duyệt',
-        body: `${user.fullName} đã đồng ý với đề nghị đổi/nhường ca. Cần Trưởng khoa hoặc Điều phối lịch trực duyệt.`,
+        body: `${user.fullName} đã đồng ý với đề nghị đổi/nhường ca. Cần Trưởng khoa hoặc Điều phối lịch khám duyệt.`,
         level: 'INFO',
         link: '/lich-truc/yeu-cau',
         module: 'DUTY',
@@ -402,7 +402,7 @@ export class DutyRequestService {
     const { locked } = this.core.phaseOf(period);
 
     if (req.type === 'NGOAI_LE') {
-      if (!this.core.hasPerm(user, 'duty.exception.resolve')) throw new ForbiddenException('Chỉ KHTH (điều phối lịch trực) mới xử lý ngoại lệ');
+      if (!this.core.hasPerm(user, 'duty.exception.resolve')) throw new ForbiddenException('Chỉ KHTH (điều phối lịch khám) mới xử lý ngoại lệ');
       await this.resolveException(user, req, dto);
     } else {
       const requester = (await this.core.loadUsers(this.db.db, [req.requesterId])).get(req.requesterId);
@@ -437,7 +437,7 @@ export class DutyRequestService {
       .where(eq(dutyRequests.id, id));
     await this.core.log(this.db.db, { periodId: req.periodId, slotId: req.slotId, requestId: id, action: 'REQUEST_REJECTED', actorId: user.id, userId: req.requesterId, reason: dto.note });
     this.core.notifyAfterCommit([req.requesterId, req.targetUserId], {
-      title: 'Yêu cầu trực bị từ chối',
+      title: 'Yêu cầu ca khám bị từ chối',
       body: dto.note,
       level: 'WARNING',
       link: '/lich-truc/cua-toi',
@@ -448,7 +448,7 @@ export class DutyRequestService {
     return { ok: true };
   }
 
-  /** Thực hiện đổi/nhường ca (trong transaction đã khoá ô và người) */
+  /** Thực hiện đổi/nhường ca khám (trong transaction đã khoá ca khám và người) */
   private async executeSwap(tx: Tx, req: typeof dutyRequests.$inferSelect, actorId: number, note: string) {
     const giver = await this.assignmentOf(req.slotId, req.requesterId, tx);
     if (!giver) throw new ConflictException('Người yêu cầu không còn trong ca — yêu cầu không còn hiệu lực');
@@ -534,9 +534,9 @@ export class DutyRequestService {
     });
     const slot = await this.core.getSlot(req.slotId);
     const where = `${slot.roomCode} · ${slot.shiftCode} · ${fmtDate(slot.dutyDate)}`;
-    this.core.notifyAfterCommit([removedId], { title: 'Ca trực đã được điều chỉnh (ngoại lệ)', body: `${where}. KHTH đã cập nhật người trực.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
+    this.core.notifyAfterCommit([removedId], { title: 'Ca khám đã được điều chỉnh (ngoại lệ)', body: `${where}. KHTH đã cập nhật bác sĩ khám.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
     if (replacementId) {
-      this.core.notifyAfterCommit([replacementId], { title: 'Bạn được xếp trực thay (ngoại lệ)', body: `${where}. Vui lòng xác nhận lịch của bạn.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
+      this.core.notifyAfterCommit([replacementId], { title: 'Bạn được xếp khám thay (ngoại lệ)', body: `${where}. Vui lòng xác nhận lịch của bạn.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
     }
     this.core.notifyAfterCommit([req.requesterId], { title: 'Yêu cầu ngoại lệ đã được xử lý', body: `${where}: ${dto.note ?? 'KHTH đã duyệt'}`, level: 'INFO', link: '/lich-truc/yeu-cau', module: 'DUTY', entityId: String(req.id) });
   }
@@ -544,7 +544,7 @@ export class DutyRequestService {
   private notifySwapDone(requesterId: number, receiverId: number, periodId: number, requestId: number) {
     this.core.notifyAfterCommit([requesterId, receiverId], {
       title: 'Đổi/nhường ca đã được duyệt',
-      body: 'Lịch trực của bạn đã được cập nhật. Vui lòng kiểm tra trong mục Lịch của tôi.',
+      body: 'Lịch khám của bạn đã được cập nhật. Vui lòng kiểm tra trong mục Lịch của tôi.',
       level: 'SUCCESS',
       link: '/lich-truc/cua-toi',
       module: 'DUTY',
@@ -553,9 +553,9 @@ export class DutyRequestService {
     this.core.emit('request', periodId);
   }
 
-  /* ================================================================ Đổi trực trực tiếp (tài khoản điều phối) */
+  /* ================================================================ Đổi lịch khám trực tiếp (tài khoản điều phối) */
 
-  /** Điều phối toàn viện: đổi người trực ngay, kể cả sau khi chốt. Bắt buộc ghi lý do. */
+  /** Điều phối toàn viện: đổi bác sĩ khám ngay, kể cả sau khi chốt. Bắt buộc ghi lý do. */
   async override(user: AccessContext, dto: OverrideDto) {
     if (!dto.removeUserId && !dto.addUserId) throw new BadRequestException('Chọn người cần gỡ hoặc người cần thêm');
     if (dto.removeUserId && dto.removeUserId === dto.addUserId) throw new BadRequestException('Người gỡ và người thêm không thể trùng nhau');
@@ -589,10 +589,10 @@ export class DutyRequestService {
     });
     const where = `${slot.roomCode} · ${slot.shiftCode} · ${fmtDate(slot.dutyDate)}`;
     if (dto.removeUserId) {
-      this.core.notifyAfterCommit([dto.removeUserId], { title: 'Bạn được gỡ khỏi ca trực', body: `${where}. ${dto.reason}`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(slot.periodId) });
+      this.core.notifyAfterCommit([dto.removeUserId], { title: 'Bạn được gỡ khỏi ca khám', body: `${where}. ${dto.reason}`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(slot.periodId) });
     }
     if (dto.addUserId) {
-      this.core.notifyAfterCommit([dto.addUserId], { title: 'Bạn được xếp trực (điều chỉnh)', body: `${where}. ${dto.reason}`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(slot.periodId) });
+      this.core.notifyAfterCommit([dto.addUserId], { title: 'Bạn được xếp khám (điều chỉnh)', body: `${where}. ${dto.reason}`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(slot.periodId) });
     }
     this.core.emit('assign', slot.periodId);
     return { ...(await this.duty.slotDetail(dto.slotId)), forced, violations };

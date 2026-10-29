@@ -143,15 +143,15 @@ export class RoleDto {
   @ApiProperty({ example: 'BS' })
   @Transform(trim)
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng nhập mã vai trò trực' })
+  @IsNotEmpty({ message: 'Vui lòng nhập mã vai trò khám' })
   @MaxLength(16)
   @Matches(/^[A-Za-z0-9_.-]+$/, { message: 'Mã vai trò chỉ gồm chữ, số, dấu chấm, gạch ngang, gạch dưới' })
   code!: string;
 
-  @ApiProperty({ example: 'Bác sĩ trực' })
+  @ApiProperty({ example: 'Bác sĩ khám' })
   @Transform(trim)
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng nhập tên vai trò trực' })
+  @IsNotEmpty({ message: 'Vui lòng nhập tên vai trò khám' })
   @MaxLength(120)
   name!: string;
 
@@ -258,13 +258,13 @@ export class PeriodDto {
   @Type(() => RulesDto)
   rules?: RulesDto;
 
-  @ApiPropertyOptional({ description: 'Tự động sinh các ô trực từ danh mục đang mở' })
+  @ApiPropertyOptional({ description: 'Tự động sinh các ca khám từ danh mục đang mở' })
   @IsOptional()
   @Transform(toBoolean)
   @IsBoolean()
   autoGenerateSlots?: boolean;
 
-  @ApiPropertyOptional({ description: 'Sao chép ô trực từ kỳ trước (mã kỳ ID)' })
+  @ApiPropertyOptional({ description: 'Sao chép ca khám từ kỳ trước (mã kỳ ID)' })
   @IsOptional()
   @Transform(toIntOrUndef)
   @IsInt()
@@ -340,7 +340,7 @@ export class ClonePeriodDto {
 }
 
 export class PublishDto {
-  @ApiPropertyOptional({ description: 'Bỏ qua kiểm tra ô còn thiếu người (ghi nhận trong nhật ký)' })
+  @ApiPropertyOptional({ description: 'Bỏ qua kiểm tra ca khám còn thiếu người (ghi nhận trong nhật ký)' })
   @IsOptional()
   @Transform(toBoolean)
   @IsBoolean()
@@ -369,14 +369,14 @@ export class GenerateSlotsDto {
 
   @ApiProperty({ type: [Number] })
   @IsArray()
-  @ArrayMinSize(1, { message: 'Chọn ít nhất một ca trực' })
+  @ArrayMinSize(1, { message: 'Chọn ít nhất một ca khám' })
   @ArrayMaxSize(20)
   @IsInt({ each: true })
   shiftIds!: number[];
 
   @ApiProperty({ type: [Number] })
   @IsArray()
-  @ArrayMinSize(1, { message: 'Chọn ít nhất một vai trò trực' })
+  @ArrayMinSize(1, { message: 'Chọn ít nhất một vai trò khám' })
   @ArrayMaxSize(10)
   @IsInt({ each: true })
   roleIds!: number[];
@@ -406,7 +406,7 @@ export class GenerateSlotsDto {
 
 export class SlotDto {
   @ApiProperty({ example: '2026-10-06' })
-  @Matches(YMD, { message: 'Ngày trực phải dạng YYYY-MM-DD' })
+  @Matches(YMD, { message: 'Ngày khám phải dạng YYYY-MM-DD' })
   dutyDate!: string;
 
   @ApiProperty()
@@ -456,7 +456,7 @@ export class UpdateSlotDto {
 }
 
 export class ForceDto {
-  @ApiPropertyOptional({ description: 'Gỡ/xoá cả khi ô đang có người trực (ghi nhận nhật ký)' })
+  @ApiPropertyOptional({ description: 'Gỡ/xoá cả khi ca khám đang có bác sĩ (ghi nhận nhật ký)' })
   @IsOptional()
   @Transform(toBoolean)
   @IsBoolean()
@@ -514,10 +514,10 @@ export class OverrideDto {
   @IsInt()
   addUserId?: number;
 
-  @ApiProperty({ example: 'BS Nguyễn Văn A nghỉ ốm đột xuất, KHTH chỉ định BS B trực thay' })
+  @ApiProperty({ example: 'BS Nguyễn Văn A nghỉ ốm đột xuất, KHTH chỉ định BS B khám thay' })
   @Transform(trim)
   @IsString()
-  @MinLength(10, { message: 'Vui lòng ghi lý do đổi trực (tối thiểu 10 ký tự)' })
+  @MinLength(10, { message: 'Vui lòng ghi lý do đổi lịch khám (tối thiểu 10 ký tự)' })
   @MaxLength(500)
   reason!: string;
 
@@ -586,7 +586,7 @@ export class AbsenceReviewDto {
   replacements?: AbsenceReplacementDto[];
 }
 
-/* ------------------------------------------------------------------ Yêu cầu đổi trực */
+/* ------------------------------------------------------------------ Yêu cầu đổi lịch khám */
 
 export class RequestCreateDto {
   @ApiProperty({ enum: ['NHUONG', 'DOI', 'NGOAI_LE'] })

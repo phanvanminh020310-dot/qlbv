@@ -23,7 +23,7 @@ import { DutyService } from './duty.service';
 
 const MANAGE_ANY = ['duty.manage', 'duty.manage-all'];
 
-@ApiTags('Lịch trực khám bệnh')
+@ApiTags('Lịch bác sĩ khám bệnh')
 @ApiBearerAuth()
 @Controller('duty')
 export class DutyController {
@@ -33,7 +33,7 @@ export class DutyController {
 
   @Get('me')
   @RequirePermissions('duty.view')
-  @ApiOperation({ summary: 'Lịch trực của tôi: ca đã xếp, nghỉ phép, kỳ đang mở' })
+  @ApiOperation({ summary: 'Lịch khám của tôi: ca đã xếp, nghỉ phép, kỳ đang mở' })
   me(@CurrentUser() user: AccessContext) {
     return this.service.me(user);
   }
@@ -92,7 +92,7 @@ export class DutyController {
 
   @Post('periods')
   @RequirePermissions('duty.period.manage')
-  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_period', description: 'Tạo kỳ lịch trực' })
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_period', description: 'Tạo kỳ lịch khám' })
   createPeriod(@CurrentUser() user: AccessContext, @Body() dto: PeriodDto) {
     return this.service.createPeriod(user, dto);
   }
@@ -100,7 +100,7 @@ export class DutyController {
   @Post('periods/:id/clone')
   @RequirePermissions('duty.period.manage')
   @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_period', description: 'Nhân bản kỳ lịch sang tuần mới' })
-  @ApiOperation({ summary: 'Sao chép cấu trúc ô trực (và phân công) sang tuần tiếp theo' })
+  @ApiOperation({ summary: 'Sao chép cấu trúc ca khám (và phân công) sang tuần tiếp theo' })
   clonePeriod(
     @CurrentUser() user: AccessContext,
     @Param('id', ParseIntPipe) id: number,
@@ -117,7 +117,7 @@ export class DutyController {
 
   @Put('periods/:id')
   @RequirePermissions('duty.period.manage')
-  @Audit({ module: 'DUTY', action: 'UPDATE', entity: 'duty_period', description: 'Sửa kỳ lịch trực' })
+  @Audit({ module: 'DUTY', action: 'UPDATE', entity: 'duty_period', description: 'Sửa kỳ lịch khám' })
   updatePeriod(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePeriodDto) {
     return this.service.updatePeriod(user, id, dto);
   }
@@ -135,22 +135,22 @@ export class DutyController {
 
   @Post('periods/:id/publish')
   @RequirePermissions('duty.period.manage')
-  @Audit({ module: 'DUTY', action: 'PUBLISH', entity: 'duty_period', description: 'Công bố lịch trực' })
-  @ApiOperation({ summary: 'Công bố kỳ lịch và thông báo người trực' })
+  @Audit({ module: 'DUTY', action: 'PUBLISH', entity: 'duty_period', description: 'Công bố lịch khám' })
+  @ApiOperation({ summary: 'Công bố kỳ lịch và thông báo bác sĩ khám' })
   publish(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: PublishDto) {
     return this.service.publishPeriod(user, id, !!dto?.force);
   }
 
   @Post('periods/:id/lock')
   @RequirePermissions('duty.period.manage')
-  @Audit({ module: 'DUTY', action: 'LOCK', entity: 'duty_period', description: 'Chốt lịch trực' })
+  @Audit({ module: 'DUTY', action: 'LOCK', entity: 'duty_period', description: 'Chốt lịch khám' })
   lock(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.lockPeriod(user, id);
   }
 
   @Post('periods/:id/unlock')
   @RequirePermissions('duty.period.manage')
-  @Audit({ module: 'DUTY', action: 'UNLOCK', entity: 'duty_period', description: 'Mở chốt lịch trực (có lý do)' })
+  @Audit({ module: 'DUTY', action: 'UNLOCK', entity: 'duty_period', description: 'Mở chốt lịch khám (có lý do)' })
   unlock(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: UnlockDto) {
     return this.service.unlockPeriod(user, id, dto);
   }
@@ -171,7 +171,7 @@ export class DutyController {
 
   @Get('periods/:id/summary')
   @RequirePermissions('duty.view')
-  @ApiOperation({ summary: 'Tổng hợp giờ trực theo người (kèm độ chênh lệch công bằng)' })
+  @ApiOperation({ summary: 'Tổng hợp giờ khám theo người (kèm độ chênh lệch công bằng)' })
   summary(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.summary(user, id);
   }
@@ -185,7 +185,7 @@ export class DutyController {
 
   @Get('periods/:id/export')
   @RequirePermissions('duty.export')
-  @Audit({ module: 'DUTY', action: 'EXPORT', entity: 'duty_period', description: 'Xuất lịch trực ra Excel' })
+  @Audit({ module: 'DUTY', action: 'EXPORT', entity: 'duty_period', description: 'Xuất lịch khám ra Excel' })
   async exportPeriod(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     const { buffer, fileName } = await this.service.exportWorkbook(user, id);
     return new StreamableFile(buffer, {
@@ -195,68 +195,68 @@ export class DutyController {
     });
   }
 
-  /* ---------------------------------------------------------------- Ô trực & phân công */
+  /* ---------------------------------------------------------------- Ca khám & phân công */
 
   @Post('periods/:id/slots/generate')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_slot', description: 'Sinh hàng loạt ô trực' })
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_slot', description: 'Sinh hàng loạt ca khám' })
   generateSlots(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: GenerateSlotsDto) {
     return this.service.generateSlots(user, id, dto);
   }
 
   @Post('periods/:id/slots')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_slot', description: 'Thêm ô trực' })
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_slot', description: 'Thêm ca khám' })
   createSlot(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: SlotDto) {
     return this.service.createSlot(user, id, dto);
   }
 
   @Put('slots/:id')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'UPDATE', entity: 'duty_slot', description: 'Sửa ô trực' })
+  @Audit({ module: 'DUTY', action: 'UPDATE', entity: 'duty_slot', description: 'Sửa ca khám' })
   updateSlot(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSlotDto) {
     return this.service.updateSlot(user, id, dto);
   }
 
   @Post('slots/:id/delete')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'DELETE', entity: 'duty_slot', description: 'Xoá ô trực' })
-  @ApiOperation({ summary: 'Xoá ô trực (ô có người trực cần lý do)' })
+  @Audit({ module: 'DUTY', action: 'DELETE', entity: 'duty_slot', description: 'Xoá ca khám' })
+  @ApiOperation({ summary: 'Xoá ca khám (ca có bác sĩ đã xếp cần lý do)' })
   deleteSlot(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: ForceDto) {
     return this.service.deleteSlot(user, id, dto ?? {});
   }
 
   @Get('slots/:id/candidates')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @ApiOperation({ summary: 'Ứng viên cho ô trực, kèm kết quả kiểm tra ràng buộc' })
+  @ApiOperation({ summary: 'Ứng viên cho ca khám, kèm kết quả kiểm tra ràng buộc' })
   candidates(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Query() q: CandidateQueryDto) {
     return this.service.candidates(user, id, q.q);
   }
 
   @Post('slots/:id/assignments')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'ASSIGN', entity: 'duty_assignment', description: 'Xếp người trực' })
+  @Audit({ module: 'DUTY', action: 'ASSIGN', entity: 'duty_assignment', description: 'Xếp bác sĩ khám' })
   assign(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: AssignDto) {
     return this.service.assign(user, id, dto);
   }
 
   @Post('assignments/:id/remove')
   @RequirePermissions(MANAGE_ANY, 'any')
-  @Audit({ module: 'DUTY', action: 'UNASSIGN', entity: 'duty_assignment', description: 'Gỡ người trực khỏi ca' })
+  @Audit({ module: 'DUTY', action: 'UNASSIGN', entity: 'duty_assignment', description: 'Gỡ bác sĩ khám khỏi ca' })
   unassign(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: ForceDto) {
     return this.service.unassign(user, id, dto?.reason);
   }
 
   @Post('slots/:id/register')
   @RequirePermissions('duty.register')
-  @Audit({ module: 'DUTY', action: 'REGISTER', entity: 'duty_assignment', description: 'Tự đăng ký ca trực' })
+  @Audit({ module: 'DUTY', action: 'REGISTER', entity: 'duty_assignment', description: 'Tự đăng ký ca khám' })
   selfRegister(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.selfRegister(user, id);
   }
 
   @Post('slots/:id/unregister')
   @RequirePermissions('duty.register')
-  @Audit({ module: 'DUTY', action: 'UNREGISTER', entity: 'duty_assignment', description: 'Huỷ đăng ký ca trực' })
+  @Audit({ module: 'DUTY', action: 'UNREGISTER', entity: 'duty_assignment', description: 'Huỷ đăng ký ca khám' })
   selfUnregister(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number) {
     return this.service.selfUnregister(user, id);
   }

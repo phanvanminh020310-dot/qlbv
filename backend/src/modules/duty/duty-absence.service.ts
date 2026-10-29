@@ -64,7 +64,7 @@ export class DutyAbsenceService {
   ) {
     if (!this.core.canManageAny(user))
       throw new ForbiddenException(
-        "Chỉ người quản lý lịch trực được duyệt nghỉ/bận",
+        "Chỉ người quản lý lịch khám được duyệt nghỉ/bận",
       );
     const target = await this.target(row, c);
     this.core.ensureManageDept(
@@ -230,7 +230,7 @@ export class DutyAbsenceService {
     if (!["mine", "approval", "all"].includes(box))
       throw new BadRequestException("Hộp yêu cầu không hợp lệ");
     if (box === "approval" && !this.core.canManageAny(user))
-      throw new ForbiddenException("Chỉ người quản lý lịch trực xem hộp duyệt");
+      throw new ForbiddenException("Chỉ người quản lý lịch khám xem hộp duyệt");
     const conditions: SQL[] = [];
     if (box === "mine" || !this.core.canManageAny(user))
       conditions.push(eq(dutyAbsenceRequests.userId, user.id));
@@ -319,7 +319,7 @@ export class DutyAbsenceService {
               this.core.phaseOf({ status: s.periodStatus, lockAt: s.lockAt })
                 .locked || this.core.toEngineSlot(s).start <= Date.now(),
           ) && !this.core.hasPerm(user, "duty.exception.resolve")
-        ? "Có ca đã chốt/đang trực: cần KHTH có quyền xử lý ngoại lệ duyệt"
+        ? "Có ca đã chốt/đang trong ca khám: cần KHTH có quyền xử lý ngoại lệ duyệt"
         : null;
     const staffScope = this.core.scopeDeptIds(user);
     const staffRows = manager
@@ -400,7 +400,7 @@ export class DutyAbsenceService {
         throw new ConflictException("Yêu cầu đã được xử lý");
       if (row.endDate < bangkokToday())
         throw new ConflictException(
-          "Khoảng nghỉ đã kết thúc; không thay đổi lịch sử trực",
+          "Khoảng nghỉ đã kết thúc; không thay đổi lịch sử khám",
         );
       await this.ensureManager(user, row, tx);
       const before = await this.affected(row, tx);
@@ -470,7 +470,7 @@ export class DutyAbsenceService {
           !this.core.hasPerm(user, "duty.exception.resolve")
         )
           throw new ForbiddenException(
-            "Ca đã chốt/đang trực: cần KHTH có quyền xử lý ngoại lệ duyệt nghỉ và người thay",
+            "Ca đã chốt/đang trong ca khám: cần KHTH có quyền xử lý ngoại lệ duyệt nghỉ và người thay",
           );
         const replacement = replacements.find((r) => r.slotId === s.id)!;
         if (replacement.replacementUserId === row.userId)

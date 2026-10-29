@@ -17,7 +17,7 @@ const toOptions = (list: unknown) =>
     label: String(o.name ?? o.label ?? ""),
   }));
 
-/** Danh mục nền của Lịch trực: phòng khám, ca trực, vai trò trực, ngày nghỉ */
+/** Danh mục nền của Lịch bác sĩ khám: phòng khám, ca khám, vai trò khám, ngày nghỉ */
 export default function DanhMucTrucPage() {
   const can = useAuth((s) => s.can);
   const canManage = can("duty.catalog.manage");
@@ -44,7 +44,7 @@ export default function DanhMucTrucPage() {
       label: "Khoa quản lý",
       type: "select",
       options: deptOptions.map((o) => ({ value: Number(o.value), label: o.label })),
-      help: "Trưởng khoa chỉ xếp trực được cho phòng thuộc khoa mình. Bỏ trống: chỉ Điều phối toàn viện xếp.",
+      help: "Trưởng khoa chỉ xếp bác sĩ khám cho phòng thuộc khoa mình. Bỏ trống: chỉ Điều phối toàn viện xếp.",
       hideInTable: false,
     },
     { name: "location", label: "Vị trí", placeholder: "Tầng 2, khu A", hideInTable: true },
@@ -55,7 +55,7 @@ export default function DanhMucTrucPage() {
 
   const shiftFields: CrudField[] = [
     { name: "code", label: "Mã ca", required: true, placeholder: "S", help: "Ví dụ: S (sáng), C (chiều), CD (cả ngày), D (đêm)" },
-    { name: "name", label: "Tên ca", required: true, placeholder: "Ca sáng" },
+    { name: "name", label: "Tên ca", required: true, placeholder: "Khám buổi sáng" },
     { name: "startTime", label: "Giờ bắt đầu", type: "time", required: true },
     { name: "endTime", label: "Giờ kết thúc", type: "time", required: true, help: "Kết thúc trước giờ bắt đầu = ca qua đêm" },
     { name: "isNight", label: "Ca đêm", type: "switch", defaultValue: false, hideInTable: true, help: "Ca đêm có giới hạn riêng và cần khoảng nghỉ liền kề" },
@@ -67,7 +67,7 @@ export default function DanhMucTrucPage() {
 
   const roleFields: CrudField[] = [
     { name: "code", label: "Mã vai trò", required: true, placeholder: "BS" },
-    { name: "name", label: "Tên vai trò trực", required: true, placeholder: "Bác sĩ trực" },
+    { name: "name", label: "Tên vai trò khám", required: true, placeholder: "Bác sĩ khám" },
     {
       name: "requiredTitle",
       label: "Chức danh bắt buộc",
@@ -86,13 +86,13 @@ export default function DanhMucTrucPage() {
     { name: "note", label: "Ghi chú", type: "textarea", hideInTable: true },
   ];
 
-  if (!can("duty.catalog.manage")) return <EmptyState title="Trang này dành cho người quản trị danh mục trực" />;
+  if (!can("duty.catalog.manage")) return <EmptyState title="Trang này dành cho người quản trị danh mục lịch khám" />;
 
   return (
     <>
       <PageHeader
-        title="Danh mục lịch trực"
-        description="Phòng khám, ca trực, vai trò trực và ngày nghỉ. Thay đổi ở đây áp dụng cho các kỳ lịch lập sau; ô đã sinh không tự đổi."
+        title="Danh mục lịch khám"
+        description="Phòng khám, ca khám, vai trò khám và ngày nghỉ. Thay đổi ở đây áp dụng cho các kỳ lập sau; ca đã sinh không tự đổi."
       />
       <Tabs
         value={tab}
@@ -103,8 +103,8 @@ export default function DanhMucTrucPage() {
             label: "Phòng khám",
             content: (
               <CrudTable
-                title="Phòng khám trực"
-                description="Danh sách phòng khám tham gia lịch trực"
+                title="Phòng khám"
+                description="Danh sách phòng khám tham gia lịch khám"
                 endpoint="/duty/rooms"
                 fields={roomFields}
                 canCreate={canManage}
@@ -118,29 +118,29 @@ export default function DanhMucTrucPage() {
           },
           {
             key: "shifts",
-            label: "Ca trực",
+            label: "Ca khám",
             content: (
               <CrudTable
-                title="Ca trực"
-                description="Khung giờ các ca trực. Ca đêm có thể bật/tắt tuỳ nhu cầu."
+                title="Ca khám"
+                description="Khung giờ các ca khám. Có thể cấu hình sáng, chiều hoặc các khung giờ chuyên biệt."
                 endpoint="/duty/shifts"
                 fields={shiftFields}
                 canCreate={canManage}
                 canEdit={canManage}
                 canDelete={canManage}
                 labelKey="name"
-                createLabel="Thêm ca trực"
+                createLabel="Thêm ca khám"
                 searchPlaceholder="Tìm mã hoặc tên ca"
               />
             ),
           },
           {
             key: "roles",
-            label: "Vai trò trực",
+            label: "Vai trò khám",
             content: (
               <CrudTable
-                title="Vai trò trực"
-                description="Vai trò trong một ô trực (bác sĩ, điều dưỡng…) và chức danh tương ứng"
+                title="Vai trò khám"
+                description="Vai trò trong một ca khám (bác sĩ, điều dưỡng…) và chức danh tương ứng"
                 endpoint="/duty/roles"
                 fields={roleFields}
                 canCreate={canManage}
@@ -158,7 +158,7 @@ export default function DanhMucTrucPage() {
             content: (
               <CrudTable
                 title="Ngày nghỉ lễ / nghỉ chung"
-                description="Ngày không sinh ô trực khi tạo lịch (ví dụ lễ, Tết)"
+                description="Ngày không sinh ca khám khi tạo lịch (ví dụ lễ, Tết)"
                 endpoint="/duty/closed-days"
                 fields={closedFields}
                 canCreate={canManage}

@@ -49,7 +49,7 @@ function ReviewAbsence({
     onSuccess: () => {
       toast.success(
         rejecting
-          ? "Đã từ chối; lịch trực giữ nguyên"
+          ? "Đã từ chối; lịch khám giữ nguyên"
           : "Đã duyệt và bố trí đủ người thay",
       );
       refresh();
