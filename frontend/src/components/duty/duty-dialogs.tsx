@@ -258,7 +258,7 @@ export function AssignDialog({
               </ul>
             )}
             <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
-              Bạn có thể xếp cho mọi phòng khám; danh sách chỉ gồm người thuộc phạm vi khoa bạn phụ trách. Hệ thống vẫn kiểm tra trùng giờ, khoảng nghỉ, chức danh, nghỉ phép và giới hạn giờ.
+              Bạn có thể xếp cho mọi phòng khám; cùng một bác sĩ có thể được xếp ở nhiều phòng trong cùng một ca. Hệ thống vẫn kiểm tra ca khác bị trùng giờ, khoảng nghỉ, chức danh, nghỉ phép và các giới hạn đã cấu hình.
             </p>
           </section>
         ) : null}

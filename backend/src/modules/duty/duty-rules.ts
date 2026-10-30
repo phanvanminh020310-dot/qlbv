@@ -262,7 +262,8 @@ export interface EvaluateInput {
   /** Ca hiện có của người này (đã loại trừ những ca sẽ bị thay thế trong cùng thao tác) */
   duties: EngineDuty[];
   absences: EngineAbsence[];
-  /** Số ca / ca đêm đã có trong kỳ, KHÔNG kể ca khám đang xét */
+  /** Số ca / ca đêm khác nhau đã có trong kỳ, KHÔNG kể ca khám đang xét.
+   * Một bác sĩ được xếp tại nhiều phòng trong cùng một ca chỉ tính một lần. */
   periodShifts: number;
   periodNights: number;
   alreadyInSlot: boolean;
@@ -321,12 +322,28 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
     else if (r.crossDeptPolicy === 'CANH_BAO') warn('CROSS_DEPT', msg);
   }
 
-  // Trùng giờ và khoảng nghỉ giữa các ca
+  // Cùng ngày + cùng mã ca ở nhiều phòng là một lượt khám vận hành: cho
+  // phép phân công song song và chỉ tính một lần vào các giới hạn. Điều này
+  // không nới lỏng bất kỳ ca khác nào đang trùng giờ.
+  const sameShiftOccurrence = (d: Pick<EngineDuty, 'dutyDate' | 'shiftCode'>) => d.dutyDate === s.dutyDate && d.shiftCode === s.shiftCode;
+  const parallelRoomAssignment = (d: EngineDuty) => sameShiftOccurrence(d) && d.roomCode !== s.roomCode;
+  const uniqueShiftOccurrences = (rows: EngineDuty[]) => {
+    const seen = new Set<string>();
+    return rows.filter((d) => {
+      const key = `${d.dutyDate}:${d.shiftCode}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  // Trùng giờ và khoảng nghỉ giữa các ca khác nhau.
   const minRestMs = r.minRestHours * HOUR_MS;
   let overlapWith: EngineDuty | null = null;
   let restWith: EngineDuty | null = null;
   let restGapMs = 0;
   for (const d of duties) {
+    if (parallelRoomAssignment(d)) continue;
     if (d.start < s.end && s.start < d.end) {
       overlapWith ??= d;
       continue;
@@ -351,24 +368,30 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
     else err('REST', `Chỉ nghỉ ${fmtH(restGapMs / HOUR_MS)}h sau/trước ca ${other} (tối thiểu ${r.minRestHours}h)`);
   }
 
-  // Giới hạn theo ngày, tuần, kỳ
-  const sameDay = duties.filter((d) => d.dutyDate === s.dutyDate);
-  if (r.maxShiftsPerDay > 0 && sameDay.length + 1 > r.maxShiftsPerDay) {
+  // Giới hạn theo ngày, tuần, kỳ. Một ca trải trên nhiều phòng không nhân đôi
+  // số ca hoặc số giờ; một ca khác trong cùng ngày vẫn được kiểm tra như cũ.
+  const sameDay = uniqueShiftOccurrences(duties.filter((d) => d.dutyDate === s.dutyDate));
+  const alreadyInSameShift = sameDay.some(sameShiftOccurrence);
+  const dayShiftCount = sameDay.length + (alreadyInSameShift ? 0 : 1);
+  if (r.maxShiftsPerDay > 0 && dayShiftCount > r.maxShiftsPerDay) {
     err('SHIFTS_PER_DAY', `Vượt ${r.maxShiftsPerDay} ca trong ngày ${fmtDm(s.dutyDate)}`);
   }
-  const dayHours = sameDay.reduce((a, d) => a + d.hours, 0) + s.hours;
+  const dayHours = sameDay.reduce((a, d) => a + d.hours, 0) + (alreadyInSameShift ? 0 : s.hours);
   if (r.maxHoursPerDay > 0 && dayHours > r.maxHoursPerDay + 1e-9) {
     err('HOURS_PER_DAY', `Ngày ${fmtDm(s.dutyDate)} thành ${fmtH(dayHours)} giờ khám, tối đa ${r.maxHoursPerDay} giờ/ngày`);
   }
   const wk = weekStart(s.dutyDate);
-  const weekHours = duties.filter((d) => weekStart(d.dutyDate) === wk).reduce((a, d) => a + d.hours, 0) + s.hours;
+  const sameWeek = uniqueShiftOccurrences(duties.filter((d) => weekStart(d.dutyDate) === wk));
+  const alreadyInSameWeekShift = sameWeek.some(sameShiftOccurrence);
+  const weekHours = sameWeek.reduce((a, d) => a + d.hours, 0) + (alreadyInSameWeekShift ? 0 : s.hours);
   if (r.maxHoursPerWeek > 0 && weekHours > r.maxHoursPerWeek + 1e-9) {
     err('HOURS_PER_WEEK', `Tuần ${fmtDm(wk)} thành ${fmtH(weekHours)} giờ khám, tối đa ${r.maxHoursPerWeek} giờ/tuần`);
   }
-  if (r.maxShiftsPerPeriod > 0 && i.periodShifts + 1 > r.maxShiftsPerPeriod) {
+  const periodDelta = duties.some(sameShiftOccurrence) ? 0 : 1;
+  if (r.maxShiftsPerPeriod > 0 && i.periodShifts + periodDelta > r.maxShiftsPerPeriod) {
     err('SHIFTS_PER_PERIOD', `Vượt ${r.maxShiftsPerPeriod} ca trong kỳ lịch`);
   }
-  if (s.isNight && r.maxNightShiftsPerPeriod > 0 && i.periodNights + 1 > r.maxNightShiftsPerPeriod) {
+  if (s.isNight && r.maxNightShiftsPerPeriod > 0 && i.periodNights + periodDelta > r.maxNightShiftsPerPeriod) {
     err('NIGHT_PER_PERIOD', `Vượt ${r.maxNightShiftsPerPeriod} ca đêm trong kỳ lịch`);
   }
 

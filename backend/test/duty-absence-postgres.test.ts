@@ -313,12 +313,19 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
     },
   );
   await t.test(
-    "replacement must remain eligible and cannot have a conflicting shift",
+    "replacement must remain eligible and cannot have a conflicting different shift",
     async () => {
       await reset();
-      await pg.exec(
-        "INSERT INTO duty_assignments(slot_id,user_id) VALUES(3,2)",
-      );
+      // Slot 3 là cùng ca sáng ở phòng khác và được phép từ quy tắc nhiều
+      // phòng/cùng ca. Tạo riêng một ca khác chồng giờ để kiểm tra rào chắn
+      // an toàn với ca KHÁC vẫn giữ nguyên.
+      await pg.exec(`
+        INSERT INTO duty_shift_types(id,code,name,start_time,end_time,crosses_midnight,is_night)
+        VALUES(3,'CHONG','Ca chồng giờ','08:00','12:00',false,false);
+        INSERT INTO duty_slots(id,period_id,duty_date,room_id,shift_id,role_id)
+        VALUES(5,1,'2026-10-15',2,3,1);
+        INSERT INTO duty_assignments(slot_id,user_id) VALUES(5,2);
+      `);
       const req = await service.create(doctor, leave);
       await assert.rejects(
         service.approve(manager, req.id, { replacements: picks }),

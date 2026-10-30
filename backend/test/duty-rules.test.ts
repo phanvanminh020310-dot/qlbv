@@ -149,6 +149,39 @@ test('kỳ mới không giới hạn số ca/ngày nên cho phép ca liền kề
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
+test('một bác sĩ được xếp nhiều phòng trong cùng ca: không báo trùng và chỉ tính một ca vào giới hạn', () => {
+  const sameShiftOtherRoom = dutyOf(1, '2026-10-06', 'S', 'P1');
+  const target = slotOf(2, '2026-10-06', 'S', { roomId: 2, roomCode: 'P2' });
+  const r = evaluateCandidate(input({
+    slot: target,
+    duties: [sameShiftOtherRoom],
+    // Số ca của kỳ đã được nạp theo nhóm ngày + ca: P1/S đã là 1 ca.
+    periodShifts: 1,
+    periodNights: 0,
+    rules: { ...RULES, maxShiftsPerDay: 1, maxHoursPerDay: 5, maxHoursPerWeek: 5, maxShiftsPerPeriod: 1 },
+  }));
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.ok(!codes(r).includes('OVERLAP'));
+  assert.ok(!codes(r).includes('SHIFTS_PER_DAY'));
+  assert.ok(!codes(r).includes('HOURS_PER_DAY'));
+  assert.ok(!codes(r).includes('HOURS_PER_WEEK'));
+  assert.ok(!codes(r).includes('SHIFTS_PER_PERIOD'));
+});
+
+test('cùng ca nhưng cùng phòng vẫn bị chặn trùng giờ; ca khác trùng giờ ở phòng khác cũng bị chặn', () => {
+  const sameRoom = evaluateCandidate(input({
+    slot: slotOf(2, '2026-10-06', 'S'),
+    duties: [dutyOf(1, '2026-10-06', 'S', 'P1')],
+  }));
+  assert.ok(codes(sameRoom).includes('OVERLAP'));
+
+  const differentShift = evaluateCandidate(input({
+    slot: slotOf(3, '2026-10-06', 'CD', { roomId: 2, roomCode: 'P2' }),
+    duties: [dutyOf(1, '2026-10-06', 'S', 'P1')],
+  }));
+  assert.ok(codes(differentShift).includes('OVERLAP'));
+});
+
 test('chặn ca đêm liền kề ca khác (không có khoảng nghỉ)', () => {
   const slot = slotOf(3, '2026-10-07', 'S'); // ngay sau ca đêm kết thúc 07:00
   const r = evaluateCandidate(input({ slot, duties: [dutyOf(2, '2026-10-06', 'D')] }));

@@ -28,7 +28,7 @@ export type DutyRequestStatus = (typeof DUTY_REQUEST_STATUSES)[number];
 
 /** Cấu hình ràng buộc của từng kỳ lịch (0 = không giới hạn) */
 export interface DutyRules {
-  /** Số ca tối đa trong một ngày (ca liền kề cùng ngày vẫn được tính vào đây) */
+  /** Số ca tối đa trong một ngày (cùng một ca ở nhiều phòng chỉ tính một lần) */
   maxShiftsPerDay: number;
   /** Số ca tối đa trong cả kỳ */
   maxShiftsPerPeriod: number;

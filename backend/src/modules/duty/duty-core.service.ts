@@ -307,7 +307,11 @@ export class DutyCoreService {
     return map;
   }
 
-  /** Số ca / ca đêm đã có trong từng kỳ của người dùng (không kể ca khám loại trừ) */
+  /**
+   * Số ca / ca đêm khác nhau đã có trong từng kỳ của người dùng (không kể ca
+   * loại trừ). Cùng một ca của một ngày tại nhiều phòng là một ca vận hành,
+   * nên chỉ được tính một lần vào giới hạn theo kỳ.
+   */
   async loadPeriodCounts(c: Executor, periodIds: number[], userIds: number[], exclude: number[] = []) {
     const map = new Map<string, { shifts: number; nights: number }>();
     if (!periodIds.length || !userIds.length) return map;
@@ -316,14 +320,20 @@ export class DutyCoreService {
         userId: dutyAssignments.userId,
         periodId: dutySlots.periodId,
         slotId: dutySlots.id,
+        dutyDate: dutySlots.dutyDate,
+        shiftId: dutySlots.shiftId,
         isNight: dutyShiftTypes.isNight,
       })
       .from(dutyAssignments)
       .innerJoin(dutySlots, eq(dutySlots.id, dutyAssignments.slotId))
       .innerJoin(dutyShiftTypes, eq(dutyShiftTypes.id, dutySlots.shiftId))
       .where(and(inArray(dutySlots.periodId, periodIds), inArray(dutyAssignments.userId, userIds)));
+    const seenShiftOccurrences = new Set<string>();
     for (const r of rows) {
       if (exclude.includes(r.slotId)) continue;
+      const occurrence = `${r.periodId}:${r.userId}:${r.dutyDate}:${r.shiftId}`;
+      if (seenShiftOccurrences.has(occurrence)) continue;
+      seenShiftOccurrences.add(occurrence);
       const key = `${r.periodId}:${r.userId}`;
       const cur = map.get(key) ?? { shifts: 0, nights: 0 };
       cur.shifts += 1;
