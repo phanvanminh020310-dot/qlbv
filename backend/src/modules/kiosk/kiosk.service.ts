@@ -42,7 +42,6 @@ import {
   sameKioskTarget,
   matchesMasterPin,
   KioskAttemptLimiter,
-  isBlockedKioskClient,
 } from "./kiosk-security";
 import type {
   AccessContext,
@@ -64,9 +63,9 @@ export interface KioskSession {
   consumed?: boolean;
   faceVerifyBufferSeconds?: number;
   scannedAt?: number; // Thời điểm điện thoại Bác sĩ quét và mở trang
-  claimedBy?: string; // Device Claim Token duy nhất của thiết bị đầu tiên mở mã
-  claimedIp?: string; // IP thiết bị quét
-  claimedUserAgent?: string; // User-Agent thiết bị quét
+  claimedBy?: string; // Claim token của lần mở mã đầu tiên, chỉ để chẩn đoán phiên
+  claimedIp?: string; // IP thiết bị quét lần đầu
+  claimedUserAgent?: string; // User-Agent thiết bị quét lần đầu
   isVerifying?: boolean; // Đang có frame AI xử lý
   failCount?: number; // Số lần frame lỗi tạm thời
   verifiedDoctor?: any;
@@ -1757,23 +1756,19 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         true,
       );
     }
-    if (isBlockedKioskClient(meta?.userAgent, meta?.clientEnv)) {
-      return reject(
-        "Vui lòng dùng ứng dụng Camera mặc định để quét trực tiếp QR tại phòng khám.",
-        true,
-      );
-    }
+    // QR là mã ngẫu nhiên, hết hạn rất ngắn; mở máy vẫn cần liveness, sinh trắc
+    // học và đúng lịch khám. Không suy đoán nguồn mở link bằng User-Agent/WebView:
+    // iOS có thể chuyển Zalo sang Chrome/Safari làm người dùng thật bị chặn và làm
+    // cháy luôn phiên QR. clientEnv/userAgent vẫn được nhận để tương thích client cũ,
+    // nhưng không còn là điều kiện từ chối quét.
     if (!token || token.length < 16 || token.length > 256) {
       return reject(
         "Không xác định được thiết bị quét. Vui lòng mở lại bằng trình duyệt hệ thống.",
       );
     }
-    if (s.claimedBy && s.claimedBy !== token) {
-      return reject(
-        "Mã QR đã được tiếp nhận trên thiết bị khác. Vui lòng quét mã mới tại phòng khám.",
-        true,
-      );
-    }
+    // Một QR có thể được iOS chuyển qua nhiều ngữ cảnh (Zalo → Chrome/Safari → Camera).
+    // Ghi nhận claim đầu tiên để chẩn đoán nhưng không hủy phiên khi cùng mã được mở
+    // lại từ ứng dụng/trình duyệt khác; hạn QR ban đầu và hạn buffer sau lần scan không đổi.
     if (s.status === "VERIFIED")
       return { session: s, faceVerifyBufferSeconds: s.faceVerifyBufferSeconds };
     if (!s.scannedAt) {
@@ -2024,12 +2019,12 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
 
     if (
       !session.scannedAt ||
-      !session.claimedBy ||
       !claimToken ||
-      session.claimedBy !== claimToken.trim()
+      claimToken.trim().length < 16 ||
+      claimToken.trim().length > 256
     ) {
       throw new ForbiddenException(
-        "Thiết bị xác thực không trùng khớp với thiết bị đã quét QR.",
+        "Không xác định được phiên quét trên điện thoại. Vui lòng quét lại mã QR đang hiển thị tại phòng khám.",
       );
     }
 
@@ -2065,36 +2060,13 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // 1. Chống mở từ trình duyệt nhúng / WebView ứng dụng tin nhắn chuyển tiếp / App quét mã trên iOS và Android
-    const isBlockedApp = isBlockedKioskClient(
-      params.userAgent,
-      params.clientEnv,
-    );
+    // 1. Không chặn ứng dụng quét, trình duyệt nhúng hoặc Chrome/Safari trên iPhone.
+    // Xác thực vẫn bắt buộc mã QR còn hạn, liveness và khuôn mặt Bác sĩ đang được
+    // phân công trước khi bất kỳ máy trạm nào được mở.
 
-    if (isBlockedApp) {
-      session.status = "EXPIRED";
-      session.consumed = true;
-      throw new ForbiddenException(
-        "CẢNH BÁO AN NINH: Phát hiện xác thực qua ảnh chụp hoặc ứng dụng quét mã/tin nhắn. Hệ thống từ chối mở máy trạm!",
-      );
-    }
-
-    // 2. Kiểm tra tính nhất quán của thiết bị gửi ảnh xác thực (Chống gửi link sang máy khác)
-    const reqClaimToken = claimToken?.trim();
-    if (
-      session.claimedBy &&
-      reqClaimToken &&
-      session.claimedBy !== reqClaimToken
-    ) {
-      session.status = "EXPIRED";
-      session.consumed = true;
-      this.logger.warn(
-        `[KioskSecurity] PHÁT HIỆN GIAN LẬN: Thiết bị gửi ảnh (${reqClaimToken}) không khớp với thiết bị quét mã QR gốc (${session.claimedBy}). Đã hủy phiên ${sessionId}!`,
-      );
-      throw new ForbiddenException(
-        "CẢNH BÁO AN NINH: Thiết bị xác thực khuôn mặt không trùng khớp với thiết bị quét mã QR gốc. Nghi vấn chuyển tiếp mã từ xa!",
-      );
-    }
+    // QR có thể được mở lại từ Camera/Safari sau khi app quét chuyển hướng sang Chrome.
+    // Không khóa theo claim token; quyền mở máy vẫn chỉ có sau liveness, đối chiếu
+    // khuôn mặt và lịch khám hợp lệ trước khi QR hết hạn.
 
     // Mutex chống xử lý trùng lặp nhiều frame cùng lúc
     if (session.isVerifying) {

@@ -21,7 +21,20 @@ const rules = JSON.stringify({
   requireFullBeforePublish: false,
 });
 
+function bangkokFutureDate(daysAhead = 2) {
+  const date = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: string) => parts.find((part) => part.type === type)!.value;
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phép và chỉ tính một ca", async (t) => {
+  const dutyDate = bangkokFutureDate();
   const pg = await PGlite.create();
   t.after(() => pg.close());
   for (const file of ["0000_init_khoi_tao.sql", "0015_lich_truc.sql"]) {
@@ -38,11 +51,11 @@ test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phé
       (1,'S','Ca sáng','07:00','11:00',false,false),
       (2,'CHONG','Ca chồng giờ','08:00','12:00',false,false);
     INSERT INTO duty_periods(id,name,start_date,end_date,status,lock_at,rules)
-      VALUES(1,'Kỳ kiểm thử','2026-11-02','2026-11-02','NHAP','2026-12-01T00:00:00+07:00','${rules}'::jsonb);
+      VALUES(1,'Kỳ kiểm thử','${dutyDate}','${dutyDate}','NHAP','2099-12-01T00:00:00+07:00','${rules}'::jsonb);
     INSERT INTO duty_slots(id,period_id,duty_date,room_id,shift_id,role_id) VALUES
-      (1,1,'2026-11-02',1,1,1),
-      (2,1,'2026-11-02',2,1,1),
-      (3,1,'2026-11-02',2,2,1);
+      (1,1,'${dutyDate}',1,1,1),
+      (2,1,'${dutyDate}',2,1,1),
+      (3,1,'${dutyDate}',2,2,1);
     INSERT INTO duty_assignments(slot_id,user_id) VALUES(1,1);
   `);
 

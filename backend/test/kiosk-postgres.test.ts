@@ -139,7 +139,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
   );
 
   await t.test(
-    "concurrent frames produce one attendance row bound to slot/room and unlock only the scanning PC",
+    "third-party QR handoff and concurrent frames produce one attendance row bound to slot/room and unlock only the scanning PC",
     async () => {
       const vector = Array<number>(512).fill(0);
       vector[0] = 1;
@@ -157,11 +157,20 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         "https://hospital.test",
       );
       const id = status.qrSession!.sessionId;
-      await service.touchSessionScan(id, { claimToken: TOKEN });
+      // iPhone may open the first link through Zalo/Chrome then continue in Camera/Safari.
+      // Both contexts must work inside the same fixed QR lifetime.
+      const firstClaim = await service.touchSessionScan(id, {
+        claimToken: TOKEN,
+        clientEnv: "scanner-app",
+        userAgent: "Zalo/26.1 iPhone",
+      });
+      assert.equal(firstClaim.error, undefined);
       const params = {
         sessionId: id,
         snapshotBase64: "fixture-only-not-a-real-face",
-        claimToken: TOKEN,
+        claimToken: `${TOKEN}_safari`,
+        clientEnv: "in-app-webview",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1",
       };
       const replies = await Promise.all([
         service.verifyFaceAndUnlock(params),

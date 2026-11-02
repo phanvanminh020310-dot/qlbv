@@ -75,70 +75,15 @@ export default function MobileScanPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
 
-  // 1. Kiểm tra an ninh môi trường quét & Tải thông tin phiên quét từ sessionId
+  // 1. Nhận claim của điện thoại và tải thông tin phiên QR từ sessionId
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const runInit = async () => {
       try {
-        const ua = navigator.userAgent || "";
-        const ref = document.referrer || "";
-
-        // A. Kiểm tra Referrer (Google Lens, app quét mã QR, các app chia sẻ link trên Android & iOS):
-        const isReferrerFromApp =
-          ref.startsWith("android-app://") ||
-          /lens|scanner|barcode|photo|gallery|telegram|zalo|viber|facebook|messenger|instagram|line/i.test(
-            ref,
-          );
-
-        // B. Kiểm tra Trình duyệt nhúng trên iOS (WKWebView / In-App Browser của app bên thứ 3):
-        // Trên iOS Safari gốc, window.webkit.messageHandlers không bao giờ tồn tại.
-        // Nếu có window.webkit?.messageHandlers -> 100% là app bên thứ 3 nhúng webview (App quét QR, mạng xã hội).
-        const isIos = /iPhone|iPad|iPod/i.test(ua);
-        const hasIosHandlers =
-          typeof (window as any).webkit !== "undefined" &&
-          Boolean((window as any).webkit?.messageHandlers);
-        const isIosWkWebView =
-          isIos && !/Version\/[\d.]+.*Safari/i.test(ua) && /Mobile\//i.test(ua);
-
-        // C. Kiểm tra WebView trên Android:
-        const isAndroidWebView =
-          /Android/i.test(ua) &&
-          (/Version\/4\.0.*Chrome/i.test(ua) || /\bwv\b/i.test(ua));
-
-        // D. Danh sách app tin nhắn / mạng xã hội / scanner app đã biết:
-        const isKnownApp =
-          /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|\bline\b|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(
-            ua,
-          );
-
-        const isBlocked =
-          isReferrerFromApp ||
-          (isIos && (hasIosHandlers || isIosWkWebView)) ||
-          isAndroidWebView ||
-          isKnownApp;
-
-        if (isBlocked) {
-          const claimToken = getDeviceClaimToken();
-          fetch(`/api/kiosk/session/${sessionId}`, {
-            headers: {
-              "x-device-claim-token": claimToken,
-              "x-client-env": "scanner-app",
-            },
-          }).catch(() => {});
-
-          let customMsg =
-            "CẢNH BÁO AN NINH: Phát hiện mã QR này được mở từ ứng dụng quét ảnh hoặc trình duyệt nhúng bên thứ ba. Để đảm bảo an toàn điểm danh, Bác sĩ vui lòng dùng ứng dụng Máy ảnh (Camera) mặc định của điện thoại để quét mã QR trên màn hình máy tính phòng khám.";
-          if (isIos) {
-            customMsg =
-              "CẢNH BÁO AN NINH: Phát hiện mã QR được mở từ ứng dụng bên thứ ba trên iPhone. Bác sĩ vui lòng mở ứng dụng Camera (Máy ảnh) mặc định của iOS để quét trực tiếp mã QR trên màn hình máy tính.";
-          }
-
-          setSessionError(customMsg);
-          setLoadingSession(false);
-          return;
-        }
-
+        // QR có TTL ngắn; trước khi mở máy vẫn phải qua liveness, khuôn mặt và lịch khám.
+        // Không chặn theo User-Agent/referrer: iOS có thể mở URL quét từ Zalo
+        // qua Chrome hoặc Safari, và việc chặn sai làm QR hết hạn trước khi Camera mở được.
         const claimToken = getDeviceClaimToken();
         const headers: Record<string, string> = {
           "x-device-claim-token": claimToken,

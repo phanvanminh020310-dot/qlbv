@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { KioskService, type ActiveRoomUnlock } from "../src/modules/kiosk/kiosk.service";
-import { KioskAttemptLimiter, isBlockedKioskClient, kioskTargetKey, matchesMasterPin, sameKioskTarget } from "../src/modules/kiosk/kiosk-security";
+import { KioskAttemptLimiter, kioskTargetKey, matchesMasterPin, sameKioskTarget } from "../src/modules/kiosk/kiosk-security";
 
 const TOKEN = "dev_0123456789abcdef0123456789abcdef";
 const NATIVE_CAMERA_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1";
@@ -35,13 +35,62 @@ function unlock(service: KioskService, terminalId: string, extra: Partial<Active
   (service as any).activeRoomUnlocks.set(kioskTargetKey("PK01", terminalId), value); return value;
 }
 
-test("terminal targeting, PIN rules, limiter, and phone-WebView rejection remain strict", () => {
+test("terminal targeting, PIN rules and limiter remain strict", () => {
   assert.equal(kioskTargetKey(" pk01 ", " a "), kioskTargetKey("PK01", "a"));
   assert.equal(sameKioskTarget({ roomCode: "PK01", terminalId: "a" }, { roomCode: "PK01", terminalId: "b" }), false);
   assert.equal(matchesMasterPin("private", "private"), true);
   for (const pin of ["888888", "bvqy4@it", "", "private "]) assert.equal(matchesMasterPin(pin, "private"), false);
   const limiter = new KioskAttemptLimiter(2, 1000); assert.equal(limiter.take("ip", 0), true); assert.equal(limiter.take("ip", 0), true); assert.equal(limiter.take("ip", 1), false); assert.equal(limiter.take("ip", 1000), true);
-  assert.equal(isBlockedKioskClient(NATIVE_CAMERA_UA), false); assert.equal(isBlockedKioskClient("Mozilla/5.0 (Linux; Android 14; wv) Version/4.0 Chrome/128.0"), true);
+});
+
+test("third-party iPhone or scanner-app QR links are accepted while TTL remains fixed", async (t) => {
+  const { service } = serviceFor(t);
+  const session = qr(service);
+  const thirdPartyMeta = {
+    claimToken: TOKEN,
+    clientEnv: "scanner-app",
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Zalo/26.1 Mobile/15E148",
+  };
+
+  const scan = await service.touchSessionScan(session.sessionId, thirdPartyMeta);
+  assert.equal(scan.error, undefined);
+  assert.equal(session.status, "WAITING");
+  assert.equal(session.consumed, false);
+  assert.equal(session.claimedBy, TOKEN);
+  assert.ok(session.scannedAt);
+
+  // The source app is not a block; only liveness and biometric verification can continue.
+  service.verifyAndExtractAi = async () => ({ isLive: false, reason: "fixture", embedding: [] });
+  await assert.rejects(
+    service.verifyFaceAndUnlock({
+      sessionId: session.sessionId,
+      snapshotBase64: "fixture-only",
+      ...thirdPartyMeta,
+    }),
+    /AI từ chối/,
+  );
+  assert.equal(session.status, "WAITING");
+  assert.equal(session.consumed, false);
+
+  // Switching from an in-app browser to Camera/Safari gets a new local token but
+  // remains usable within the original fixed TTL; it must not extend that TTL.
+  const fixedDeadline = session.expiresAt;
+  const otherToken = `${TOKEN}other`;
+  const other = await service.touchSessionScan(session.sessionId, { claimToken: otherToken });
+  assert.equal(other.error, undefined);
+  assert.equal(session.status, "WAITING");
+  assert.equal(session.expiresAt, fixedDeadline);
+  await assert.rejects(
+    service.verifyFaceAndUnlock({
+      sessionId: session.sessionId,
+      snapshotBase64: "fixture-only",
+      claimToken: otherToken,
+      clientEnv: "in-app-webview",
+      userAgent: "Zalo/26.1",
+    }),
+    /AI từ chối/,
+  );
+  assert.equal(session.status, "WAITING");
 });
 
 test("QR sessions are terminal-bound, TTL/buffer bounded and scan event is unicast", async (t) => {
@@ -115,19 +164,21 @@ test("face self-update setting accepts stored booleans and legacy strings", asyn
   for (const value of [false, "false", "0", 0, null]) { const { service } = serviceFor(t, { "kiosk.allowSelfUpdate": value }); assert.equal(await service.getAllowSelfUpdate(), false); }
 });
 
-test("expired QR, absent claim token, and a second phone cannot consume a face-verification session", async (t) => {
+test("expired QR and absent claim token remain rejected; another browser context keeps the fixed live session", async (t) => {
   const { service } = serviceFor(t); const expired = qr(service); expired.expiresAt = Date.now() - 1;
   assert.ok((await service.touchSessionScan(expired.sessionId, { claimToken: TOKEN })).error);
   const guarded = qr(service); assert.ok((await service.touchSessionScan(guarded.sessionId)).error);
   await service.touchSessionScan(guarded.sessionId, { claimToken: TOKEN });
-  await assert.rejects(service.verifyFaceAndUnlock({ sessionId: guarded.sessionId, snapshotBase64: "image" }), /Thiết bị/);
-  const other = await service.touchSessionScan(guarded.sessionId, { claimToken: TOKEN + "other" }); assert.ok(other.error); assert.equal(guarded.status, "EXPIRED");
+  await assert.rejects(service.verifyFaceAndUnlock({ sessionId: guarded.sessionId, snapshotBase64: "image" }), /phiên quét trên điện thoại/);
+  const fixedDeadline = guarded.expiresAt;
+  const other = await service.touchSessionScan(guarded.sessionId, { claimToken: TOKEN + "other" });
+  assert.equal(other.error, undefined); assert.equal(guarded.status, "WAITING"); assert.equal(guarded.expiresAt, fixedDeadline);
 });
 
-test("claim acquisition is atomic and a reconnecting SSE socket keeps the newest connection", async (t) => {
+test("concurrent browser-context claims preserve one fixed QR deadline and a reconnecting SSE socket keeps the newest connection", async (t) => {
   const { service } = serviceFor(t); const one = qr(service);
   const claims = await Promise.all([service.touchSessionScan(one.sessionId, { claimToken: TOKEN }), service.touchSessionScan(one.sessionId, { claimToken: TOKEN + "other" })]);
-  assert.equal(claims.filter((item) => !item.error).length, 1); assert.equal(one.status, "EXPIRED");
+  assert.equal(claims.filter((item) => !item.error).length, 2); assert.equal(one.status, "WAITING"); assert.ok(one.scannedAt); assert.equal(one.expiresAt - one.scannedAt!, 60_000);
   const old = new Socket(), fresh = new Socket(); service.registerSseClient("PK01", "terminal_a", old as any); service.registerSseClient("PK01", "terminal_a", fresh as any); old.end();
   assert.equal(service.sendToTerminal("terminal_a", "TEST", { roomCode: "PK01" }), true); assert.equal(fresh.messages.length, 1);
 });

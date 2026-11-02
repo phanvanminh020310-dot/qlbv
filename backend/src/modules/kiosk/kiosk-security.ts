@@ -54,17 +54,3 @@ export class KioskAttemptLimiter {
     this.entries.delete(key);
   }
 }
-
-export function isBlockedKioskClient(userAgent = "", clientEnv = ""): boolean {
-  return (
-    ["in-app-webview", "forwarded-photo", "scanner-app"].includes(clientEnv) ||
-    /zalo|micromessenger|fbav|fban|fb_iab|messenger|telegram|viber|\bline\b|instagram|threads|snapchat|tiktok|bytedance|wechat|gsa|googleapp|scanner|barcode|qrcode/i.test(
-      userAgent,
-    ) ||
-    (/Version\/4\.0.*Chrome/i.test(userAgent) && /Android/i.test(userAgent)) ||
-    /\bwv\b/i.test(userAgent) ||
-    (/iPhone|iPad|iPod/i.test(userAgent) &&
-      !/Version\/[\d.]+.*Safari/i.test(userAgent) &&
-      /Mobile\//i.test(userAgent))
-  );
-}
