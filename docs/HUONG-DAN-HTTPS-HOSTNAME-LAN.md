@@ -84,6 +84,8 @@ Trên **Wi-Fi bệnh viện** (không phải 4G/5G), kiểm tra thật với ít
 
 1. Mở `https://qlbv.bvqy4.io.vn` trên mỗi máy: không được có cảnh báo self-signed/certificate.
 2. Để Kiosk tạo QR mới, quét bằng Camera iPhone và Android. Xác nhận URL bắt đầu bằng hostname, liveness + face scan hoạt động, và Kiosk đúng phòng được mở.
+   - Trên iPhone, QLBV luôn thử mở live camera trước ngay cả khi Safari/WebView báo `isSecureContext` sai sau QR handoff. Nếu Safari chưa cấp camera ở lần tự mở đầu, bấm **“Thử mở lại camera trước”** và chọn Allow/Cho phép; không cần đổi URL hoặc quét QR lại.
+   - Nút đổi HTTPS chỉ xuất hiện khi URL thật sự không phải HTTPS; ở hostname trusted không được hiện cảnh báo HTTPS sai nữa.
 3. Kiểm tra một Windows Kiosk cũ/cấu hình cũ vẫn truy cập `https://172.16.13.75:3000` và hoạt động như trước.
 4. Nếu điện thoại không mở hostname trong LAN dù DNS public trả IP đúng, kiểm tra DNS rebinding protection/DNS riêng trên Wi-Fi bệnh viện. Không bật Cloudflare Proxy để “sửa” việc này.
 

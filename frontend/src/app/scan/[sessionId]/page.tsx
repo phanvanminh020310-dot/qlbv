@@ -55,8 +55,11 @@ export default function MobileScanPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
 
-  // Fallback chụp ảnh trực tiếp nếu trình duyệt chặn hoàn toàn WebRTC
+  // Fallback chụp ảnh trực tiếp nếu trình duyệt chặn hoàn toàn WebRTC.
+  // iOS đôi khi báo isSecureContext sai trong handoff/WebView dù URL thực là HTTPS,
+  // vì vậy không được dùng isSecureContext đơn lẻ để kết luận đang chạy HTTP.
   const [isHttpCaptureMode, setIsHttpCaptureMode] = useState(false);
+  const [needsHttpsUpgrade, setNeedsHttpsUpgrade] = useState(false);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
 
   // Trạng thái quét khuôn mặt
@@ -171,17 +174,15 @@ export default function MobileScanPage() {
     isStartingRef.current = true;
     setCameraError(null);
 
-    // Kiểm tra Secure Context (HTTPS / localhost)
+    // Safari/iOS can transiently report isSecureContext=false after a QR/browser
+    // handoff even though the URL is already HTTPS. The URL scheme is the only
+    // signal used for the HTTPS-upgrade UI; always try getUserMedia first.
+    const pageIsHttps =
+      typeof window !== "undefined" && window.location.protocol === "https:";
     if (typeof window !== "undefined" && window.isSecureContext === false) {
       console.warn(
-        "Đang truy cập qua HTTP không bảo mật: Trình duyệt di động chặn WebRTC Live Stream.",
+        "isSecureContext=false; vẫn thử camera vì URL có thể là HTTPS trên iOS.",
       );
-      setIsHttpCaptureMode(true);
-      setCameraActive(true);
-      setCurrentStep("scanning");
-      setStatusText("Chạm vào màn hình để mở Camera chụp ảnh");
-      isStartingRef.current = false;
-      return;
     }
 
     const targetMode = forceMode || facingMode;
@@ -300,6 +301,7 @@ export default function MobileScanPage() {
 
       setCameraActive(true);
       setIsHttpCaptureMode(false);
+      setNeedsHttpsUpgrade(false);
       setCurrentStep("scanning");
       setStatusText("Nhìn thẳng camera để tự động điểm danh...");
     } catch (err: any) {
@@ -307,10 +309,19 @@ export default function MobileScanPage() {
         "Không thể mở Live Video Stream, kích hoạt chế độ chụp trực tiếp:",
         err,
       );
+      setCameraError(String(err?.name || err?.message || "CAMERA_UNAVAILABLE"));
+      // Only show the HTTPS action when the loaded URL is genuinely not HTTPS.
+      // This prevents a trusted iOS hostname from being incorrectly downgraded
+      // to the photo-only flow because of a false isSecureContext result.
+      setNeedsHttpsUpgrade(!pageIsHttps);
       setIsHttpCaptureMode(true);
       setCameraActive(true);
       setCurrentStep("scanning");
-      setStatusText("Chạm vào màn hình để mở Camera chụp ảnh");
+      setStatusText(
+        pageIsHttps
+          ? "Chạm Thử mở lại camera trước để Safari xin quyền Camera"
+          : "Chạm vào màn hình để mở Camera chụp ảnh",
+      );
     } finally {
       isStartingRef.current = false;
     }
@@ -507,6 +518,15 @@ export default function MobileScanPage() {
     }
   };
 
+  // iOS may require an explicit tap before Safari grants the front-camera stream.
+  const retryLiveCamera = () => {
+    setIsHttpCaptureMode(false);
+    setCameraActive(false);
+    setCurrentStep("scanning");
+    setStatusText("Đang mở lại camera trước...");
+    void startCamera("user");
+  };
+
   // Đổi camera trước / sau
   const toggleFacingMode = () => {
     const nextMode = facingMode === "user" ? "environment" : "user";
@@ -582,25 +602,40 @@ export default function MobileScanPage() {
 
       {/* Main Body */}
       <main className="my-auto py-4">
-        {/* CẢNH BÁO / HƯỚNG DẪN KHI CHẠY TRÊN HTTP */}
+        {/* Fallback khi Safari/WebView chưa mở được luồng camera trực tiếp. */}
         {isHttpCaptureMode && currentStep === "scanning" && (
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4 text-xs text-amber-200">
             <div className="flex items-start gap-2.5">
               <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1">
                 <p className="font-bold text-amber-300">
-                  Quét khuôn mặt tự động (Face ID)
+                  {needsHttpsUpgrade
+                    ? "Cần HTTPS để mở camera tự động"
+                    : "Safari chưa mở camera trực tiếp"}
                 </p>
                 <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                  Để điện thoại tự động mở camera trước nhận diện không cần bấm
-                  chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
+                  {needsHttpsUpgrade ? (
+                    <>
+                      Để điện thoại tự động mở camera trước nhận diện không cần
+                      bấm chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
+                    </>
+                  ) : (
+                    <>
+                      Bạn đang ở HTTPS. Hãy chạm nút bên dưới để Safari xin quyền
+                      mở camera trước; không cần đổi URL hoặc quét QR lại.
+                    </>
+                  )}
                 </p>
                 <button
                   type="button"
-                  onClick={handleSwitchToHttps}
+                  onClick={
+                    needsHttpsUpgrade ? handleSwitchToHttps : retryLiveCamera
+                  }
                   className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
                 >
-                  ⚡ Thử chuyển sang HTTPS ngay
+                  {needsHttpsUpgrade
+                    ? "⚡ Thử chuyển sang HTTPS ngay"
+                    : "📷 Thử mở lại camera trước"}
                 </button>
               </div>
             </div>
