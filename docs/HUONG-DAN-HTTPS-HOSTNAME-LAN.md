@@ -46,7 +46,7 @@ Không cần chạy lệnh Certbot, Nginx, Cloudflare hay cấu hình CORS riên
 - thêm hostname vào `CORS_ORIGINS`, đồng thời đặt `SCAN_BASE_URL` và `PUBLIC_URL` thành `https://qlbv.bvqy4.io.vn`, rồi recreate API để QR mới sử dụng hostname;
 - kiểm tra lại API, Web, hostname `443`, và URL legacy `https://172.16.13.75:3000`.
 
-Nếu certificate, Nginx validation, thử gia hạn hoặc probe hostname thất bại trước bước áp dụng runtime, script dừng và trả Nginx hostname về cấu hình trước đó. Port 3000 và certificate cũ không bị ghi đè hay xóa.
+Nếu certificate production, kiểm SAN/hạn certificate, Nginx validation/reload hoặc probe hostname thất bại trước bước áp dụng runtime, script dừng và trả Nginx hostname về cấu hình trước đó. Port 3000 và certificate cũ không bị ghi đè hay xóa. Nếu chỉ **Let’s Encrypt staging** không truy cập được nhưng certificate production vừa cấp đã hợp lệ và probe hostname đạt, script báo cảnh báo rõ ràng nhưng giữ hostname hoạt động; cron vẫn gia hạn với endpoint production. CNTT cần theo dõi `/var/log/letsencrypt/letsencrypt.log` và xử lý egress staging trước khi certificate hết hạn.
 
 ## Nghiệm thu bắt buộc sau khi script báo thành công
 

@@ -251,7 +251,9 @@ configure_domain_https() {
   command -v openssl >/dev/null 2>&1 || die 'Không có openssl để kiểm tra certificate.'
   openssl x509 -in "$fullchain" -noout -ext subjectAltName | grep -Fq "DNS:$TLS_DOMAIN" \
     || die "Certificate không có SAN DNS:$TLS_DOMAIN. Legacy HTTPS giữ nguyên."
-  ok "Certificate hợp lệ, có SAN DNS:$TLS_DOMAIN"
+  openssl x509 -in "$fullchain" -checkend 0 -noout \
+    || die "Certificate cho $TLS_DOMAIN đã hết hạn; legacy HTTPS giữ nguyên."
+  ok "Certificate hợp lệ, còn hạn và có SAN DNS:$TLS_DOMAIN"
 
   web_port=$(env_get WEB_PORT); web_port=${web_port:-3000}
   [[ "$web_port" =~ ^[0-9]+$ ]] || die "WEB_PORT không hợp lệ: $web_port"
@@ -317,10 +319,15 @@ EOF
   if [[ $needs_renewal_proof -eq 1 ]]; then
     step 'Kiểm tra gia hạn certificate bằng Let’s Encrypt staging (DNS-01)'
     if ! "$TLS_RENEW_BIN" --dry-run; then
-      rollback_domain_nginx "$old_conf" "$old_enabled" "$nginx_bin"
-      die 'Kiểm tra gia hạn DNS-01 thất bại; đã trả Nginx về cấu hình trước, legacy HTTPS giữ nguyên.'
+      # A real production certificate was just obtained/validated above. Some hospital
+      # egress filters allow the production ACME endpoint but reset/blackhole staging.
+      # Do not take down a valid, locally-probed hostname merely because the optional
+      # staging simulation is unreachable; leave a loud warning and keep cron renewal.
+      warn 'Không kết nối được Let’s Encrypt staging để mô phỏng renewal. Certificate production đã hợp lệ; giữ HTTPS hostname, cron renewal production vẫn được cài.'
+      warn 'CNTT cần theo dõi /var/log/letsencrypt/letsencrypt.log và kiểm tra lại outbound staging trước khi certificate hết hạn.'
+    else
+      ok 'Gia hạn DNS-01 staging và reload Nginx đã được kiểm tra'
     fi
-    ok 'Gia hạn DNS-01 staging và reload Nginx đã được kiểm tra'
   else
     ok 'Lịch gia hạn DNS-01 đã tồn tại; không lặp lại staging renewal trong lần cập nhật code này'
   fi

@@ -127,6 +127,8 @@ with open(os.environ['CALL_LOG'],'a') as f: f.write('certbot '+' '.join(args)+'\
 if args and args[0] == 'plugins':
     print('dns-cloudflare')
     raise SystemExit(0)
+if args and args[0] == 'renew' and os.environ.get('RENEW_FAIL'):
+    raise SystemExit(1)
 if args and args[0] == 'certonly':
     domain=args[args.index('-d')+1]
     out=pathlib.Path(os.environ['QLBS_LE_ROOT'])/'live'/domain
@@ -174,7 +176,7 @@ class DomainHttpsOrchestrationTests(unittest.TestCase):
             path.write_text(FAKE)
             path.chmod(0o700)
 
-    def run_tls_update(self):
+    def run_tls_update(self, renew_fail=False):
         env = {
             **os.environ,
             'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
@@ -185,6 +187,7 @@ class DomainHttpsOrchestrationTests(unittest.TestCase):
             'QLBS_NGINX_ROOT': str(self.root / 'nginx-root'),
             'QLBS_RENEW_BIN': str(self.root / 'renew/qlbs-certbot-renew'),
             'QLBS_CRON_FILE': str(self.root / 'cron/qlbs-letsencrypt-renew'),
+            'RENEW_FAIL': '1' if renew_fail else '',
         }
         for key in ('QLBS_OLD_COMMIT', 'QLBS_UPDATE_REEXEC', 'QLBS_UPDATE_BACKUP_DIR'):
             env.pop(key, None)
@@ -227,6 +230,20 @@ class DomainHttpsOrchestrationTests(unittest.TestCase):
         self.assertIn('renew --quiet', renew)
         self.assertIn('"$@"', renew)
         self.assertIn('qlbs-certbot-renew', (self.root / 'cron/qlbs-letsencrypt-renew').read_text())
+        for path, content in legacy.items():
+            self.assertEqual((self.root / path).read_bytes(), content)
+
+    def test_staging_renewal_network_failure_keeps_verified_production_hostname(self):
+        legacy = {p: (self.root / p).read_bytes() for p in ['data/ssl/server.crt', 'data/ssl/server.key']}
+        result = self.run_tls_update(renew_fail=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Không kết nối được Let’s Encrypt staging', result.stdout)
+        self.assertTrue((self.root / 'nginx-root/sites-enabled/qlbs-domain-https.conf').is_symlink())
+        env_text = (self.root / '.env').read_text()
+        self.assertIn('SCAN_BASE_URL=https://qlbv.bvqy4.io.vn', env_text)
+        self.assertIn('https://172.16.13.75:3000', env_text)
+        self.assertTrue((self.root / 'renew/qlbs-certbot-renew').is_file())
+        self.assertTrue((self.root / 'cron/qlbs-letsencrypt-renew').is_file())
         for path, content in legacy.items():
             self.assertEqual((self.root / path).read_bytes(), content)
 
