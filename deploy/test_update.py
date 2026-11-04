@@ -206,7 +206,7 @@ class DomainHttpsOrchestrationTests(unittest.TestCase):
         self.assertIn('--dry-run', calls)
         self.assertIn('nginx -t', calls)
         self.assertIn('systemctl reload nginx', calls)
-        self.assertIn('--resolve qlbv.bvqy4.io.vn:443:127.0.0.1', calls)
+        self.assertIn('--resolve qlbv.bvqy4.io.vn:443:172.16.13.75', calls)
         self.assertIn('compose build api', calls)
         self.assertIn('compose up -d --no-deps api', calls)
 

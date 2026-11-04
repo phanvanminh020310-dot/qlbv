@@ -169,6 +169,15 @@ TLS_NGINX_ENABLED="$TLS_NGINX_ROOT/sites-enabled/qlbs-domain-https.conf"
 TLS_RENEW_BIN=${QLBS_RENEW_BIN:-/usr/local/sbin/qlbs-certbot-renew}
 TLS_CRON_FILE=${QLBS_CRON_FILE:-/etc/cron.d/qlbs-letsencrypt-renew}
 LEGACY_SCAN_BASE=$(env_get SCAN_BASE_URL)
+# Legacy self-signed deployments commonly bind Nginx only to the LAN interface.
+# Probe the known LAN address rather than assuming 127.0.0.1 also has a 443 listener.
+TLS_PROBE_IP=127.0.0.1
+if [[ "$LEGACY_SCAN_BASE" =~ ^https://([0-9.]+):3000$ ]]; then
+  TLS_PROBE_IP=${BASH_REMATCH[1]}
+elif [[ "$(env_get CORS_ORIGINS)" =~ https://([0-9.]+):3000 ]]; then
+  # SCAN_BASE_URL becomes the hostname after first success; CORS retains legacy IP.
+  TLS_PROBE_IP=${BASH_REMATCH[1]}
+fi
 
 rollback_domain_nginx() {
   local old_conf=$1 old_enabled=$2 nginx_bin=$3
@@ -332,12 +341,12 @@ EOF
     ok 'Lịch gia hạn DNS-01 đã tồn tại; không lặp lại staging renewal trong lần cập nhật code này'
   fi
 
-  # Test localhost through SNI with normal CA validation, without putting traffic on Internet.
-  if ! curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:127.0.0.1" "https://$TLS_DOMAIN/health" >/dev/null; then
+  # Test through the known LAN interface with SNI/normal CA validation, without Internet payload.
+  if ! curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:$TLS_PROBE_IP" "https://$TLS_DOMAIN/health" >/dev/null; then
     rollback_domain_nginx '' "$old_enabled" "$nginx_bin"
-    die 'HTTPS hostname chưa phản hồi qua Nginx. Legacy HTTPS IP:3000 vẫn giữ; xem nginx/error.log.'
+    die "HTTPS hostname chưa phản hồi qua Nginx tại $TLS_PROBE_IP. Legacy HTTPS IP:3000 vẫn giữ; xem nginx/error.log."
   fi
-  ok "HTTPS $TLS_DOMAIN/health xác thực CA và phản hồi qua Nginx"
+  ok "HTTPS $TLS_DOMAIN/health xác thực CA và phản hồi qua Nginx LAN $TLS_PROBE_IP"
   rm -f "$old_conf"
 
   current_cors=$(env_get CORS_ORIGINS)
@@ -423,10 +432,10 @@ wait_url "http://127.0.0.1:${API_PORT}/health" "API" 180 api || FAIL=1
 wait_url "http://127.0.0.1:${WEB_PORT}/login" "Giao diện" 120 web || FAIL=1
 wait_url "http://127.0.0.1:${WEB_PORT}/health" "Proxy web → API" 30 web || FAIL=1
 if [[ -n "$TLS_DOMAIN" ]]; then
-  if curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:127.0.0.1" "https://$TLS_DOMAIN/login" >/dev/null; then
-    ok "HTTPS hostname mới phản hồi và certificate được CA tin cậy ($TLS_DOMAIN)"
+  if curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:$TLS_PROBE_IP" "https://$TLS_DOMAIN/login" >/dev/null; then
+    ok "HTTPS hostname mới phản hồi qua LAN và certificate được CA tin cậy ($TLS_DOMAIN)"
   else
-    warn "HTTPS hostname mới không phản hồi qua SNI localhost ($TLS_DOMAIN)"; FAIL=1
+    warn "HTTPS hostname mới không phản hồi qua SNI LAN $TLS_PROBE_IP ($TLS_DOMAIN)"; FAIL=1
   fi
   if [[ "$LEGACY_SCAN_BASE" =~ ^https://[0-9.]+:3000$ ]]; then
     if curl -kfsS --max-time 12 "$LEGACY_SCAN_BASE/health" >/dev/null; then

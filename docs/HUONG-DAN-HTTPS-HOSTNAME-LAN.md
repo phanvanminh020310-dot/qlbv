@@ -40,7 +40,7 @@ Không cần chạy lệnh Certbot, Nginx, Cloudflare hay cấu hình CORS riên
 - cấp hoặc giữ certificate Let’s Encrypt bằng DNS-01;
 - xác minh SAN của certificate đúng hostname;
 - tạo một Nginx vhost **riêng** trên `443`, proxy về `127.0.0.1:$WEB_PORT`;
-- kiểm tra `nginx -t`, reload Nginx và xác minh HTTPS bằng SNI localhost với CA validation;
+- kiểm tra `nginx -t`, reload Nginx và xác minh HTTPS bằng SNI trên đúng IP LAN legacy với CA validation;
 - tạo lịch gia hạn `/etc/cron.d/qlbs-letsencrypt-renew` lúc 03:17 hằng ngày, reload Nginx chỉ sau lần gia hạn thành công;
 - ở lần thiết lập/gia hạn script đầu tiên, chạy thử gia hạn DNS-01 trên Let’s Encrypt staging; các lần cập nhật code sau dùng cron đã được kiểm tra, không lặp staging renewal không cần thiết;
 - thêm hostname vào `CORS_ORIGINS`, đồng thời đặt `SCAN_BASE_URL` và `PUBLIC_URL` thành `https://qlbv.bvqy4.io.vn`, rồi recreate API để QR mới sử dụng hostname;
