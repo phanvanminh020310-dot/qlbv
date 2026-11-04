@@ -17,7 +17,7 @@ Lưu lượng ứng dụng, ảnh liveness và face verification trong Wi-Fi b�
    - `Zone / DNS / Edit`
    - `Zone / Zone / Read`
 4. Có email kỹ thuật nhận thông báo hết hạn certificate.
-5. Máy chủ còn dùng Nginx/HTTPS IP cũ bình thường. Port 443 không được ứng dụng khác chiếm.
+5. Máy chủ còn dùng Nginx/HTTPS IP cũ bình thường. Script bind Nginx vào riêng `172.16.13.75:443`; Tailscale có thể dùng `443` trên interface Tailscale riêng mà không xung đột. Không tự đổi thành wildcard `listen 443`.
 
 > Không dán token vào Git, `.env`, trình duyệt, ảnh chụp màn hình hoặc chat. Token được nhập ẩn trực tiếp ở terminal và sau đó nằm tại `/etc/qlbs/secrets/cloudflare-dns.ini` với quyền root-only `0600`.
 
@@ -46,7 +46,37 @@ Không cần chạy lệnh Certbot, Nginx, Cloudflare hay cấu hình CORS riên
 - thêm hostname vào `CORS_ORIGINS`, đồng thời đặt `SCAN_BASE_URL` và `PUBLIC_URL` thành `https://qlbv.bvqy4.io.vn`, rồi recreate API để QR mới sử dụng hostname;
 - kiểm tra lại API, Web, hostname `443`, và URL legacy `https://172.16.13.75:3000`.
 
-Nếu certificate production, kiểm SAN/hạn certificate, Nginx validation/reload hoặc probe hostname thất bại trước bước áp dụng runtime, script dừng và trả Nginx hostname về cấu hình trước đó. Port 3000 và certificate cũ không bị ghi đè hay xóa. Nếu chỉ **Let’s Encrypt staging** không truy cập được nhưng certificate production vừa cấp đã hợp lệ và probe hostname đạt, script báo cảnh báo rõ ràng nhưng giữ hostname hoạt động; cron vẫn gia hạn với endpoint production. CNTT cần theo dõi `/var/log/letsencrypt/letsencrypt.log` và xử lý egress staging trước khi certificate hết hạn.
+Nếu certificate production, kiểm SAN/hạn certificate, Nginx validation/reload hoặc probe hostname thất bại trước bước áp dụng runtime, script dừng và trả Nginx hostname về cấu hình trước đó. Port 3000 và certificate cũ không bị ghi đè hay xóa. Nếu chỉ **Let’s Encrypt staging** không truy cập được nhưng certificate production vừa cấp đã hợp lệ và probe hostname đạt, script báo cảnh báo rõ ràng nhưng giữ hostname hoạt động; cron vẫn gia hạn với endpoint production.
+
+## Vận hành, gia hạn và xử lý sự cố
+
+### Gia hạn có mất phí không? Có tự gia hạn không?
+
+- Let’s Encrypt certificate và Cloudflare DNS-only free plan không tính phí gia hạn certificate. Certificate Let’s Encrypt có thời hạn ngắn (thường 90 ngày), nhưng Certbot kiểm tra hằng ngày lúc **03:17** qua `/etc/cron.d/qlbs-letsencrypt-renew` và chỉ gia hạn khi certificate gần hết hạn. Khi gia hạn thật thành công, deploy hook reload Nginx.
+- Cloudflare chỉ cung cấp DNS/TXT DNS-01; lưu lượng QLBV không đi qua Cloudflare. Giữ record `qlbv` DNS-only và token Cloudflare còn hiệu lực là điều kiện bắt buộc.
+- Email được đưa cho Let’s Encrypt lúc cấp certificate là lớp cảnh báo bổ sung cho thông báo sắp hết hạn. Đừng coi email là bằng chứng gia hạn đã chạy thành công: cron chạy yên lặng khi không có việc cần làm và cũng không gửi email “thành công” mỗi ngày.
+- Miễn phí lâu dài cho certificate/DNS không đồng nghĩa domain cũng miễn phí: vẫn phải gia hạn tên miền `bvqy4.io.vn` tại nhà đăng ký đúng hạn.
+
+### Kiểm tra định kỳ, không cần chạy mỗi ngày
+
+Mỗi tháng hoặc khi CNTT nhận cảnh báo, có thể dùng các lệnh **chỉ đọc** sau:
+
+```bash
+sudo certbot certificates
+sudo cat /etc/cron.d/qlbs-letsencrypt-renew
+sudo tail -n 120 /var/log/letsencrypt/letsencrypt.log
+```
+
+Không dùng `certbot renew --dry-run` làm kiểm tra bắt buộc trên máy chủ này nếu Let’s Encrypt **staging** bị firewall/ISP timeout; production endpoint đã từng cấp certificate thực tế là đường renewal quan trọng. Khi gần hạn mà log production báo renewal fail, kiểm tra outbound HTTPS tới `acme-v02.api.letsencrypt.org`, token/root-only file `/etc/qlbs/secrets/cloudflare-dns.ini`, DNS zone Cloudflare Active và record `qlbv` DNS-only. Không dán token vào log/chat để debug.
+
+### Diễn giải các thông báo thường gặp
+
+| Thông báo | Ý nghĩa / xử lý |
+|---|---|
+| `Certificate not yet due for renewal; no action taken.` | Bình thường: certificate còn hạn, Certbot không cấp mới. |
+| `curl: (56) Recv failure` hoặc `curl: (52) Empty reply` trong vài giây đầu sau `Áp dụng cấu hình runtime mới: api` | Có thể xuất hiện khi API container đang recreate. Chỉ coi là lỗi khi các dòng kiểm tra cuối không có dấu ✓ hoặc script không báo hoàn tất. |
+| Let’s Encrypt staging timeout/reset, nhưng certificate production/SAN/Nginx HTTPS probe đều pass | Cảnh báo egress staging; hostname vẫn giữ hoạt động và cron dùng production endpoint. Theo dõi log production, không lặp cấp certificate vô cớ. |
+| `bind() ... :443 failed` hoặc hostname không phản hồi | Kiểm tra `sudo ss -ltnp 'sport = :443'` và `/var/log/nginx/error.log`. Vhost QLBV phải bind riêng `172.16.13.75:443`, không đổi thành wildcard vì Tailscale có thể dùng 443 ở interface khác. |
 
 ## Nghiệm thu bắt buộc sau khi script báo thành công
 
