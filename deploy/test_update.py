@@ -211,7 +211,7 @@ class DomainHttpsOrchestrationTests(unittest.TestCase):
         self.assertIn('compose up -d --no-deps api', calls)
 
         config = (self.root / 'nginx-root/sites-available/qlbs-domain-https.conf').read_text()
-        self.assertIn('listen 443 ssl http2;', config)
+        self.assertIn('listen 172.16.13.75:443 ssl http2;', config)
         self.assertIn('server_name qlbv.bvqy4.io.vn;', config)
         self.assertIn('proxy_pass http://127.0.0.1:3001;', config)
         self.assertNotIn('listen 3000', config)

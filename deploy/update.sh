@@ -278,7 +278,8 @@ configure_domain_https() {
   cat > "$TLS_NGINX_AVAILABLE.tmp" <<EOF
 # QLBS hostname HTTPS — managed by deploy/update.sh; legacy IP:3000 config remains separate.
 server {
-  listen 443 ssl http2;
+  # Bind only hospital LAN IP: tailscaled already owns its own :443 address.
+  listen $TLS_PROBE_IP:443 ssl http2;
   server_name $TLS_DOMAIN;
 
   ssl_certificate     $fullchain;
@@ -311,7 +312,7 @@ EOF
     rollback_domain_nginx "$old_conf" "$old_enabled" "$nginx_bin"
     die 'Nginx reload thất bại; legacy HTTPS giữ nguyên, kiểm tra systemctl status nginx.'
   fi
-  ok "Nginx HTTPS 443 → 127.0.0.1:$web_port đã nạp song song legacy IP:3000"
+  ok "Nginx HTTPS $TLS_PROBE_IP:443 → 127.0.0.1:$web_port đã nạp song song legacy IP:3000"
 
   install -d -m 700 "$(dirname "$TLS_RENEW_BIN")"
   install -d -m 755 "$(dirname "$TLS_CRON_FILE")"
