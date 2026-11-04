@@ -43,6 +43,26 @@ test("terminal targeting, PIN rules and limiter remain strict", () => {
   const limiter = new KioskAttemptLimiter(2, 1000); assert.equal(limiter.take("ip", 0), true); assert.equal(limiter.take("ip", 0), true); assert.equal(limiter.take("ip", 1), false); assert.equal(limiter.take("ip", 1000), true);
 });
 
+test("configured trusted HTTPS hostname always wins when a Kiosk creates a QR URL", (t) => {
+  const previous = process.env.SCAN_BASE_URL;
+  process.env.SCAN_BASE_URL = "https://qlbv.bvqy4.io.vn/";
+  t.after(() => {
+    if (previous === undefined) delete process.env.SCAN_BASE_URL;
+    else process.env.SCAN_BASE_URL = previous;
+  });
+  const { service } = serviceFor(t);
+  const session = service.createQrSession(
+    "PK01",
+    "Phòng khám 01",
+    "terminal_hostname",
+    "https://172.16.13.75:3000",
+    "172.16.13.75:3000",
+    "https",
+    15,
+  );
+  assert.match(session.qrUrl, /^https:\/\/qlbv\.bvqy4\.io\.vn\/scan\/[0-9a-f-]+$/);
+});
+
 test("third-party iPhone or scanner-app QR links are accepted while TTL remains fixed", async (t) => {
   const { service } = serviceFor(t);
   const session = qr(service);

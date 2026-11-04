@@ -13,6 +13,14 @@
 #         docker-compose.yml, .env        → khởi động lại theo cấu hình mới
 #    3. Chỉ build service cần thiết (có cache npm + cache Next.js), rồi up -d.
 #    4. Chờ /health và trang đăng nhập phản hồi, dọn ảnh cũ treo (dangling).
+#    5. Nếu lần đầu cấu hình HTTPS hostname, hỏi tương tác hostname/email/token
+#       Cloudflare (ẩn), cấp Let's Encrypt DNS-01 và giữ song song HTTPS IP cũ.
+#
+#  HTTPS hostname (lần đầu, vẫn chỉ chạy một lệnh update):
+#    • Khi chưa có HTTPS_DOMAIN trong .env, script hỏi hostname (Enter để bỏ qua).
+#    • Token Cloudflare chỉ được nhập ẩn; lưu /etc/qlbs/secrets quyền 600,
+#      không ghi Git/.env/backup. Chỉ cần Zone.DNS Edit + Zone.Zone Read cho 1 zone.
+#    • Không đụng /etc/nginx/sites-available/qlbs-ssl-3000.conf hoặc data/ssl cũ.
 #
 #  Tùy chọn:
 #    --all        Dựng lại cả api và web dù không đổi
@@ -53,6 +61,26 @@ if docker compose version >/dev/null 2>&1; then DC=(docker compose)
 elif command -v docker-compose >/dev/null 2>&1; then DC=(docker-compose)
 else die "Không tìm thấy docker compose"; fi
 export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+
+# Đọc/ghi .env mà không `source` tệp chứa các bí mật có thể có ký tự shell.
+env_get() { sed -n "s/^$1=//p" .env | tail -1 | tr -d '\r"'; }
+env_set() { # env_set KEY VALUE — chỉ dùng giá trị hệ thống đã kiểm tra, không echo bí mật
+  local key=$1 value=$2
+  if grep -qE "^${key}=" .env; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+csv_add_once() { # csv_add_once csv value
+  local csv=${1:-} value=$2 item
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do [[ "$item" == "$value" ]] && { printf '%s' "$csv"; return; }; done
+  [[ -n "$csv" ]] && printf '%s,%s' "$csv" "$value" || printf '%s' "$value"
+}
+is_hostname() {
+  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
+}
 
 # git có thể từ chối thư mục do root sở hữu khi chạy bằng sudo
 git config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
@@ -125,6 +153,202 @@ else
   CHANGED=$(git diff --name-only "$OLD" "$NEW")
 fi
 
+# ---------------------------------------------------------------- HTTPS hostname có certificate CA tin cậy
+# Không proxy Cloudflare: DNS-01 chỉ tạo TXT public; body QR/liveness đi trực tiếp LAN.
+# Cấu hình cũ https://IP:3000 và data/ssl luôn được giữ nguyên.
+TLS_CHANGED=0
+TLS_DOMAIN=$(env_get HTTPS_DOMAIN)
+TLS_EMAIL=$(env_get LETSENCRYPT_EMAIL)
+TLS_SECRET_ROOT=${QLBS_SYSTEM_ROOT:-/etc/qlbs}
+TLS_SECRET_DIR="$TLS_SECRET_ROOT/secrets"
+TLS_CREDENTIALS="$TLS_SECRET_DIR/cloudflare-dns.ini"
+TLS_LE_ROOT=${QLBS_LE_ROOT:-/etc/letsencrypt}
+TLS_NGINX_ROOT=${QLBS_NGINX_ROOT:-/etc/nginx}
+TLS_NGINX_AVAILABLE="$TLS_NGINX_ROOT/sites-available/qlbs-domain-https.conf"
+TLS_NGINX_ENABLED="$TLS_NGINX_ROOT/sites-enabled/qlbs-domain-https.conf"
+TLS_RENEW_BIN=${QLBS_RENEW_BIN:-/usr/local/sbin/qlbs-certbot-renew}
+TLS_CRON_FILE=${QLBS_CRON_FILE:-/etc/cron.d/qlbs-letsencrypt-renew}
+LEGACY_SCAN_BASE=$(env_get SCAN_BASE_URL)
+
+rollback_domain_nginx() {
+  local old_conf=$1 old_enabled=$2 nginx_bin=$3
+  if [[ -n "$old_conf" && -f "$old_conf" ]]; then
+    mv "$old_conf" "$TLS_NGINX_AVAILABLE"
+  else
+    rm -f "$TLS_NGINX_AVAILABLE"
+  fi
+  if [[ -n "$old_enabled" ]]; then
+    ln -sfn "$old_enabled" "$TLS_NGINX_ENABLED"
+  else
+    rm -f "$TLS_NGINX_ENABLED"
+  fi
+  "$nginx_bin" -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
+configure_domain_https() {
+  local token='' current_cors web_port certbot_bin nginx_bin old_conf='' old_enabled='' fullchain privkey needs_renewal_proof=0
+
+  if [[ -z "$TLS_DOMAIN" && -t 0 ]]; then
+    printf "\nThiết lập HTTPS hostname Let's Encrypt (Enter để bỏ qua lần này):\n"
+    read -r -p 'Hostname (ví dụ qlbv.example.vn): ' TLS_DOMAIN
+    TLS_DOMAIN=${TLS_DOMAIN,,}
+  fi
+  TLS_DOMAIN=${TLS_DOMAIN,,}
+  [[ -n "$TLS_DOMAIN" ]] || return 0
+  [[ $EUID -eq 0 ]] || die "HTTPS hostname cần quyền root (dùng sudo bash deploy/update.sh ...)"
+  is_hostname "$TLS_DOMAIN" || die "HTTPS_DOMAIN không hợp lệ: '$TLS_DOMAIN'"
+
+  if [[ -z "$TLS_EMAIL" && -t 0 ]]; then
+    read -r -p "Email nhận cảnh báo gia hạn Let's Encrypt: " TLS_EMAIL
+  fi
+  [[ "$TLS_EMAIL" == *'@'* && "$TLS_EMAIL" != *$'\n'* ]] || die "Cần LETSENCRYPT_EMAIL hợp lệ để cấp certificate."
+
+  if [[ ! -f "$TLS_CREDENTIALS" ]]; then
+    [[ -t 0 ]] || die "Chưa có token Cloudflare tại $TLS_CREDENTIALS; cần chạy tương tác một lần."
+    printf 'Cloudflare API token (nhập ẩn, không dán vào chat): '
+    read -r -s token
+    printf '\n'
+    [[ "$token" =~ ^[A-Za-z0-9_-]{20,}$ ]] || die "Token Cloudflare trống/không hợp lệ."
+    install -d -m 700 "$TLS_SECRET_DIR"
+    umask 077
+    printf 'dns_cloudflare_api_token = %s\n' "$token" > "$TLS_CREDENTIALS.tmp"
+    install -o root -g root -m 600 "$TLS_CREDENTIALS.tmp" "$TLS_CREDENTIALS"
+    rm -f "$TLS_CREDENTIALS.tmp"
+    unset token
+    ok "Đã lưu Cloudflare token ngoài Git trong $TLS_CREDENTIALS (600)"
+  fi
+  chown root:root "$TLS_CREDENTIALS" 2>/dev/null || true
+  chmod 600 "$TLS_CREDENTIALS"
+
+  if ! command -v certbot >/dev/null 2>&1 || ! certbot plugins 2>/dev/null | grep -Eq 'dns[-_]cloudflare'; then
+    step 'Cài Certbot + Cloudflare DNS plugin'
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx certbot python3-certbot-dns-cloudflare
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y nginx certbot python3-certbot-dns-cloudflare
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y nginx certbot python3-certbot-dns-cloudflare
+    else
+      die 'Thiếu certbot/cloudflare plugin và không hỗ trợ trình quản lý gói tự động.'
+    fi
+  fi
+  command -v nginx >/dev/null 2>&1 || die 'Không có nginx sau khi cài package.'
+  certbot_bin=$(command -v certbot)
+  "$certbot_bin" plugins 2>/dev/null | grep -Eq 'dns[-_]cloudflare' \
+    || die 'Certbot chưa có Cloudflare DNS plugin; dừng trước khi cấp certificate.'
+  nginx_bin=$(command -v nginx)
+
+  fullchain="$TLS_LE_ROOT/live/$TLS_DOMAIN/fullchain.pem"
+  privkey="$TLS_LE_ROOT/live/$TLS_DOMAIN/privkey.pem"
+  [[ -s "$fullchain" && -s "$privkey" && -f "$TLS_RENEW_BIN" ]] || needs_renewal_proof=1
+  step "Cấp/kiểm tra Let's Encrypt cho $TLS_DOMAIN qua DNS-01"
+  "$certbot_bin" certonly --non-interactive --agree-tos --keep-until-expiring \
+    --email "$TLS_EMAIL" --dns-cloudflare \
+    --dns-cloudflare-credentials "$TLS_CREDENTIALS" \
+    --dns-cloudflare-propagation-seconds 60 -d "$TLS_DOMAIN"
+  [[ -s "$fullchain" && -s "$privkey" ]] || die "Certbot không tạo đủ certificate/key cho $TLS_DOMAIN. Legacy HTTPS giữ nguyên."
+  command -v openssl >/dev/null 2>&1 || die 'Không có openssl để kiểm tra certificate.'
+  openssl x509 -in "$fullchain" -noout -ext subjectAltName | grep -Fq "DNS:$TLS_DOMAIN" \
+    || die "Certificate không có SAN DNS:$TLS_DOMAIN. Legacy HTTPS giữ nguyên."
+  ok "Certificate hợp lệ, có SAN DNS:$TLS_DOMAIN"
+
+  web_port=$(env_get WEB_PORT); web_port=${web_port:-3000}
+  [[ "$web_port" =~ ^[0-9]+$ ]] || die "WEB_PORT không hợp lệ: $web_port"
+  install -d "$TLS_NGINX_ROOT/sites-available" "$TLS_NGINX_ROOT/sites-enabled"
+  if [[ -e "$TLS_NGINX_AVAILABLE" || -L "$TLS_NGINX_AVAILABLE" ]]; then
+    old_conf=$(mktemp)
+    cp -pL "$TLS_NGINX_AVAILABLE" "$old_conf"
+  fi
+  if [[ -e "$TLS_NGINX_ENABLED" || -L "$TLS_NGINX_ENABLED" ]]; then
+    old_enabled=$(readlink "$TLS_NGINX_ENABLED" 2>/dev/null || printf '%s' "$TLS_NGINX_AVAILABLE")
+  fi
+
+  cat > "$TLS_NGINX_AVAILABLE.tmp" <<EOF
+# QLBS hostname HTTPS — managed by deploy/update.sh; legacy IP:3000 config remains separate.
+server {
+  listen 443 ssl http2;
+  server_name $TLS_DOMAIN;
+
+  ssl_certificate     $fullchain;
+  ssl_certificate_key $privkey;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_session_timeout 1d;
+  ssl_session_cache shared:QLBSTLS:10m;
+
+  client_max_body_size 50m;
+  location / {
+    proxy_pass http://127.0.0.1:$web_port;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$http_connection;
+    proxy_buffering off;
+  }
+}
+EOF
+  mv "$TLS_NGINX_AVAILABLE.tmp" "$TLS_NGINX_AVAILABLE"
+  ln -sfn "$TLS_NGINX_AVAILABLE" "$TLS_NGINX_ENABLED"
+  if ! "$nginx_bin" -t; then
+    rollback_domain_nginx "$old_conf" "$old_enabled" "$nginx_bin"
+    die 'Nginx config hostname không hợp lệ; chưa reload, legacy HTTPS không đổi.'
+  fi
+  if ! systemctl reload nginx; then
+    rollback_domain_nginx "$old_conf" "$old_enabled" "$nginx_bin"
+    die 'Nginx reload thất bại; legacy HTTPS giữ nguyên, kiểm tra systemctl status nginx.'
+  fi
+  ok "Nginx HTTPS 443 → 127.0.0.1:$web_port đã nạp song song legacy IP:3000"
+
+  install -d -m 700 "$(dirname "$TLS_RENEW_BIN")"
+  install -d -m 755 "$(dirname "$TLS_CRON_FILE")"
+  cat > "$TLS_RENEW_BIN" <<EOF
+#!/bin/sh
+exec "$certbot_bin" renew --quiet --deploy-hook '/bin/systemctl reload nginx' "\$@"
+EOF
+  chmod 700 "$TLS_RENEW_BIN"
+  cat > "$TLS_CRON_FILE" <<EOF
+# QLBS: Let's Encrypt DNS-01 renewal; certificate/key remain root-only.
+17 3 * * * root $TLS_RENEW_BIN
+EOF
+  chmod 600 "$TLS_CRON_FILE"
+  if [[ $needs_renewal_proof -eq 1 ]]; then
+    step 'Kiểm tra gia hạn certificate bằng Let’s Encrypt staging (DNS-01)'
+    if ! "$TLS_RENEW_BIN" --dry-run; then
+      rollback_domain_nginx "$old_conf" "$old_enabled" "$nginx_bin"
+      die 'Kiểm tra gia hạn DNS-01 thất bại; đã trả Nginx về cấu hình trước, legacy HTTPS giữ nguyên.'
+    fi
+    ok 'Gia hạn DNS-01 staging và reload Nginx đã được kiểm tra'
+  else
+    ok 'Lịch gia hạn DNS-01 đã tồn tại; không lặp lại staging renewal trong lần cập nhật code này'
+  fi
+
+  # Test localhost through SNI with normal CA validation, without putting traffic on Internet.
+  if ! curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:127.0.0.1" "https://$TLS_DOMAIN/health" >/dev/null; then
+    rollback_domain_nginx '' "$old_enabled" "$nginx_bin"
+    die 'HTTPS hostname chưa phản hồi qua Nginx. Legacy HTTPS IP:3000 vẫn giữ; xem nginx/error.log.'
+  fi
+  ok "HTTPS $TLS_DOMAIN/health xác thực CA và phản hồi qua Nginx"
+  rm -f "$old_conf"
+
+  current_cors=$(env_get CORS_ORIGINS)
+  # Preserve the old IP origin as an allowed browser origin while adding the new hostname.
+  if [[ "$LEGACY_SCAN_BASE" =~ ^https://[0-9.]+:3000$ ]]; then
+    current_cors=$(csv_add_once "$current_cors" "$LEGACY_SCAN_BASE")
+  fi
+  current_cors=$(csv_add_once "$current_cors" "https://$TLS_DOMAIN")
+  env_set HTTPS_DOMAIN "$TLS_DOMAIN"
+  env_set LETSENCRYPT_EMAIL "$TLS_EMAIL"
+  env_set SCAN_BASE_URL "https://$TLS_DOMAIN"
+  env_set PUBLIC_URL "https://$TLS_DOMAIN"
+  env_set CORS_ORIGINS "$current_cors"
+  TLS_CHANGED=1
+}
+
+configure_domain_https
+
 # uploads/backups gắn bind-mount vào container api (user node = UID 1000) — phải đúng chủ
 mkdir -p data/uploads data/backups
 chown -R 1000:1000 data/uploads data/backups 2>/dev/null || true
@@ -135,12 +359,15 @@ if [[ -f deploy/install-times-font.sh ]]; then
 fi
 
 BUILD=()
+RECREATE=()
 if [[ $FORCE_API -eq 1 ]] || grep -q '^backend/' <<<"$CHANGED"; then BUILD+=(api); fi
 if [[ $FORCE_WEB -eq 1 ]] || grep -q '^frontend/' <<<"$CHANGED"; then BUILD+=(web); fi
+# SCAN_BASE_URL/CORS runtime config changed: recreate API, do not need to rebuild its image.
+if [[ $TLS_CHANGED -eq 1 ]]; then RECREATE+=(api); fi
 COMPOSE_CHANGED=0
 grep -qE '^(docker-compose\.yml|\.env\.example)$' <<<"$CHANGED" && COMPOSE_CHANGED=1
 
-if [[ ${#BUILD[@]} -eq 0 && $COMPOSE_CHANGED -eq 0 ]]; then
+if [[ ${#BUILD[@]} -eq 0 && ${#RECREATE[@]} -eq 0 && $COMPOSE_CHANGED -eq 0 ]]; then
   step "Không có thay đổi cần dựng lại"
   ok "Chỉ đổi tài liệu hoặc không có gì mới — hệ thống giữ nguyên"
   "${DC[@]}" ps
@@ -157,13 +384,20 @@ if [[ ${#BUILD[@]} -gt 0 ]]; then
   step "Khởi động lại: ${BUILD[*]}"
   "${DC[@]}" up -d --no-deps "${BUILD[@]}"
 fi
+if [[ ${#RECREATE[@]} -gt 0 ]]; then
+  for svc in "${RECREATE[@]}"; do
+    if [[ " ${BUILD[*]} " != *" $svc "* ]]; then
+      step "Áp dụng cấu hình runtime mới: $svc"
+      "${DC[@]}" up -d --no-deps "$svc"
+    fi
+  done
+fi
 if [[ $COMPOSE_CHANGED -eq 1 ]]; then
   step "docker-compose.yml thay đổi — áp dụng cấu hình mới"
   "${DC[@]}" up -d
 fi
 
 # ---------------------------------------------------------------- kiểm tra
-env_get() { sed -n "s/^$1=//p" .env | tail -1 | tr -d '"'"'" ; }
 API_PORT=$(env_get API_PORT); API_PORT=${API_PORT:-4000}
 WEB_PORT=$(env_get WEB_PORT); WEB_PORT=${WEB_PORT:-3000}
 
@@ -181,6 +415,20 @@ FAIL=0
 wait_url "http://127.0.0.1:${API_PORT}/health" "API" 180 api || FAIL=1
 wait_url "http://127.0.0.1:${WEB_PORT}/login" "Giao diện" 120 web || FAIL=1
 wait_url "http://127.0.0.1:${WEB_PORT}/health" "Proxy web → API" 30 web || FAIL=1
+if [[ -n "$TLS_DOMAIN" ]]; then
+  if curl -fsS --max-time 12 --resolve "$TLS_DOMAIN:443:127.0.0.1" "https://$TLS_DOMAIN/login" >/dev/null; then
+    ok "HTTPS hostname mới phản hồi và certificate được CA tin cậy ($TLS_DOMAIN)"
+  else
+    warn "HTTPS hostname mới không phản hồi qua SNI localhost ($TLS_DOMAIN)"; FAIL=1
+  fi
+  if [[ "$LEGACY_SCAN_BASE" =~ ^https://[0-9.]+:3000$ ]]; then
+    if curl -kfsS --max-time 12 "$LEGACY_SCAN_BASE/health" >/dev/null; then
+      ok "HTTPS IP legacy vẫn phản hồi ($LEGACY_SCAN_BASE)"
+    else
+      warn "HTTPS IP legacy không phản hồi sau cập nhật ($LEGACY_SCAN_BASE)"; FAIL=1
+    fi
+  fi
+fi
 
 docker image prune -f >/dev/null 2>&1 || true
 "${DC[@]}" ps

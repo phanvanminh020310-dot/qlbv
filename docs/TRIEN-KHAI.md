@@ -74,6 +74,8 @@ chạy lại nhiều lần vẫn an toàn) rồi mới mở cổng 4000.
 
 ## 3. Dùng sau proxy và tên miền (HTTPS)
 
+Nếu bệnh viện đang dùng Kiosk self-signed tại `https://IP:3000` và cần bổ sung hostname Let’s Encrypt mà không gián đoạn hệ thống cũ, dùng quy trình một lệnh trong [Hướng dẫn HTTPS hostname LAN](HUONG-DAN-HTTPS-HOSTNAME-LAN.md). Quy trình đó tạo vhost `443` riêng và **không** áp dụng mẫu generic bên dưới lên vhost IP legacy.
+
 Mẫu cấu hình Nginx đầy đủ (gồm cả chuyển hướng 80 → 443):
 [deploy/nginx/qlbs.conf.example](../deploy/nginx/qlbs.conf.example)
 

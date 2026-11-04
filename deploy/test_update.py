@@ -120,6 +120,116 @@ class UpdateSafetyTests(unittest.TestCase):
         self.assertNotIn('compose build', calls)
         self.assertTrue(list(self.root.glob('data/upgrade-backups/pre-update-*/.env')))
 
+CERTBOT_FAKE = r'''#!/usr/bin/env python3
+import os, pathlib, subprocess, sys
+args=sys.argv[1:]
+with open(os.environ['CALL_LOG'],'a') as f: f.write('certbot '+' '.join(args)+'\\n')
+if args and args[0] == 'plugins':
+    print('dns-cloudflare')
+    raise SystemExit(0)
+if args and args[0] == 'certonly':
+    domain=args[args.index('-d')+1]
+    out=pathlib.Path(os.environ['QLBS_LE_ROOT'])/'live'/domain
+    out.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['/usr/bin/openssl','req','-x509','-newkey','rsa:2048','-nodes',
+                    '-keyout',str(out/'privkey.pem'),'-out',str(out/'fullchain.pem'),
+                    '-days','1','-subj',f'/CN={domain}',
+                    '-addext',f'subjectAltName=DNS:{domain}'], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+raise SystemExit(0)
+'''
+
+
+class DomainHttpsOrchestrationTests(unittest.TestCase):
+    """Run the DNS-01/Nginx branch inside a root-mapped user namespace.
+
+    All system paths and binaries are fake or test-local. The only real binary is
+    openssl, used solely to create a throwaway self-signed fixture whose SAN is
+    checked by update.sh; no DNS, Cloudflare, Docker, or HTTP connection occurs.
+    """
+
+    def setUp(self):
+        UpdateSafetyTests.setUp(self)
+        if not shutil.which('unshare'):
+            self.skipTest('unshare is unavailable for root-mapped orchestration test')
+        (self.root / '.env').write_text(
+            'WEB_PORT=3001\nAPI_PORT=4000\n'
+            'CORS_ORIGINS=https://existing.example\n'
+            'SCAN_BASE_URL=https://172.16.13.75:3000\n'
+            'HTTPS_DOMAIN=qlbv.bvqy4.io.vn\n'
+            'LETSENCRYPT_EMAIL=it@example.test\n'
+        )
+        self.system = self.root / 'system'
+        credentials = self.system / 'secrets/cloudflare-dns.ini'
+        credentials.parent.mkdir(parents=True)
+        credentials.write_text('dns_cloudflare_api_token = test\n')
+        credentials.chmod(0o600)
+        certbot = self.bin / 'certbot'
+        certbot.write_text(CERTBOT_FAKE)
+        certbot.chmod(0o700)
+        # Generic fake commands log their name/args and return success; nginx -t,
+        # systemctl reload, and curl SNI probes remain completely offline.
+        for name in ('nginx', 'systemctl'):
+            path = self.bin / name
+            path.write_text(FAKE)
+            path.chmod(0o700)
+
+    def run_tls_update(self):
+        env = {
+            **os.environ,
+            'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
+            'CALL_LOG': str(self.log),
+            'DUMP_MODE': 'good',
+            'QLBS_SYSTEM_ROOT': str(self.system),
+            'QLBS_LE_ROOT': str(self.root / 'letsencrypt'),
+            'QLBS_NGINX_ROOT': str(self.root / 'nginx-root'),
+            'QLBS_RENEW_BIN': str(self.root / 'renew/qlbs-certbot-renew'),
+            'QLBS_CRON_FILE': str(self.root / 'cron/qlbs-letsencrypt-renew'),
+        }
+        for key in ('QLBS_OLD_COMMIT', 'QLBS_UPDATE_REEXEC', 'QLBS_UPDATE_BACKUP_DIR'):
+            env.pop(key, None)
+        return subprocess.run(
+            ['unshare', '--user', '--map-root-user', '--', 'bash', 'deploy/update.sh', '--api', '--no-pull'],
+            cwd=self.root, env=env, text=True, capture_output=True, timeout=30,
+        )
+
+    def test_dns01_hostname_config_preserves_legacy_and_recreates_api(self):
+        legacy = {p: (self.root / p).read_bytes() for p in ['data/ssl/server.crt', 'data/ssl/server.key']}
+        result = self.run_tls_update()
+        calls = self.log.read_text()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('certbot certonly', calls)
+        self.assertIn('certbot renew', calls)
+        self.assertIn('--dry-run', calls)
+        self.assertIn('nginx -t', calls)
+        self.assertIn('systemctl reload nginx', calls)
+        self.assertIn('--resolve qlbv.bvqy4.io.vn:443:127.0.0.1', calls)
+        self.assertIn('compose build api', calls)
+        self.assertIn('compose up -d --no-deps api', calls)
+
+        config = (self.root / 'nginx-root/sites-available/qlbs-domain-https.conf').read_text()
+        self.assertIn('listen 443 ssl http2;', config)
+        self.assertIn('server_name qlbv.bvqy4.io.vn;', config)
+        self.assertIn('proxy_pass http://127.0.0.1:3001;', config)
+        self.assertNotIn('listen 3000', config)
+        self.assertTrue((self.root / 'nginx-root/sites-enabled/qlbs-domain-https.conf').is_symlink())
+
+        env_text = (self.root / '.env').read_text()
+        self.assertIn('SCAN_BASE_URL=https://qlbv.bvqy4.io.vn', env_text)
+        self.assertIn('PUBLIC_URL=https://qlbv.bvqy4.io.vn', env_text)
+        cors = next(line for line in env_text.splitlines() if line.startswith('CORS_ORIGINS='))
+        self.assertIn('https://existing.example', cors)
+        self.assertIn('https://172.16.13.75:3000', cors)
+        self.assertEqual(cors.count('https://qlbv.bvqy4.io.vn'), 1)
+        self.assertNotIn('dns_cloudflare_api_token', env_text)
+        self.assertEqual((self.system / 'secrets/cloudflare-dns.ini').stat().st_mode & 0o777, 0o600)
+        renew = (self.root / 'renew/qlbs-certbot-renew').read_text()
+        self.assertIn('renew --quiet', renew)
+        self.assertIn('"$@"', renew)
+        self.assertIn('qlbs-certbot-renew', (self.root / 'cron/qlbs-letsencrypt-renew').read_text())
+        for path, content in legacy.items():
+            self.assertEqual((self.root / path).read_bytes(), content)
+
 
 if __name__ == '__main__':
     unittest.main()
