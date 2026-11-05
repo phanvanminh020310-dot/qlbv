@@ -18,8 +18,9 @@ const cellKey = (userId: number, date: string) => `${userId}:${date}`;
 
 function CodeSelect({ data, person, date, value, disabled, onSave }: { data: AttendanceMonth; person: AttendanceStaff; date: AttendanceDate; value: string; disabled: boolean; onSave: (code: string) => void }) {
   const tone = date.isWeekend ? 'border-rose-200 bg-rose-50 text-rose-800' : date.isRest ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white';
-  return <select aria-label={`Chấm công ${person.fullName}, ngày ${date.day}`} title={date.isPast ? 'Ngày đã qua được khóa, không thể sửa' : undefined} value={value} disabled={disabled} onChange={(e) => onSave(e.target.value)} className={`h-9 min-w-12 rounded-lg border px-1 text-center text-sm font-bold shadow-sm outline-none transition focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-70 ${tone} ${date.isPast ? 'saturate-50' : ''}`}>
-    <option value="">—</option>{data.codes.map((code) => <option value={code.code} key={code.id}>{code.code}</option>)}
+  const tooltip = date.isPast ? 'Ngày đã qua được khóa, không thể sửa' : value ? `Ký hiệu: ${value}` : 'Chưa nhập ký hiệu';
+  return <select aria-label={`Chấm công ${person.fullName}, ngày ${date.day}`} title={tooltip} value={value} disabled={disabled} onChange={(e) => onSave(e.target.value)} className={`h-9 min-w-12 rounded-lg border px-1 text-center text-sm font-bold shadow-sm outline-none transition focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-70 ${tone} ${date.isPast ? 'saturate-50' : ''}`}>
+    <option value="" aria-label="Chưa nhập ký hiệu"></option>{data.codes.map((code) => <option value={code.code} key={code.id}>{code.code}</option>)}
   </select>;
 }
 
@@ -111,7 +112,7 @@ function DesktopAttendanceGrid({
               <td className={`sticky left-[17.5rem] z-10 border-b border-r border-slate-200 px-4 py-2 text-slate-500 ${rowTone}`}>{person.title || '—'}</td>
               {data.dates.map((day) => <td className={`border-b border-r border-slate-100 p-1 text-center ${day.isWeekend ? 'bg-rose-50/65' : day.isRest ? 'bg-amber-50/65' : ''} ${day.isPast ? 'bg-slate-100/80' : ''}`} key={day.date}><CodeSelect data={data} person={person} date={day} value={data.entries[cellKey(person.id, day.date)]?.code ?? ''} disabled={!canUpdate || saving || day.isPast} onSave={(code) => onSave({ userId: person.id, workDate: day.date, code })} /></td>)}
               <td className="border-b border-r border-slate-200 bg-amber-50/60 px-3 text-center font-bold text-amber-800">{person.totals.NN}</td><td className="border-b border-r border-slate-200 bg-sky-50/70 px-3 text-center font-bold text-sky-800">{person.totals.NT}</td>
-              {data.summaryCodes.map((code) => <td className="border-b border-r border-slate-200 px-3 text-center font-medium text-slate-700" key={code}>{person.totals[code] || '—'}</td>)}
+              {data.summaryCodes.map((code) => <td className="border-b border-r border-slate-200 px-3 text-center font-medium text-slate-700" key={code}>{person.totals[code] || ''}</td>)}
             </tr>;
           })}
         </tbody>
@@ -169,7 +170,7 @@ export default function ChamCongTrucPage() {
       <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4" /><span className="hidden sm:inline"> In</span></Button>
     </div>} />
 
-    <Card className="mb-4 border-sky-100 bg-gradient-to-br from-sky-50 to-white"><CardBody className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 text-sm"><span className="flex items-center gap-2 font-semibold text-slate-700"><Users className="h-4 w-4 text-sky-700" /> {data.staff.length} nhân viên</span><span><b className="text-amber-700">NN</b> = trực thứ Bảy, Chủ nhật hoặc ngày nghỉ/lễ</span><span><b className="text-sky-700">NT</b> = trực ngày thường</span><span className="text-slate-500">Ngày đã qua được khóa; các thay đổi hợp lệ được lưu ngay.</span></CardBody></Card>
+    <Card className="mb-4 border-sky-100 bg-gradient-to-br from-sky-50 via-white to-white shadow-sm"><CardBody className="space-y-3 py-3.5"><div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm"><span className="flex items-center gap-2 font-semibold text-slate-700"><Users className="h-4 w-4 text-sky-700" /> {data.staff.length} nhân viên</span><span><b className="text-amber-700">NN</b> = trực thứ Bảy, Chủ nhật hoặc ngày nghỉ/lễ</span><span><b className="text-sky-700">NT</b> = trực ngày thường</span><span className="text-slate-500">Ngày đã qua được khóa; các thay đổi hợp lệ được lưu ngay.</span></div><div className="border-t border-sky-100 pt-3"><div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><span className="h-2 w-2 rounded-full bg-sky-600" /> Ký hiệu chấm công đang khai báo</div><div className="flex flex-wrap gap-2">{data.codes.map((code) => <span key={code.id} title={code.note || code.name} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: code.color }} /><b className="font-mono text-slate-900">{code.code}</b><span className="text-slate-600">{code.name}</span></span>)}</div></div></CardBody></Card>
 
     <div className="md:hidden space-y-3">
       <div className="flex snap-x gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">{data.dates.map((day) => <button key={day.date} onClick={() => setMobileDate(day.date)} className={`min-w-13 snap-start rounded-xl border px-2 py-2 text-center text-xs shadow-sm ${activeDate === day.date ? 'border-sky-600 bg-sky-600 text-white' : day.isWeekend ? 'border-rose-300 bg-rose-50 text-rose-800' : day.isRest ? 'border-amber-300 bg-amber-50 text-amber-900' : 'bg-white'} ${day.isPast ? 'opacity-70' : ''}`}><b className="block text-base leading-4">{day.day}</b><span>{day.weekday}</span></button>)}</div>
