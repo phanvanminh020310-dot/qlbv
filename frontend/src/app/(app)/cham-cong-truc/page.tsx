@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Download, FileText, FileSpreadsheet, Loader2, Printer, Settings2, Users } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,92 @@ function CodeSelect({ data, person, date, value, disabled, onSave }: { data: Att
   return <select aria-label={`Chấm công ${person.fullName}, ngày ${date.day}`} value={value} disabled={disabled} onChange={(e) => onSave(e.target.value)} className={`h-9 min-w-12 rounded-md border bg-white px-1 text-center text-sm font-bold shadow-sm outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-55 ${date.isRest ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
     <option value="">—</option>{data.codes.map((code) => <option value={code.code} key={code.id}>{code.code}</option>)}
   </select>;
+}
+
+function DesktopAttendanceGrid({
+  data,
+  canUpdate,
+  saving,
+  onSave,
+}: {
+  data: AttendanceMonth;
+  canUpdate: boolean;
+  saving: boolean;
+  onSave: (entry: { userId: number; workDate: string; code: string }) => void;
+}) {
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [tableWidth, setTableWidth] = useState(0);
+
+  useEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const syncWidth = () => setTableWidth(table.scrollWidth);
+    syncWidth();
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(table);
+    window.addEventListener('resize', syncWidth);
+    return () => { observer.disconnect(); window.removeEventListener('resize', syncWidth); };
+  }, [data]);
+
+  const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
+    if (target && Math.abs(target.scrollLeft - source.scrollLeft) > 1) target.scrollLeft = source.scrollLeft;
+  };
+
+  return <Card className="hidden overflow-hidden md:block print:block">
+    <div className="border-b bg-slate-50 px-3 py-2 print:hidden">
+      <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
+        <span className="font-medium">Thanh cuộn ngày</span>
+        <span>Kéo thanh ngang hoặc giữ Shift và lăn chuột để xem các ngày phía sau.</span>
+      </div>
+      <div
+        ref={topScrollRef}
+        aria-label="Thanh cuộn ngang các ngày chấm công"
+        className="mt-1 h-5 overflow-x-scroll overflow-y-hidden rounded bg-slate-200 accent-sky-600"
+        onScroll={(event) => syncHorizontalScroll(event.currentTarget, gridScrollRef.current)}
+      >
+        <div className="h-4" style={{ width: tableWidth }} />
+      </div>
+    </div>
+    <div
+      ref={gridScrollRef}
+      className="min-h-[24rem] max-h-[calc(100vh-17rem)] overflow-x-scroll overflow-y-auto [-webkit-overflow-scrolling:touch] print:max-h-none print:overflow-visible"
+      onScroll={(event) => syncHorizontalScroll(event.currentTarget, topScrollRef.current)}
+      onWheel={(event) => {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        event.currentTarget.scrollLeft += event.deltaY;
+      }}
+    >
+      <table ref={tableRef} className="min-w-max border-collapse text-sm">
+        <thead>
+          <tr className="h-11 bg-slate-100">
+            <th rowSpan={2} className="sticky left-0 top-0 z-50 border bg-slate-100 px-2 py-2">STT</th>
+            <th rowSpan={2} className="sticky left-12 top-0 z-50 min-w-52 border bg-slate-100 px-3 py-2 text-left">Họ và tên</th>
+            <th rowSpan={2} className="sticky left-64 top-0 z-50 min-w-36 border bg-slate-100 px-3 py-2 text-left">Chức danh</th>
+            <th colSpan={data.dates.length} className="sticky top-0 z-30 border bg-slate-100 px-2 py-2 text-center">Ngày trong tháng</th>
+            <th colSpan={2} className="sticky top-0 z-30 border bg-slate-100 px-2 py-2 text-center">Trực</th>
+            {data.summaryColumns.map((column) => <th key={column.code} rowSpan={2} className="sticky top-0 z-30 border bg-slate-100 px-2 py-2">{column.name}</th>)}
+          </tr>
+          <tr className="h-10 bg-slate-50">
+            {data.dates.map((day) => <th title={day.holidayName || undefined} key={day.date} className={`sticky top-11 z-30 min-w-13 border px-1 py-1 text-center ${day.isRest ? 'bg-amber-50 text-amber-800' : 'bg-slate-50'}`}><b>{day.day}</b><small className="block font-normal">{day.weekday}</small></th>)}
+            <th className="sticky top-11 z-30 border bg-slate-50 px-2">NN</th><th className="sticky top-11 z-30 border bg-slate-50 px-2">NT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.staff.map((person) => <tr key={person.id} className="hover:bg-sky-50/50">
+            <td className="sticky left-0 z-10 border bg-white px-2 py-1 text-center">{person.stt}</td>
+            <td className="sticky left-12 z-10 border bg-white px-3 py-1 font-medium">{person.fullName}</td>
+            <td className="sticky left-64 z-10 border bg-white px-3 py-1 text-slate-600">{person.title}</td>
+            {data.dates.map((day) => <td className={`border p-0.5 text-center ${day.isRest ? 'bg-amber-50/45' : ''}`} key={day.date}><CodeSelect data={data} person={person} date={day} value={data.entries[cellKey(person.id, day.date)]?.code ?? ''} disabled={!canUpdate || saving} onSave={(code) => onSave({ userId: person.id, workDate: day.date, code })} /></td>)}
+            <td className="border px-2 text-center font-bold text-amber-800">{person.totals.NN}</td><td className="border px-2 text-center font-bold text-sky-800">{person.totals.NT}</td>
+            {data.summaryCodes.map((code) => <td className="border px-2 text-center" key={code}>{person.totals[code] || ''}</td>)}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </Card>;
 }
 
 export default function ChamCongTrucPage() {
@@ -71,7 +157,7 @@ export default function ChamCongTrucPage() {
       <div className="space-y-2">{data.staff.map((person) => <Card key={person.id}><CardBody className="flex items-center gap-3 py-3"><div className="min-w-0 flex-1"><p className="truncate font-semibold">{person.stt}. {person.fullName}</p><p className="truncate text-xs text-slate-500">{person.title || 'Chưa khai báo chức danh'} · NN {person.totals.NN} · NT {person.totals.NT}</p></div>{selected && <CodeSelect data={data} person={person} date={selected} value={data.entries[cellKey(person.id, selected.date)]?.code ?? ''} disabled={!canUpdate || save.isPending} onSave={(code) => save.mutate({ userId: person.id, workDate: selected.date, code })} />}</CardBody></Card>)}</div>
     </div>
 
-    <Card className="hidden md:block overflow-hidden print:block"><div className="overflow-auto [-webkit-overflow-scrolling:touch]"><table className="min-w-max border-collapse text-sm"><thead><tr className="bg-slate-100"><th rowSpan={2} className="sticky left-0 z-20 border bg-slate-100 px-2 py-2">STT</th><th rowSpan={2} className="sticky left-12 z-20 min-w-52 border bg-slate-100 px-3 py-2 text-left">Họ và tên</th><th rowSpan={2} className="sticky left-64 z-20 min-w-36 border bg-slate-100 px-3 py-2 text-left">Chức danh</th><th colSpan={data.dates.length} className="border px-2 py-2 text-center">Ngày trong tháng</th><th colSpan={2} className="border px-2 py-2 text-center">Trực</th>{data.summaryColumns.map((column) => <th key={column.code} rowSpan={2} className="border px-2 py-2">{column.name}</th>)}</tr><tr className="bg-slate-50">{data.dates.map((day) => <th title={day.holidayName || undefined} key={day.date} className={`min-w-13 border px-1 py-1 text-center ${day.isRest ? 'bg-amber-50 text-amber-800' : ''}`}><b>{day.day}</b><small className="block font-normal">{day.weekday}</small></th>)}<th className="border px-2">NN</th><th className="border px-2">NT</th></tr></thead><tbody>{data.staff.map((person) => <tr key={person.id} className="hover:bg-sky-50/50"><td className="sticky left-0 z-10 border bg-white px-2 py-1 text-center">{person.stt}</td><td className="sticky left-12 z-10 border bg-white px-3 py-1 font-medium">{person.fullName}</td><td className="sticky left-64 z-10 border bg-white px-3 py-1 text-slate-600">{person.title}</td>{data.dates.map((day) => <td className={`border p-0.5 text-center ${day.isRest ? 'bg-amber-50/45' : ''}`} key={day.date}><CodeSelect data={data} person={person} date={day} value={data.entries[cellKey(person.id, day.date)]?.code ?? ''} disabled={!canUpdate || save.isPending} onSave={(code) => save.mutate({ userId: person.id, workDate: day.date, code })} /></td>)}<td className="border px-2 text-center font-bold text-amber-800">{person.totals.NN}</td><td className="border px-2 text-center font-bold text-sky-800">{person.totals.NT}</td>{data.summaryCodes.map((code) => <td className="border px-2 text-center" key={code}>{person.totals[code] || ''}</td>)}</tr>)}</tbody></table></div></Card>
+    <DesktopAttendanceGrid data={data} canUpdate={canUpdate} saving={save.isPending} onSave={save.mutate} />
     {save.isPending && <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg"><Loader2 className="h-4 w-4 animate-spin" /> Đang lưu…</div>}
   </>;
 }
