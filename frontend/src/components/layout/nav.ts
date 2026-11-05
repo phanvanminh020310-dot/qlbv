@@ -116,6 +116,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Chấm công',
+    items: [
+      { href: '/cham-cong-truc', label: 'Chấm công trực và khác', icon: CalendarDays, permission: 'duty-attendance.view' },
+      { href: '/cham-cong-truc/danh-muc', label: 'Ký hiệu & ngày nghỉ', icon: Settings2, permission: 'duty-attendance.catalog.manage' },
+    ],
+  },
+  {
     label: 'Quản trị hệ thống',
     items: [
       {

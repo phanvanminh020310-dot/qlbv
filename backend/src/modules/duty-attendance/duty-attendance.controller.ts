@@ -1,0 +1,36 @@
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, StreamableFile } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Audit, CurrentUser, RequirePermissions } from '../../common/decorators';
+import type { AccessContext } from '../../common/types/access-context';
+import { AttendanceCodeDto, AttendanceHolidayDto, AttendanceMonthQueryDto, SaveAttendanceEntriesDto } from './duty-attendance.dto';
+import { DutyAttendanceService } from './duty-attendance.service';
+
+@ApiTags('Bảng chấm công trực và chấm công khác')
+@ApiBearerAuth()
+@Controller('duty-attendance')
+export class DutyAttendanceController {
+  constructor(private readonly service: DutyAttendanceService) {}
+
+  @Get('month') @RequirePermissions('duty-attendance.view')
+  @ApiOperation({ summary: 'Bảng chấm công tháng của chính khoa được gán' })
+  month(@CurrentUser() user: AccessContext, @Query() q: AttendanceMonthQueryDto) { return this.service.month(user, q); }
+
+  @Put('entries') @RequirePermissions('duty-attendance.update')
+  @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_entries', description: 'Cập nhật chấm công trực và chấm công khác trong khoa được gán' })
+  save(@CurrentUser() user: AccessContext, @Body() dto: SaveAttendanceEntriesDto) { return this.service.save(user, dto); }
+
+  @Get('export/:format') @RequirePermissions('duty-attendance.export')
+  @Audit({ module: 'DUTY_ATTENDANCE', action: 'EXPORT', entity: 'duty_attendance_entries', description: 'Xuất bảng chấm công tháng' })
+  async export(@CurrentUser() user: AccessContext, @Param('format') format: string, @Query() q: AttendanceMonthQueryDto) {
+    const result = format === 'xlsx' ? await this.service.exportExcel(user, q.month) : format === 'docx' ? await this.service.exportWord(user, q.month) : format === 'pdf' ? await this.service.exportPdf(user, q.month) : null;
+    if (!result) throw new Error('Định dạng xuất không hỗ trợ');
+    return new StreamableFile(result.buffer, { type: result.mime, disposition: `attachment; filename="${encodeURIComponent(result.fileName)}"`, length: result.buffer.length });
+  }
+
+  @Get('codes') @RequirePermissions('duty-attendance.view') codes() { return this.service.codes(); }
+  @Post('codes') @RequirePermissions('duty-attendance.catalog.manage') createCode(@Body() dto: AttendanceCodeDto) { return this.service.createCode(dto); }
+  @Put('codes/:id') @RequirePermissions('duty-attendance.catalog.manage') updateCode(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceCodeDto) { return this.service.updateCode(id, dto); }
+  @Get('holidays') @RequirePermissions('duty-attendance.view') holidays(@Query() q: AttendanceMonthQueryDto) { return this.service.holidays(q); }
+  @Post('holidays') @RequirePermissions('duty-attendance.catalog.manage') saveHoliday(@CurrentUser() user: AccessContext, @Body() dto: AttendanceHolidayDto) { return this.service.saveHoliday(user, dto); }
+  @Delete('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') deleteHoliday(@Param('id', ParseIntPipe) id: number) { return this.service.deleteHoliday(id); }
+}

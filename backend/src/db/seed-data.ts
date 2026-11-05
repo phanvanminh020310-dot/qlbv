@@ -185,6 +185,12 @@ export const PERMISSIONS: PermissionSeed[] = [
   P('duty', 'swap.approve', 'Duyệt đổi/nhường ca', 'Duyệt yêu cầu đổi/nhường ca trước khi chốt (trong phạm vi khoa)'),
   P('duty', 'exception.resolve', 'Xử lý ngoại lệ đổi trực (KHTH)', 'Duyệt ngoại lệ sau khi chốt và đổi trực trực tiếp — tài khoản đổi trực'),
   P('duty', 'export', 'Xuất / in lịch trực', 'Xuất Excel lịch trực và bảng tổng hợp giờ trực'),
+
+  // Bảng chấm công trực và chấm công khác — tách riêng lịch trực khám; trực được nhập thủ công.
+  P('duty-attendance', 'view', 'Xem bảng chấm công trực', 'Chỉ xem bảng chấm công của khoa/phòng được gán'),
+  P('duty-attendance', 'update', 'Nhập bảng chấm công trực', 'Nhập/sửa ô chấm công của nhân viên thuộc đúng khoa/phòng được gán'),
+  P('duty-attendance', 'export', 'Xuất bảng chấm công trực', 'Xuất bảng chấm công tháng ra Excel, Word hoặc PDF'),
+  P('duty-attendance', 'catalog.manage', 'Quản lý danh mục chấm công', 'Khai báo ký hiệu chấm công và ngày nghỉ/lễ để tính NN, NT'),
 ];
 
 /* ------------------------------------------------------------------------ Vai trò */
@@ -479,6 +485,17 @@ export const ROLES: RoleSeed[] = [
     color: '#0f766e',
     isSystem: true,
     permissions: ['duty.view', 'duty.manage', 'duty.swap.approve', 'duty.export'],
+  },
+  {
+    code: 'NHAP_CHAM_CONG_TRUC_KHOA',
+    name: 'Nhập chấm công trực khoa',
+    description:
+      'Vai trò riêng dành cho Hành chính trưởng hoặc Chủ nhiệm khoa: chỉ xem, nhập và xuất bảng chấm công của nhân viên thuộc khoa công tác được gán. Không lấy dữ liệu trực từ lịch trực khám.',
+    dataScope: 'DEPT',
+    priority: 35,
+    color: '#0369a1',
+    isSystem: true,
+    permissions: ['duty-attendance.view', 'duty-attendance.update', 'duty-attendance.export'],
   },
   {
     code: 'NHAN_VIEN_TRUC',
