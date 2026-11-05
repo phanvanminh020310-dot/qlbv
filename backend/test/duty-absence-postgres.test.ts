@@ -55,6 +55,7 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
     "0017_lich_truc_mau_ca.sql",
     "0019_kiosk_duty_attendance.sql",
     "0020_them_avatar_data_sinh_trac_hoc.sql",
+    "0026_kiosk_biometric_terminal_leases.sql",
   ])
     await pg.exec(
       readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"),
@@ -414,7 +415,7 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
     "pending request leaves an existing verified, terminal-bound biometric lease valid",
     async () => {
       await reset();
-      kiosk.lockRoom("P2");
+      await kiosk.lockRoom("P2");
       const vector = Array<number>(512).fill(0);
       vector[0] = 1;
       await db.db
@@ -453,7 +454,7 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
         false,
       );
       assert.deepEqual(await original(), [1, 1]);
-      kiosk.lockRoom("P2");
+      await kiosk.lockRoom("P2");
     },
   );
   await t.test(

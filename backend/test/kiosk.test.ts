@@ -23,6 +23,14 @@ function serviceFor(t: TestContext, values: Record<string, unknown> = {}) {
     db: {
       select: () => query,
       insert: () => ({ values: async (rows: any[]) => { insertedAttendance.push(...rows); } }),
+      update: () => {
+        const mutation: any = {};
+        mutation.set = () => mutation;
+        mutation.where = () => mutation;
+        mutation.returning = async () => [];
+        mutation.then = (resolve: (value: unknown) => unknown) => Promise.resolve([]).then(resolve);
+        return mutation;
+      },
     },
   } as any, integration as any, { get: async (key: string) => values[key] ?? null } as any, audit);
   service.loadActiveRoster = async () => [];
@@ -176,7 +184,7 @@ test("IT PIN is online/current-shift-only, audit-safe, and revokes on roster cha
 test("IT PIN refuses roster outage instead of creating an offline lease; room lock still revokes all targets", async (t) => {
   const { service } = serviceFor(t, { "kiosk.itMasterPin": "private-hospital-pin" }); service.loadActiveRoster = async () => { throw new Error("database unavailable"); };
   await assert.rejects(service.authorizeItOverride("PK01", "terminal_a", "private-hospital-pin", "10.1.1.2"), /Không thể xác minh ca trực đang diễn ra/); assert.equal((service as any).activeRoomUnlocks.size, 0);
-  const a = new Socket(), b = new Socket(); service.registerSseClient("PK01", "terminal_a", a as any); service.registerSseClient("PK01", "terminal_b", b as any); const activeQr = qr(service); unlock(service, "terminal_a"); unlock(service, "terminal_b"); service.lockRoom("PK01"); assert.equal(activeQr.status, "EXPIRED"); assert.equal((service as any).activeRoomUnlocks.size, 0); assert.match(a.messages.at(-1)!, /LOCK_EVENT/); assert.match(b.messages.at(-1)!, /LOCK_EVENT/);
+  const a = new Socket(), b = new Socket(); service.registerSseClient("PK01", "terminal_a", a as any); service.registerSseClient("PK01", "terminal_b", b as any); const activeQr = qr(service); unlock(service, "terminal_a"); unlock(service, "terminal_b"); await service.lockRoom("PK01"); assert.equal(activeQr.status, "EXPIRED"); assert.equal((service as any).activeRoomUnlocks.size, 0); assert.match(a.messages.at(-1)!, /LOCK_EVENT/); assert.match(b.messages.at(-1)!, /LOCK_EVENT/);
 });
 
 test("face self-update setting accepts stored booleans and legacy strings", async (t) => {

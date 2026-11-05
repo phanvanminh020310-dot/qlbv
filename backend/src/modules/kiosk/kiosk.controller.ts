@@ -301,7 +301,7 @@ export class KioskController {
   })
   async lockRoom(@Body() body: { roomCode: string }) {
     this.validateTarget(body.roomCode);
-    this.service.lockRoom(body.roomCode);
+    await this.service.lockRoom(body.roomCode);
     return { success: true, message: "Đã khoá phòng khám." };
   }
 

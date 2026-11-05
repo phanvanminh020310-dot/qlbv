@@ -30,6 +30,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     "0020_them_avatar_data_sinh_trac_hoc.sql",
     "0021_duty_absence_approval.sql",
     "0024_kiosk_global_emergency_release.sql",
+    "0026_kiosk_biometric_terminal_leases.sql",
   ]) {
     await pg.exec(
       readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"),
@@ -133,7 +134,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       assert.equal(attendance[0]?.slotId, 7001);
 
       // Không để fixture nhiều người ảnh hưởng tới các kịch bản thu hồi lease tiếp theo.
-      service.lockRoom("PK01");
+      await service.lockRoom("PK01");
       await pg.exec("DELETE FROM duty_attendance WHERE user_id = 7002; DELETE FROM user_biometrics WHERE user_id = 7002; DELETE FROM duty_assignments WHERE id = 7006");
     },
   );
@@ -200,6 +201,32 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         (await service.getKioskStatus("PK01", "pc_b", "https://hospital.test"))
           .isUnlocked,
         false,
+      );
+      const leases = await database.db.select().from(schema.kioskBiometricTerminalLeases);
+      assert.equal(leases.length, 1, "face verification stores one durable terminal lease");
+      assert.equal(leases[0]?.terminalId, "pc_a");
+      assert.equal(leases[0]?.slotId, 7001);
+
+      // A fresh KioskService represents update.sh restarting the API: it has no
+      // RAM map, but the same workstation restores only its still-valid lease.
+      const restarted = new KioskService(
+        database as any,
+        new IntegrationDutyService(database as any),
+        { get: async (key: string) => settings[key] ?? null } as any,
+        { log: async () => {} } as any,
+      );
+      t.after(() => restarted.onModuleDestroy());
+      assert.equal(
+        (await restarted.getKioskStatus("PK01", "pc_a", "https://hospital.test"))
+          .isUnlocked,
+        true,
+        "the authenticated terminal remains open after API restart",
+      );
+      assert.equal(
+        (await restarted.getKioskStatus("PK01", "pc_after_restart", "https://hospital.test"))
+          .isUnlocked,
+        false,
+        "a different terminal in the same room never inherits the lease",
       );
     },
   );
@@ -361,6 +388,85 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
   );
 
   await t.test(
+    "durable biometric lease fails closed after roster replacement and after its shift deadline", async (t) => {
+      now = MORNING;
+      const vector = Array<number>(512).fill(0);
+      vector[0] = 1;
+      service.verifyAndExtractAi = async () => ({ isLive: true, embedding: vector });
+
+      const replacementTerminal = "pc_restart_roster";
+      const status = await service.getKioskStatus("PK01", replacementTerminal, "https://hospital.test");
+      await service.touchSessionScan(status.qrSession!.sessionId, { claimToken: TOKEN });
+      assert.equal(
+        (await service.verifyFaceAndUnlock({
+          sessionId: status.qrSession!.sessionId,
+          snapshotBase64: "fixture-only",
+          claimToken: TOKEN,
+        })).success,
+        true,
+      );
+      const afterRestart = new KioskService(
+        database as any,
+        new IntegrationDutyService(database as any),
+        { get: async (key: string) => settings[key] ?? null } as any,
+        { log: async () => {} } as any,
+      );
+      t.after(() => afterRestart.onModuleDestroy());
+      assert.equal(
+        (await afterRestart.getKioskStatus("PK01", replacementTerminal, "https://hospital.test"))
+          .isUnlocked,
+        true,
+      );
+      await pg.exec("UPDATE duty_assignments SET user_id = 7002 WHERE id = 7001");
+      assert.equal(
+        (await afterRestart.getKioskStatus("PK01", replacementTerminal, "https://hospital.test"))
+          .isUnlocked,
+        false,
+        "replacing the doctor closes the persisted terminal lease",
+      );
+      const replacedLease = (await database.db.select().from(schema.kioskBiometricTerminalLeases))
+        .find((lease) => lease.terminalId === replacementTerminal);
+      assert.ok(replacedLease?.endedAt, "the revoked authority is durably closed before any restart");
+      await pg.exec("UPDATE duty_assignments SET user_id = 7001 WHERE id = 7001");
+
+      const expiryTerminal = "pc_restart_expiry";
+      const beforeExpiry = await service.getKioskStatus("PK01", expiryTerminal, "https://hospital.test");
+      await service.touchSessionScan(beforeExpiry.qrSession!.sessionId, { claimToken: TOKEN });
+      assert.equal(
+        (await service.verifyFaceAndUnlock({
+          sessionId: beforeExpiry.qrSession!.sessionId,
+          snapshotBase64: "fixture-only",
+          claimToken: TOKEN,
+        })).success,
+        true,
+      );
+      await pg.exec(`
+        INSERT INTO duty_shift_types (id, code, name, start_time, end_time, crosses_midnight)
+          VALUES (7010, 'FIXTURE_NEXT', 'Ca kế tiếp fixture', '11:00', '15:00', false);
+        INSERT INTO duty_slots (id, period_id, duty_date, room_id, shift_id, role_id)
+          VALUES (7010, 7001, '2026-10-15', 7001, 7010, 7001);
+        INSERT INTO duty_assignments (id, slot_id, user_id) VALUES (7010, 7010, 7002);
+      `);
+      const afterSecondRestart = new KioskService(
+        database as any,
+        new IntegrationDutyService(database as any),
+        { get: async (key: string) => settings[key] ?? null } as any,
+        { log: async () => {} } as any,
+      );
+      t.after(() => afterSecondRestart.onModuleDestroy());
+      now = Date.parse("2026-10-15T11:00:00+07:00");
+      const expired = await afterSecondRestart.getKioskStatus("PK01", expiryTerminal, "https://hospital.test");
+      assert.equal(expired.kioskRequired, true);
+      assert.equal(expired.isUnlocked, false, "a completed shift cannot be restored after restart");
+      const expiredLease = (await database.db.select().from(schema.kioskBiometricTerminalLeases))
+        .find((lease) => lease.terminalId === expiryTerminal);
+      assert.ok(expiredLease?.endedAt, "status reconciliation persistently closes the expired lease");
+      await pg.exec("DELETE FROM duty_assignments WHERE id = 7010; DELETE FROM duty_slots WHERE id = 7010; DELETE FROM duty_shift_types WHERE id = 7010");
+      now = MORNING;
+    },
+  );
+
+  await t.test(
     "adding an absence removes the active shift and releases the desktop; overnight absences cover the second day",
     async () => {
       await pg.exec(
@@ -395,7 +501,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
   await t.test(
     "a late AI result after the buffer cannot write attendance or release the PC",
     async () => {
-      service.lockRoom("PK01");
+      await service.lockRoom("PK01");
       const status = await service.getKioskStatus(
         "PK01",
         "pc_a",
@@ -435,7 +541,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
     async () => {
       settings["kiosk.faceVerifyBufferSeconds"] = 180;
       now = Date.parse("2026-10-15T10:59:00+07:00");
-      service.lockRoom("PK01");
+      await service.lockRoom("PK01");
       const status = await service.getKioskStatus("PK01", "pc_a", "https://hospital.test");
       const id = status.qrSession!.sessionId;
       await service.touchSessionScan(id, { claimToken: TOKEN });

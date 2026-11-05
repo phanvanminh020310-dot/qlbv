@@ -21,6 +21,7 @@ import {
   dutyAbsences,
   dutyAssignments,
   dutyAttendance,
+  kioskBiometricTerminalLeases,
   kioskGlobalReleases,
   dutyPeriods,
   dutyRoles,
@@ -85,10 +86,33 @@ export interface ActiveRoomUnlock {
   shiftEndMs: number;
   terminalId?: string;
   attendanceId?: string;
+  /** Durable authority used to restore this exact biometric unlock after an API restart. */
+  biometricLeaseId?: string;
   /** Defined only for an IT-PIN lease; biometric leases retain their doctor guard. */
   itRosterGuard?: ItOverrideRosterGuard;
   /** Every release is bound to the currently active published shift (or an IT support session). */
   leaseDeadlineKind?: "ACTIVE_SHIFT" | "IT";
+}
+
+interface BiometricTerminalLease {
+  id: string;
+  attendanceId: string;
+  slotId: number | null;
+  roomId: number | null;
+  roomCode: string;
+  roomName: string;
+  terminalId: string;
+  userId: number;
+  username: string;
+  fullName: string;
+  title: string;
+  dutyDate: string;
+  shiftCode: string;
+  shiftName: string;
+  shiftEndAt: Date;
+  verifiedAt: Date;
+  endedAt: Date | null;
+  endReason: string | null;
 }
 
 interface GlobalReleaseLease {
@@ -169,6 +193,13 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           if (now < info.shiftEndMs) continue;
           const rCode = info.roomCode;
           this.activeRoomUnlocks.delete(key);
+          if (info.biometricLeaseId) {
+            void this.endBiometricTerminalLease(
+              info.biometricLeaseId,
+              "Ca trực đã kết thúc; Kiosk trở về xác thực thường.",
+              false,
+            );
+          }
           this.emitToTarget(rCode, info.terminalId, "LOCK_EVENT", {
             type: "ACTIVE_SHIFT_ENDED",
             roomCode: rCode,
@@ -192,6 +223,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     this.timers.push(
       setInterval(() => {
         void this.expireGlobalEmergencyReleases();
+        void this.expireBiometricTerminalLeases();
       }, 1000),
     );
   }
@@ -552,6 +584,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     // global lease when this duty event replaced a doctor/roster. This makes the
     // lock push immediate even for a terminal whose next status poll is delayed.
     void this.reconcileGlobalReleasesAfterScheduleUpdate(roomCode);
+    void this.reconcileBiometricLeasesAfterScheduleUpdate(roomCode);
   }
 
   /** Strictly ADMIN/SUPER_ADMIN only: this deliberately is not a delegable kiosk permission. */
@@ -587,10 +620,308 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
    * Otherwise a former terminal-local release could survive after the global
    * roster guard was revoked, violating the required return-to-authentication.
    */
-  private clearLocalUnlocksForGlobalRelease(roomCode: string): void {
+  private async clearLocalUnlocksForGlobalRelease(roomCode: string): Promise<void> {
     const code = roomCode.toUpperCase().trim();
     for (const [key, unlock] of this.activeRoomUnlocks) {
       if (unlock.roomCode === code) this.activeRoomUnlocks.delete(key);
+    }
+    // A global release supersedes local authority. Persist the closure as well:
+    // otherwise an API restart after the global operation ended could resurrect
+    // a former biometric unlock from the lease table.
+    await this.db.db
+      .update(kioskBiometricTerminalLeases)
+      .set({
+        endedAt: new Date(),
+        endReason: "Được thay thế bởi phiên mở khẩn cấp toàn cục.",
+      })
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.roomCode, code),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      );
+  }
+
+  /** Read a not-yet-closed biometric authority for one exact Kiosk target. */
+  private async findCurrentBiometricTerminalLease(
+    roomCode: string,
+    terminalId: string,
+  ): Promise<BiometricTerminalLease | null> {
+    const [lease] = await this.db.db
+      .select()
+      .from(kioskBiometricTerminalLeases)
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.roomCode, roomCode.toUpperCase().trim()),
+          eq(kioskBiometricTerminalLeases.terminalId, terminalId),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      )
+      .orderBy(desc(kioskBiometricTerminalLeases.verifiedAt))
+      .limit(1);
+
+    // Treat malformed/mock/partially migrated rows as no authority. This avoids
+    // turning a generic attendance event into a terminal unlock.
+    if (
+      !lease ||
+      typeof lease.id !== "string" ||
+      typeof lease.attendanceId !== "string" ||
+      typeof lease.slotId !== "number" ||
+      typeof lease.userId !== "number" ||
+      typeof lease.dutyDate !== "string" ||
+      typeof lease.shiftCode !== "string" ||
+      typeof lease.terminalId !== "string" ||
+      !(lease.shiftEndAt instanceof Date) ||
+      !(lease.verifiedAt instanceof Date)
+    ) {
+      return null;
+    }
+    return lease as BiometricTerminalLease;
+  }
+
+  /**
+   * Persistently end a lease before emitting a lock. The stored closure prevents
+   * a new KioskService from restoring a terminal after a roster change/restart.
+   */
+  private async endBiometricTerminalLease(
+    leaseId: string,
+    endReason: string,
+    notify: boolean = true,
+  ): Promise<boolean> {
+    const [ended] = await this.db.db
+      .update(kioskBiometricTerminalLeases)
+      .set({ endedAt: new Date(), endReason })
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.id, leaseId),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      )
+      .returning({
+        id: kioskBiometricTerminalLeases.id,
+        roomCode: kioskBiometricTerminalLeases.roomCode,
+        terminalId: kioskBiometricTerminalLeases.terminalId,
+        attendanceId: kioskBiometricTerminalLeases.attendanceId,
+      });
+    if (!ended) return false;
+
+    await this.audit.log({
+      action: "KIOSK_BIOMETRIC_LEASE_ENDED",
+      module: "KIOSK",
+      entity: "kiosk_biometric_terminal_lease",
+      entityId: ended.id,
+      description: `Kết thúc quyền mở sinh trắc học máy trạm ${ended.terminalId} phòng ${ended.roomCode}: ${endReason}`,
+      afterData: {
+        attendanceId: ended.attendanceId,
+        endedAt: new Date().toISOString(),
+        endReason,
+      },
+    });
+    if (notify) {
+      this.emitToTarget(ended.roomCode, ended.terminalId, "LOCK_EVENT", {
+        type: "BIOMETRIC_LEASE_ENDED",
+        roomCode: ended.roomCode,
+        reason: endReason,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return true;
+  }
+
+  private async closeBiometricUnlock(
+    targetKey: string,
+    unlock: ActiveRoomUnlock,
+    endReason: string,
+  ): Promise<void> {
+    this.activeRoomUnlocks.delete(targetKey);
+    if (unlock.biometricLeaseId) {
+      await this.endBiometricTerminalLease(unlock.biometricLeaseId, endReason);
+      return;
+    }
+    // Compatibility for an unlock created before migration 0026 while this
+    // process has not yet restarted. It was never terminal-persisted, so only
+    // its RAM state can be safely closed.
+    this.emitToTarget(unlock.roomCode, unlock.terminalId, "LOCK_EVENT", {
+      type: "BIOMETRIC_LEASE_ENDED",
+      roomCode: unlock.roomCode,
+      reason: endReason,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /** Verify the exact original slot + doctor remains the current published shift. */
+  private async reconcileBiometricTerminalLease(
+    lease: BiometricTerminalLease,
+    now: number,
+  ): Promise<ActiveRoomUnlock | null> {
+    if (now >= lease.shiftEndAt.getTime()) {
+      await this.endBiometricTerminalLease(
+        lease.id,
+        "Ca trực đã kết thúc; Kiosk trở về xác thực thường.",
+      );
+      return null;
+    }
+
+    try {
+      const rows = await this.loadActiveRoster(
+        lease.roomCode,
+        [
+          ...new Set([
+            ...candidateDutyDates(now),
+            lease.dutyDate,
+          ]),
+        ],
+      );
+      const row = rows.find(
+        (candidate) =>
+          candidate.slotId === lease.slotId &&
+          candidate.userId === lease.userId &&
+          candidate.dutyDate === lease.dutyDate &&
+          candidate.shiftCode === lease.shiftCode,
+      );
+      const interval = row && shiftInterval(
+        row.dutyDate,
+        row.startTime,
+        row.endTime,
+        row.crossesMidnight,
+      );
+      if (!interval || now < interval.start || now >= interval.end) {
+        await this.endBiometricTerminalLease(
+          lease.id,
+          "Ca trực, vị trí phân công hoặc bác sĩ đã thay đổi; yêu cầu xác thực lại.",
+        );
+        return null;
+      }
+
+      // A schedule edit must never extend a previously issued authorization.
+      // It can only shorten it (for example when handover is moved earlier).
+      const effectiveEndMs = Math.min(lease.shiftEndAt.getTime(), interval.end);
+      if (effectiveEndMs <= now) {
+        await this.endBiometricTerminalLease(
+          lease.id,
+          "Ca trực đã kết thúc; Kiosk trở về xác thực thường.",
+        );
+        return null;
+      }
+      if (effectiveEndMs < lease.shiftEndAt.getTime()) {
+        await this.db.db
+          .update(kioskBiometricTerminalLeases)
+          .set({ shiftEndAt: new Date(effectiveEndMs) })
+          .where(
+            and(
+              eq(kioskBiometricTerminalLeases.id, lease.id),
+              isNull(kioskBiometricTerminalLeases.endedAt),
+            ),
+          );
+        lease.shiftEndAt = new Date(effectiveEndMs);
+      }
+
+      return {
+        roomCode: lease.roomCode,
+        doctor: {
+          userId: lease.userId,
+          username: lease.username,
+          fullName: lease.fullName,
+          title: lease.title,
+          shiftName: row.shiftName || lease.shiftName,
+        },
+        shift: row,
+        unlockedAt: lease.verifiedAt.getTime(),
+        shiftEndMs: effectiveEndMs,
+        terminalId: lease.terminalId,
+        attendanceId: lease.attendanceId,
+        biometricLeaseId: lease.id,
+        leaseDeadlineKind: "ACTIVE_SHIFT",
+      };
+    } catch (error: any) {
+      this.logger.warn(
+        `Không thể đối soát quyền mở sinh trắc học ${lease.roomCode}/${lease.terminalId}: ${error?.message || error}`,
+      );
+      // Fail closed. If the write itself is unavailable, no status response can
+      // regard this lease as usable in the current process.
+      try {
+        await this.endBiometricTerminalLease(
+          lease.id,
+          "Không xác minh được roster ca trực; yêu cầu xác thực lại.",
+        );
+      } catch (endError: any) {
+        this.logger.warn(
+          `Không thể đóng quyền mở sinh trắc học ${lease.id}: ${endError?.message || endError}`,
+        );
+      }
+      return null;
+    }
+  }
+
+  /** Rehydrate a biometric release only for the very same room + terminal. */
+  private async getUsableBiometricTerminalUnlock(
+    roomCode: string,
+    terminalId: string,
+    now: number,
+  ): Promise<ActiveRoomUnlock | null> {
+    try {
+      const lease = await this.findCurrentBiometricTerminalLease(roomCode, terminalId);
+      if (!lease) return null;
+      return await this.reconcileBiometricTerminalLease(lease, now);
+    } catch (error: any) {
+      this.logger.warn(
+        `Không đọc được quyền mở sinh trắc học Kiosk ${roomCode}/${terminalId}; giữ luồng xác thực thường: ${error?.message || error}`,
+      );
+      return null;
+    }
+  }
+
+  /** Close database leases that pass their hard shift boundary even with no polling browser. */
+  private async expireBiometricTerminalLeases(): Promise<void> {
+    try {
+      const expired = await this.db.db
+        .select()
+        .from(kioskBiometricTerminalLeases)
+        .where(
+          and(
+            isNull(kioskBiometricTerminalLeases.endedAt),
+            sql`${kioskBiometricTerminalLeases.shiftEndAt} <= ${new Date(Date.now())}`,
+          ),
+        )
+        .limit(100);
+      for (const lease of expired as BiometricTerminalLease[]) {
+        await this.endBiometricTerminalLease(
+          lease.id,
+          "Ca trực đã kết thúc; Kiosk trở về xác thực thường.",
+        );
+      }
+    } catch (error: any) {
+      this.logger.warn(
+        `Không thể đối soát hạn quyền mở sinh trắc học Kiosk: ${error?.message || error}`,
+      );
+    }
+  }
+
+  /** Immediately reconcile persistent terminal leases after a published roster event. */
+  private async reconcileBiometricLeasesAfterScheduleUpdate(
+    roomCode?: string,
+  ): Promise<void> {
+    try {
+      const now = Date.now();
+      const leases = await this.db.db
+        .select()
+        .from(kioskBiometricTerminalLeases)
+        .where(
+          and(
+            isNull(kioskBiometricTerminalLeases.endedAt),
+            roomCode
+              ? eq(kioskBiometricTerminalLeases.roomCode, roomCode.toUpperCase().trim())
+              : sql`true`,
+          ),
+        )
+        .limit(500);
+      for (const lease of leases as BiometricTerminalLease[]) {
+        await this.reconcileBiometricTerminalLease(lease, now);
+      }
+    } catch (error: any) {
+      this.logger.warn(
+        `Không thể đối soát quyền mở sinh trắc học sau cập nhật lịch: ${error?.message || error}`,
+      );
     }
   }
 
@@ -914,7 +1245,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     // is addressed by its exact terminalId; disconnected kiosks reconcile from DB.
     for (const { room, plan } of plans) {
       this.expireWaitingSessionsInRoom(room.code);
-      this.clearLocalUnlocksForGlobalRelease(room.code);
+      await this.clearLocalUnlocksForGlobalRelease(room.code);
       for (const terminalId of this.roomTerminals.get(room.code) || []) {
         this.emitToTarget(room.code, terminalId, "UNLOCK_EVENT", {
           type: "UNLOCK_SUCCESS",
@@ -1005,11 +1336,23 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
   /**
    * Khoá phòng khám và thông báo cho máy trạm (xoá trạng thái mở khoá)
    */
-  lockRoom(roomCode: string, reason?: string) {
+  async lockRoom(roomCode: string, reason?: string) {
     const code = roomCode.toUpperCase().trim();
+    const endReason = reason || "Khoá phòng khám theo yêu cầu";
     for (const [key, unlock] of this.activeRoomUnlocks) {
       if (unlock.roomCode === code) this.activeRoomUnlocks.delete(key);
     }
+    // Manual lock is a security action, not only a UI event. Close durable
+    // authorities before returning so a restart/reconnect cannot reopen them.
+    await this.db.db
+      .update(kioskBiometricTerminalLeases)
+      .set({ endedAt: new Date(), endReason })
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.roomCode, code),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      );
     for (const session of this.sessions.values()) {
       if (session.roomCode === code && session.status === "WAITING") {
         session.status = "EXPIRED";
@@ -1019,7 +1362,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     this.broadcastToRoom(code, "LOCK_EVENT", {
       type: "LOCK_TRIGGERED",
       roomCode: code,
-      reason: reason || "Khoá phòng khám theo yêu cầu",
+      reason: endReason,
       timestamp: new Date().toISOString(),
     });
   }
@@ -1254,6 +1597,22 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    // The IT lease replaces any earlier biometric lease on this exact terminal.
+    // Do not let an old durable biometric row revive after the IT lease ends.
+    await this.db.db
+      .update(kioskBiometricTerminalLeases)
+      .set({
+        endedAt: new Date(now),
+        endReason: "Được thay thế bởi phiên mở khẩn cấp PIN IT.",
+      })
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.roomCode, code),
+          eq(kioskBiometricTerminalLeases.terminalId, terminalId?.trim() || ""),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      );
+
     const itDoctor = {
       fullName: "Kỹ thuật viên IT",
       title: "IT Support",
@@ -1291,9 +1650,22 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     return { shiftEndMs: current.end, leaseDeadlineKind: "ACTIVE_SHIFT" };
   }
 
-  private releaseTargetForNoActiveShift(roomCode: string, terminalId: string) {
+  private async releaseTargetForNoActiveShift(roomCode: string, terminalId: string) {
     const targetKey = kioskTargetKey(roomCode, terminalId);
     this.activeRoomUnlocks.delete(targetKey);
+    await this.db.db
+      .update(kioskBiometricTerminalLeases)
+      .set({
+        endedAt: new Date(),
+        endReason: "Không còn ca trực hiện hành; Kiosk trở về trạng thái thường.",
+      })
+      .where(
+        and(
+          eq(kioskBiometricTerminalLeases.roomCode, roomCode.toUpperCase().trim()),
+          eq(kioskBiometricTerminalLeases.terminalId, terminalId),
+          isNull(kioskBiometricTerminalLeases.endedAt),
+        ),
+      );
     for (const session of this.sessions.values()) {
       if (
         sameKioskTarget(session, { roomCode, terminalId }) &&
@@ -1408,7 +1780,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     const kioskRequired =
       !!matchedRooms.length && rosterVerified && !!currentScheduled;
     if (!kioskRequired) {
-      this.releaseTargetForNoActiveShift(code, tid);
+      await this.releaseTargetForNoActiveShift(code, tid);
       return {
         protocolVersion: 2,
         terminalId: tid,
@@ -1449,14 +1821,22 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     }
 
     const targetKey = kioskTargetKey(code, tid);
-    const activeUnlock = this.activeRoomUnlocks.get(targetKey);
+    let activeUnlock = this.activeRoomUnlocks.get(targetKey);
     let isUnlocked = false;
     let unlockedDoctor = null;
     let shiftEndMs: number | null = null;
 
     if (activeUnlock) {
       if (now >= activeUnlock.shiftEndMs) {
-        this.activeRoomUnlocks.delete(targetKey);
+        if (activeUnlock.biometricLeaseId) {
+          await this.closeBiometricUnlock(
+            targetKey,
+            activeUnlock,
+            "Ca trực đã kết thúc; Kiosk trở về xác thực thường.",
+          );
+        } else {
+          this.activeRoomUnlocks.delete(targetKey);
+        }
       } else if (activeUnlock.itRosterGuard) {
         try {
           const plan = await this.itOverrideLeasePlan(code, now);
@@ -1494,7 +1874,17 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           "IT_ROSTER_GUARD_MISSING",
           "Phiên PIN IT cũ không có ràng buộc ca trực; yêu cầu xác thực lại.",
         );
+      } else if (activeUnlock.biometricLeaseId) {
+        const lease = await this.getUsableBiometricTerminalUnlock(code, tid, now);
+        if (lease) {
+          activeUnlock = lease;
+          this.activeRoomUnlocks.set(targetKey, lease);
+        } else {
+          this.activeRoomUnlocks.delete(targetKey);
+        }
       } else {
+        // In-memory compatibility lease from before migration 0026. It is still
+        // reconciled for this live process but deliberately cannot survive a restart.
         try {
           const rows = await this.loadActiveRoster(
             room.code,
@@ -1507,18 +1897,17 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           );
           const row = rows.find(
             (r) =>
-              r.userId === activeUnlock.doctor.userId &&
-              r.dutyDate === activeUnlock.shift.dutyDate &&
-              r.shiftCode === activeUnlock.shift.shiftCode,
+              r.userId === activeUnlock!.doctor.userId &&
+              r.slotId === activeUnlock!.shift.slotId &&
+              r.dutyDate === activeUnlock!.shift.dutyDate &&
+              r.shiftCode === activeUnlock!.shift.shiftCode,
           );
-          const interval =
-            row &&
-            shiftInterval(
-              row.dutyDate,
-              row.startTime,
-              row.endTime,
-              row.crossesMidnight,
-            );
+          const interval = row && shiftInterval(
+            row.dutyDate,
+            row.startTime,
+            row.endTime,
+            row.crossesMidnight,
+          );
           if (!interval || now < interval.start || now >= interval.end) {
             this.revokeItOverride(
               code,
@@ -1528,9 +1917,8 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
               "Ca trực đã thay đổi hoặc đã kết thúc; yêu cầu xác thực lại.",
             );
           } else {
-            const plan = this.biometricLeasePlan(row);
-            activeUnlock.shiftEndMs = plan.shiftEndMs;
-            activeUnlock.leaseDeadlineKind = plan.leaseDeadlineKind;
+            activeUnlock.shiftEndMs = Math.min(activeUnlock.shiftEndMs, interval.end);
+            activeUnlock.leaseDeadlineKind = "ACTIVE_SHIFT";
           }
         } catch (e: any) {
           this.logger.warn(
@@ -1539,12 +1927,23 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           this.activeRoomUnlocks.delete(targetKey);
         }
       }
+    }
 
-      if (this.activeRoomUnlocks.get(targetKey) === activeUnlock) {
-        isUnlocked = true;
-        unlockedDoctor = activeUnlock.doctor;
-        shiftEndMs = activeUnlock.shiftEndMs;
+    // API restarts have no RAM map. Restore only a durable record tied to this
+    // exact terminal, then immediately reconcile its original published slot.
+    if (!this.activeRoomUnlocks.get(targetKey)) {
+      const restored = await this.getUsableBiometricTerminalUnlock(code, tid, now);
+      if (restored) {
+        activeUnlock = restored;
+        this.activeRoomUnlocks.set(targetKey, restored);
       }
+    }
+
+    activeUnlock = this.activeRoomUnlocks.get(targetKey);
+    if (activeUnlock) {
+      isUnlocked = true;
+      unlockedDoctor = activeUnlock.doctor;
+      shiftEndMs = activeUnlock.shiftEndMs;
     }
 
     const qrExpiresSec = await this.getQrExpiresSeconds();
@@ -2205,24 +2604,64 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      // 4. Ghi nhận điểm danh vào bảng duty_attendance trong CSDL Postgres
+      // 4. Attendance is an audit event; the separate terminal lease is the
+      // authority. Write both atomically so an API restart can restore exactly
+      // the scanning PC, never every machine in the room.
       const attendanceId = crypto.randomUUID();
-      await this.db.db.insert(dutyAttendance).values({
-        id: attendanceId,
-        slotId: currentShift.slotId,
-        roomId: currentShift.roomId,
-        roomCode: session.roomCode,
-        roomName: session.roomName,
-        userId: bestMatch.userId,
-        username: bestMatch.username,
-        fullName: bestMatch.fullName,
-        title: bestMatch.title,
-        shiftCode: currentShift.shiftCode || "CA_TRUC",
-        shiftName: currentShift.shiftName || "Ca làm việc",
-        status: "ON_TIME",
-        confidenceScore: maxCosine,
-        method: "AI_FACIAL_BIOMETRICS",
-        deviceInfo: deviceInfo || "Mobile Web Camera",
+      const biometricLeaseId = crypto.randomUUID();
+      const biometricPlan = this.biometricLeasePlan(currentShift);
+      await this.db.db.transaction(async (tx) => {
+        await tx.insert(dutyAttendance).values({
+          id: attendanceId,
+          slotId: currentShift.slotId,
+          roomId: currentShift.roomId,
+          roomCode: session.roomCode,
+          roomName: session.roomName,
+          userId: bestMatch.userId,
+          username: bestMatch.username,
+          fullName: bestMatch.fullName,
+          title: bestMatch.title,
+          shiftCode: currentShift.shiftCode || "CA_TRUC",
+          shiftName: currentShift.shiftName || "Ca làm việc",
+          checkinTime: new Date(now),
+          status: "ON_TIME",
+          confidenceScore: maxCosine,
+          method: "AI_FACIAL_BIOMETRICS",
+          deviceInfo: deviceInfo || "Mobile Web Camera",
+        });
+        // A new successful check replaces only an earlier biometric authority
+        // for this exact physical target; it never broadens to the whole room.
+        await tx
+          .update(kioskBiometricTerminalLeases)
+          .set({
+            endedAt: new Date(now),
+            endReason: "Được thay thế bởi lần xác thực sinh trắc học mới.",
+          })
+          .where(
+            and(
+              eq(kioskBiometricTerminalLeases.roomCode, session.roomCode),
+              eq(kioskBiometricTerminalLeases.terminalId, session.terminalId || ""),
+              isNull(kioskBiometricTerminalLeases.endedAt),
+            ),
+          );
+        await tx.insert(kioskBiometricTerminalLeases).values({
+          id: biometricLeaseId,
+          attendanceId,
+          slotId: currentShift.slotId,
+          roomId: currentShift.roomId,
+          roomCode: session.roomCode,
+          roomName: session.roomName,
+          terminalId: session.terminalId || "",
+          userId: bestMatch.userId,
+          username: bestMatch.username,
+          fullName: bestMatch.fullName,
+          title: bestMatch.title,
+          dutyDate: currentShift.dutyDate,
+          shiftCode: currentShift.shiftCode || "CA_TRUC",
+          shiftName: currentShift.shiftName || "Ca làm việc",
+          shiftEndAt: new Date(biometricPlan.shiftEndMs),
+          verifiedAt: new Date(now),
+        });
       });
 
       if (
@@ -2247,7 +2686,6 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       };
 
       // A biometric release is valid only for the shift currently in progress.
-      const biometricPlan = this.biometricLeasePlan(currentShift);
       const shiftEndMs = biometricPlan.shiftEndMs;
 
       this.activeRoomUnlocks.set(
@@ -2260,6 +2698,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
           shiftEndMs,
           terminalId: session.terminalId,
           attendanceId,
+          biometricLeaseId,
           leaseDeadlineKind: biometricPlan.leaseDeadlineKind,
         },
       );

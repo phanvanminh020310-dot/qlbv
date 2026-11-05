@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { integer, pgTable, real, serial, text, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { users } from './system';
 import { dutyRooms, dutySlots } from './duty';
@@ -62,6 +63,57 @@ export const dutyAttendance = pgTable(
   (t) => ({
     roomDateIdx: index('duty_attendance_room_date_idx').on(t.roomCode, t.checkinTime),
     userIdx: index('duty_attendance_user_idx').on(t.userId),
+  }),
+);
+
+/**
+ * Durable, terminal-bound authorization produced by one successful face check.
+ *
+ * This is intentionally separate from duty_attendance: attendance is an audit
+ * event, whereas this row is the short-lived authority that lets exactly the
+ * same Kiosk workstation recover after an API restart. It is always reconciled
+ * against the exact published slot/doctor before use.
+ */
+export const kioskBiometricTerminalLeases = pgTable(
+  'kiosk_biometric_terminal_leases',
+  {
+    id: text('id').primaryKey(),
+    attendanceId: text('attendance_id')
+      .notNull()
+      .references(() => dutyAttendance.id, { onDelete: 'cascade' }),
+    slotId: integer('slot_id').references(() => dutySlots.id, { onDelete: 'set null' }),
+    roomId: integer('room_id').references(() => dutyRooms.id, { onDelete: 'set null' }),
+    roomCode: text('room_code').notNull(),
+    roomName: text('room_name').notNull(),
+    /** Exact machine identity supplied by the Kiosk client, never a room-wide key. */
+    terminalId: text('terminal_id').notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    username: text('username').notNull(),
+    fullName: text('full_name').notNull(),
+    title: text('title').notNull(),
+    dutyDate: text('duty_date').notNull(),
+    shiftCode: text('shift_code').notNull(),
+    shiftName: text('shift_name').notNull(),
+    /** Never extends beyond the verified shift, even if a server is restarted. */
+    shiftEndAt: timestamp('shift_end_at', { withTimezone: true }).notNull(),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).defaultNow().notNull(),
+    /** Explicit closure prevents a previously valid lease from ever being revived. */
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endReason: text('end_reason'),
+  },
+  (t) => ({
+    activeTargetUq: uniqueIndex('kiosk_biometric_terminal_leases_active_target_uq')
+      .on(t.roomCode, t.terminalId)
+      .where(sql`${t.endedAt} IS NULL`),
+    targetIdx: index('kiosk_biometric_terminal_leases_target_idx').on(
+      t.roomCode,
+      t.terminalId,
+      t.endedAt,
+      t.shiftEndAt,
+    ),
+    activeIdx: index('kiosk_biometric_terminal_leases_active_idx').on(t.endedAt, t.shiftEndAt),
   }),
 );
 
