@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CalendarDays, Check, Copy, Search, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -557,6 +557,172 @@ export function ReviewDialog({
 
 /* ================================================================== Điều chỉnh trực tiếp (KHTH) */
 
+function normalizedSlotText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("vi")
+    .replace(/đ/g, "d");
+}
+
+/**
+ * The direct-adjustment screen can contain hundreds of slots. A native select
+ * flattened date, room, shift and role into one unreadable line, especially on
+ * iPhone. Pick a day first, then use tactile, searchable slot cards grouped by
+ * clinic room while retaining the exact original slot id for the API.
+ */
+function OverrideSlotPicker({
+  periodId,
+  slots,
+  value,
+  onChange,
+  disabled,
+}: {
+  periodId: number;
+  slots: GridSlot[];
+  value: number;
+  onChange: (slotId: number) => void;
+  disabled: boolean;
+}) {
+  const [date, setDate] = useState("");
+  const [query, setQuery] = useState("");
+  const dates = useMemo(
+    () => [...new Set(slots.map((slot) => slot.dutyDate))].sort((a, b) => a.localeCompare(b)),
+    [slots],
+  );
+
+  useEffect(() => {
+    setQuery("");
+    setDate(dates[0] ?? "");
+  }, [periodId]);
+
+  useEffect(() => {
+    if (date && dates.includes(date)) return;
+    setDate(dates[0] ?? "");
+  }, [date, dates]);
+
+  const shownSlots = useMemo(() => {
+    const needle = normalizedSlotText(query.trim());
+    return slots
+      .filter((slot) => !date || slot.dutyDate === date)
+      .filter((slot) => {
+        if (!needle) return true;
+        return normalizedSlotText(
+          `${slot.roomCode} ${slot.roomName} ${slot.shiftCode} ${slot.shiftName} ${slot.startTime} ${slot.endTime} ${slot.roleName}`,
+        ).includes(needle);
+      })
+      .sort((a, b) =>
+        `${a.roomCode}\u0000${a.startTime}\u0000${a.shiftCode}\u0000${a.roleName}`.localeCompare(
+          `${b.roomCode}\u0000${b.startTime}\u0000${b.shiftCode}\u0000${b.roleName}`,
+          "vi",
+        ),
+      );
+  }, [date, query, slots]);
+
+  const groups = useMemo(() => {
+    const byRoom = new Map<string, GridSlot[]>();
+    for (const slot of shownSlots) {
+      const key = `${slot.roomCode}\u0000${slot.roomName}`;
+      byRoom.set(key, [...(byRoom.get(key) ?? []), slot]);
+    }
+    return [...byRoom.entries()];
+  }, [shownSlots]);
+
+  return (
+    <section className="space-y-3 rounded-xl border bg-[var(--muted)]/25 p-3" aria-labelledby="ov-slot-heading">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 id="ov-slot-heading" className="text-sm font-semibold">Chọn ca khám cần điều chỉnh</h3>
+          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Chọn ngày rồi chạm vào ô ca tương ứng. Ca được chọn hiển thị rõ phòng, giờ và vị trí.</p>
+        </div>
+        {date ? <Badge tone="muted">{shownSlots.length} ca hiển thị</Badge> : null}
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-[minmax(13rem,.85fr)_minmax(16rem,1.15fr)]">
+        <div className="space-y-1.5">
+          <Label htmlFor="ov-slot-date">Ngày khám</Label>
+          <div className="relative">
+            <CalendarDays className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-[var(--muted-foreground)]" />
+            <Select
+              id="ov-slot-date"
+              value={date}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                setDate(nextDate);
+                if (value && slots.some((slot) => slot.id === value && slot.dutyDate !== nextDate)) onChange(0);
+              }}
+              disabled={disabled || !dates.length}
+              className="pl-8"
+            >
+              {!dates.length ? <option value="">Chưa có ca khám</option> : null}
+              {dates.map((item) => (
+                <option key={item} value={item}>{dayName(item)} · {fmtDate(item)}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ov-slot-search">Tìm nhanh trong ngày</Label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-[var(--muted-foreground)]" />
+            <Input
+              id="ov-slot-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              disabled={disabled || !date}
+              placeholder="Phòng, ca, giờ hoặc vai trò…"
+              className="pl-8"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="max-h-[min(38vh,19rem)] space-y-3 overflow-y-auto pr-1" role="listbox" aria-label="Danh sách ca khám">
+        {groups.map(([room, roomSlots]) => {
+          const [roomCode, roomName] = room.split("\u0000");
+          return (
+            <div key={room} className="overflow-hidden rounded-lg border bg-[var(--card)]" role="group" aria-label={`${roomCode} ${roomName}`}>
+              <div className="flex items-center justify-between gap-2 border-b bg-[var(--muted)]/50 px-3 py-2">
+                <div className="min-w-0 text-sm font-semibold"><span className="mr-1.5 text-[var(--primary)]">{roomCode}</span>{roomName}</div>
+                <span className="shrink-0 text-xs text-[var(--muted-foreground)]">{roomSlots.length} ca</span>
+              </div>
+              <div className="divide-y">
+                {roomSlots.map((item) => {
+                  const selected = value === item.id;
+                  const staffTone = item.filled >= item.requiredCount ? "success" : item.filled ? "warning" : "danger";
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      disabled={disabled}
+                      onClick={() => onChange(item.id)}
+                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "bg-[var(--accent)]" : "hover:bg-[var(--muted)]/60"}`}
+                    >
+                      <span className={`flex size-6 shrink-0 items-center justify-center rounded-full border ${selected ? "border-[var(--primary)] bg-[var(--primary)] text-white" : "border-[var(--border)] text-transparent"}`} aria-hidden="true">
+                        <Check className="size-3.5" />
+                      </span>
+                      <ShiftChip code={item.shiftCode} color={item.shiftColor} className="shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{item.shiftName} <span className="font-normal text-[var(--muted-foreground)]">· {item.startTime}–{item.endTime}</span></span>
+                        <span className="block truncate text-xs text-[var(--muted-foreground)]">{item.roleName}{item.requiredTitle ? ` · ${item.requiredTitle}` : ""}</span>
+                      </span>
+                      <Badge tone={staffTone} className="shrink-0">{item.filled}/{item.requiredCount}</Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {date && !shownSlots.length ? <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy ca khám phù hợp trong ngày đã chọn.</div> : null}
+        {!date ? <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">{periodId ? "Kỳ lịch này chưa có ca khám để điều chỉnh." : "Chọn kỳ lịch khám để xem các ca."}</div> : null}
+      </div>
+    </section>
+  );
+}
+
 export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boolean; onClose: () => void; initialPeriodId?: number }) {
   const actions = useDutyActions();
   const [periodId, setPeriodId] = useState<number>(initialPeriodId ?? 0);
@@ -579,6 +745,11 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
     },
     onError: (e) => toast.error(errorText(e)),
   });
+  const selectSlot = (id: number) => {
+    setSlotId(id);
+    setRemoveUserId(null);
+    setAddUserId(null);
+  };
   const submit = () => {
     if (!slotId) return toast.error("Chọn ca khám cần điều chỉnh");
     if (!removeUserId && !addUserId) return toast.error("Chọn bác sĩ cần gỡ hoặc bác sĩ cần thêm");
@@ -600,43 +771,52 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
       }
     >
       <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="ov-period">Kỳ lịch khám</Label>
-            <PeriodPicker
-              id="ov-period"
-              periods={(periods.data ?? []).filter((period) => period.status !== "NHAP")}
-              value={periodId || null}
-              onChange={(id) => { setPeriodId(id); setSlotId(0); }}
-              placeholder="Chọn kỳ đã công bố"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ov-slot">Ca khám</Label>
-            <Select id="ov-slot" value={String(slotId || "")} onChange={(e) => { setSlotId(Number(e.target.value)); setRemoveUserId(null); }} disabled={!periodId}>
-              <option value="">— Chọn ca —</option>
-              {slots.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {fmtDate(s.dutyDate)} · {s.roomCode} · {s.shiftCode} · {s.roleName} ({s.filled}/{s.requiredCount})
-                </option>
-              ))}
-            </Select>
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ov-period">Kỳ lịch khám</Label>
+          <PeriodPicker
+            id="ov-period"
+            periods={(periods.data ?? []).filter((period) => period.status !== "NHAP")}
+            value={periodId || null}
+            onChange={(id) => {
+              setPeriodId(id);
+              selectSlot(0);
+            }}
+            placeholder="Chọn kỳ đã công bố"
+          />
         </div>
+
+        {grid.isLoading ? <Skeleton className="h-72 w-full" /> : (
+          <OverrideSlotPicker
+            periodId={periodId}
+            slots={slots}
+            value={slotId}
+            onChange={selectSlot}
+            disabled={!periodId || grid.isFetching}
+          />
+        )}
+
         {slot ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="ov-remove">Gỡ khỏi ca</Label>
-              <Select id="ov-remove" value={removeUserId ? String(removeUserId) : ""} onChange={(e) => setRemoveUserId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">— Không gỡ ai —</option>
-                {slot.assignments.map((a) => (
-                  <option key={a.userId} value={a.userId}>{a.fullName} — {a.title}</option>
-                ))}
-              </Select>
+          <div className="rounded-xl border bg-[var(--accent)]/30 p-3">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Ca đã chọn</span>
+              <ShiftChip code={slot.shiftCode} color={slot.shiftColor} />
+              <span className="text-sm font-semibold">{dayName(slot.dutyDate)} {fmtDate(slot.dutyDate)} · {slot.roomCode}</span>
+              <span className="text-sm text-[var(--muted-foreground)]">{slot.shiftName} · {slot.startTime}–{slot.endTime} · {slot.roleName}</span>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ov-add">Xếp thêm / thay vào ca</Label>
-              <StaffSelect id="ov-add" value={addUserId} onChange={setAddUserId} exclude={removeUserId ? [removeUserId] : []} placeholder="— Không thêm ai —" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="ov-remove">Gỡ khỏi ca</Label>
+                <Select id="ov-remove" value={removeUserId ? String(removeUserId) : ""} onChange={(e) => setRemoveUserId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">— Không gỡ ai —</option>
+                  {slot.assignments.map((a) => (
+                    <option key={a.userId} value={a.userId}>{a.fullName} — {a.title}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ov-add">Xếp thêm / thay vào ca</Label>
+                <StaffSelect id="ov-add" value={addUserId} onChange={setAddUserId} exclude={removeUserId ? [removeUserId] : []} placeholder="— Không thêm ai —" />
+              </div>
             </div>
           </div>
         ) : null}
