@@ -88,12 +88,18 @@ function DesktopAttendanceGrid({
         event.currentTarget.scrollLeft += event.deltaY;
       }}
     >
-      <table ref={tableRef} className="min-w-max border-separate border-spacing-0 text-[13px]">
+      <table ref={tableRef} className="isolate min-w-max table-fixed border-separate border-spacing-0 text-[13px]">
+        <colgroup>
+          <col style={{ width: 56 }} /><col style={{ width: 240 }} /><col style={{ width: 176 }} />
+          {data.dates.map((day) => <col key={day.date} style={{ width: 56 }} />)}
+          <col style={{ width: 60 }} /><col style={{ width: 60 }} />
+          {data.summaryCodes.map((code) => <col key={code} style={{ width: 76 }} />)}
+        </colgroup>
         <thead>
           <tr className="h-11 text-xs uppercase tracking-wide text-white">
-            <th rowSpan={2} className="sticky left-0 top-0 z-50 w-14 min-w-14 border-b border-r border-slate-700 bg-slate-900 px-3 text-center">STT</th>
-            <th rowSpan={2} className="sticky left-14 top-0 z-50 min-w-56 border-b border-r border-slate-700 bg-slate-900 px-4 text-left">Họ và tên</th>
-            <th rowSpan={2} className="sticky left-[17.5rem] top-0 z-50 min-w-40 border-b border-r border-slate-700 bg-slate-900 px-4 text-left">Chức danh</th>
+            <th rowSpan={2} className="sticky left-0 top-0 z-50 w-[56px] min-w-[56px] border-b border-r border-slate-700 bg-slate-900 px-3 text-center">STT</th>
+            <th rowSpan={2} className="sticky left-[56px] top-0 z-50 w-[240px] min-w-[240px] max-w-[240px] border-b border-r border-slate-700 bg-slate-900 px-4 text-left">Họ và tên</th>
+            <th rowSpan={2} className="sticky left-[296px] top-0 z-50 w-[176px] min-w-[176px] max-w-[176px] border-b border-r border-slate-700 bg-slate-900 px-4 text-left">Chức danh</th>
             <th colSpan={data.dates.length} className="sticky top-0 z-30 border-b border-r border-slate-700 bg-slate-800 px-2 text-center">Ngày trong tháng</th>
             <th colSpan={2} className="sticky top-0 z-30 border-b border-r border-slate-700 bg-slate-800 px-2 text-center">Trực</th>
             {data.summaryColumns.map((column) => <th key={column.code} rowSpan={2} className="sticky top-0 z-30 border-b border-r border-slate-700 bg-slate-800 px-3 text-center">{column.name}</th>)}
@@ -105,11 +111,11 @@ function DesktopAttendanceGrid({
         </thead>
         <tbody>
           {data.staff.map((person, index) => {
-            const rowTone = index % 2 ? 'bg-slate-50/70' : 'bg-white';
+            const rowTone = index % 2 ? 'bg-slate-50' : 'bg-white';
             return <tr key={person.id} className="group hover:bg-sky-50/70">
-              <td className={`sticky left-0 z-10 w-14 min-w-14 border-b border-r border-slate-200 px-3 py-2 text-center font-medium text-slate-500 ${rowTone}`}>{person.stt}</td>
-              <td className={`sticky left-14 z-10 border-b border-r border-slate-200 px-4 py-2 font-semibold text-slate-800 ${rowTone}`}>{person.fullName}</td>
-              <td className={`sticky left-[17.5rem] z-10 border-b border-r border-slate-200 px-4 py-2 text-slate-500 ${rowTone}`}>{person.title || '—'}</td>
+              <td className={`sticky left-0 z-20 w-[56px] min-w-[56px] border-b border-r border-slate-200 px-3 py-2 text-center font-medium text-slate-500 ${rowTone} group-hover:bg-sky-50`}>{person.stt}</td>
+              <td title={person.fullName} className={`sticky left-[56px] z-20 w-[240px] min-w-[240px] max-w-[240px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-r border-slate-200 px-4 py-2 font-semibold text-slate-800 ${rowTone} group-hover:bg-sky-50`}>{person.fullName}</td>
+              <td title={person.title || undefined} className={`sticky left-[296px] z-20 w-[176px] min-w-[176px] max-w-[176px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-r border-slate-200 px-4 py-2 text-slate-500 ${rowTone} group-hover:bg-sky-50`}>{person.title || ''}</td>
               {data.dates.map((day) => <td className={`border-b border-r border-slate-100 p-1 text-center ${day.isWeekend ? 'bg-rose-50/65' : day.isRest ? 'bg-amber-50/65' : ''} ${day.isPast ? 'bg-slate-100/80' : ''}`} key={day.date}><CodeSelect data={data} person={person} date={day} value={data.entries[cellKey(person.id, day.date)]?.code ?? ''} disabled={!canUpdate || saving || day.isPast} onSave={(code) => onSave({ userId: person.id, workDate: day.date, code })} /></td>)}
               <td className="border-b border-r border-slate-200 bg-amber-50/60 px-3 text-center font-bold text-amber-800">{person.totals.NN}</td><td className="border-b border-r border-slate-200 bg-sky-50/70 px-3 text-center font-bold text-sky-800">{person.totals.NT}</td>
               {data.summaryCodes.map((code) => <td className="border-b border-r border-slate-200 px-3 text-center font-medium text-slate-700" key={code}>{person.totals[code] || ''}</td>)}
