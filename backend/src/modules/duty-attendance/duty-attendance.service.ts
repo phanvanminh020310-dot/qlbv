@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import * as ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
@@ -6,6 +6,7 @@ import { DbService } from '../../db/db.service';
 import { departments, dutyAttendanceCodes, dutyAttendanceEntries, dutyAttendanceHolidays, users } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
 import { renderPrintDocument } from '../../infra/rendering/pdf-renderer';
+import { bangkokToday } from '../duty/duty-rules';
 import type { AttendanceCodeDto, AttendanceHolidayDto, AttendanceMonthQueryDto, SaveAttendanceEntriesDto } from './duty-attendance.dto';
 
 const YMD = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
@@ -64,11 +65,13 @@ export class DutyAttendanceService {
         .from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id))
         .where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
     ]);
+    const today = bangkokToday();
     const holidayDates = new Set(holidays.map((h) => h.holidayDate));
     const dates = Array.from({ length: daysInMonth(q.month) }, (_, i) => {
       const date = `${q.month}-${String(i + 1).padStart(2, '0')}`;
       const dow = new Date(`${date}T00:00:00`).getDay();
-      return { date, day: i + 1, weekday: vnWeekday(date), isRest: dow === 0 || dow === 6 || holidayDates.has(date), holidayName: holidays.find((h) => h.holidayDate === date)?.name ?? '' };
+      const isWeekend = dow === 0 || dow === 6;
+      return { date, day: i + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((h) => h.holidayDate === date)?.name ?? '' };
     });
     const entries = Object.fromEntries(records.map((r) => [`${r.userId}:${r.workDate}`, { code: r.code, note: r.note }]));
     const dutyCodes = new Set(codes.filter((c) => c.countsAsDuty).map((c) => c.code));
@@ -83,14 +86,18 @@ export class DutyAttendanceService {
       }
       return { stt: index + 1, ...s, totals };
     });
-    return { month: q.month, department: { id: department.id, name: department.name, hospital: department.hospital }, dates, codes, summaryCodes, summaryColumns: codes.filter((c) => c.showSummary && !c.countsAsDuty).map((c) => ({ code: c.code, name: c.name })), staff: rows, entries, holidays };
+    return { month: q.month, today, department: { id: department.id, name: department.name, hospital: department.hospital }, dates, codes, summaryCodes, summaryColumns: codes.filter((c) => c.showSummary && !c.countsAsDuty).map((c) => ({ code: c.code, name: c.name })), staff: rows, entries, holidays };
   }
 
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
     const departmentId = await this.deptId(user, dto.departmentId);
     if (!dto.entries.length) return { saved: 0 };
     const dates = [...new Set(dto.entries.map((x) => x.workDate))];
-    for (const d of dates) if (!YMD.test(d)) throw new BadRequestException('Ngày chấm công không hợp lệ');
+    const today = bangkokToday();
+    for (const d of dates) {
+      if (!YMD.test(d)) throw new BadRequestException('Ngày chấm công không hợp lệ');
+      if (d < today) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(d)} vì ngày này đã qua`);
+    }
     const personIds = [...new Set(dto.entries.map((x) => x.userId))];
     const [staff, activeCodes] = await Promise.all([
       this.db.db.select({ id: users.id }).from(users).where(and(inArray(users.id, personIds), eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))),
@@ -117,6 +124,14 @@ export class DutyAttendanceService {
   async codes() { return this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)); }
   async createCode(dto: AttendanceCodeDto) { const [v] = await this.db.db.insert(dutyAttendanceCodes).values({ ...dto, code: dto.code.trim().toUpperCase(), name: dto.name.trim(), group: dto.group.trim().toUpperCase(), color: dto.color ?? '#0f766e', countsAsDuty: dto.countsAsDuty ?? false, showSummary: dto.showSummary ?? true, sortOrder: dto.sortOrder ?? 0, active: dto.active ?? true, note: dto.note?.trim() ?? '' }).returning(); return v; }
   async updateCode(id: number, dto: Partial<AttendanceCodeDto>) { const [v] = await this.db.db.update(dutyAttendanceCodes).set({ ...dto, code: dto.code?.trim().toUpperCase(), name: dto.name?.trim(), group: dto.group?.trim().toUpperCase(), note: dto.note?.trim(), updatedAt: new Date() }).where(eq(dutyAttendanceCodes.id, id)).returning(); if (!v) throw new NotFoundException('Không tìm thấy ký hiệu'); return v; }
+  async deleteCode(id: number) {
+    const [code] = await this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.id, id));
+    if (!code) throw new NotFoundException('Không tìm thấy ký hiệu');
+    const [{ total }] = await this.db.db.select({ total: sql<number>`count(*)::int` }).from(dutyAttendanceEntries).where(eq(dutyAttendanceEntries.codeId, id));
+    if (Number(total) > 0) throw new ConflictException(`Không thể xóa ký hiệu “${code.code}” vì đã được dùng trong bảng chấm công. Hãy ngừng sử dụng ký hiệu này thay vì xóa.`);
+    await this.db.db.delete(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.id, id));
+    return { deleted: true };
+  }
   async holidays(q: AttendanceMonthQueryDto) { this.assertMonth(q.month); const { from, to } = monthBounds(q.month); return this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, from), lt(dutyAttendanceHolidays.holidayDate, to))).orderBy(asc(dutyAttendanceHolidays.holidayDate)); }
   async saveHoliday(user: AccessContext, dto: AttendanceHolidayDto) { const [v] = await this.db.db.insert(dutyAttendanceHolidays).values({ ...dto, name: dto.name.trim(), note: dto.note?.trim() ?? '', createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceHolidays.holidayDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '' } }).returning(); return v; }
   async deleteHoliday(id: number) { const [v] = await this.db.db.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)).returning(); if (!v) throw new NotFoundException('Không tìm thấy ngày nghỉ'); return { deleted: true }; }

@@ -33,7 +33,12 @@ export class DutyAttendanceController {
 
   @Get('codes') @RequirePermissions('duty-attendance.view') codes() { return this.service.codes(); }
   @Post('codes') @RequirePermissions('duty-attendance.catalog.manage') createCode(@Body() dto: AttendanceCodeDto) { return this.service.createCode(dto); }
-  @Put('codes/:id') @RequirePermissions('duty-attendance.catalog.manage') updateCode(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceCodeDto) { return this.service.updateCode(id, dto); }
+  @Put('codes/:id') @RequirePermissions('duty-attendance.catalog.manage')
+  @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_codes', description: 'Sửa ký hiệu chấm công' })
+  updateCode(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceCodeDto) { return this.service.updateCode(id, dto); }
+  @Delete('codes/:id') @RequirePermissions('duty-attendance.catalog.manage')
+  @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_codes', description: 'Xóa ký hiệu chấm công chưa phát sinh dữ liệu' })
+  deleteCode(@Param('id', ParseIntPipe) id: number) { return this.service.deleteCode(id); }
   @Get('holidays') @RequirePermissions('duty-attendance.view') holidays(@Query() q: AttendanceMonthQueryDto) { return this.service.holidays(q); }
   @Post('holidays') @RequirePermissions('duty-attendance.catalog.manage') saveHoliday(@CurrentUser() user: AccessContext, @Body() dto: AttendanceHolidayDto) { return this.service.saveHoliday(user, dto); }
   @Delete('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') deleteHoliday(@Param('id', ParseIntPipe) id: number) { return this.service.deleteHoliday(id); }
