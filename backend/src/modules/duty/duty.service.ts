@@ -43,6 +43,7 @@ import {
 import type {
   AbsenceDto,
   AbsenceQueryDto,
+  AdjustmentHistoryQueryDto,
   AssignDto,
   ClonePeriodDto,
   DeletePeriodDto,
@@ -1777,6 +1778,174 @@ export class DutyService {
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     await this.core.log(this.db.db, { periodId, action: 'EXPORT', actorId: user.id, detail: { fileName } });
     return { buffer, fileName };
+  }
+
+  /**
+   * Direct KHTH replacements are already immutable duty_logs rows (action
+   * OVERRIDE). Project them into report-ready rows instead of reading current
+   * assignments, which would lose the doctor who was removed.
+   */
+  async adjustmentHistory(
+    user: AccessContext,
+    q: AdjustmentHistoryQueryDto = {},
+    limit = 500,
+  ) {
+    if (!this.core.hasPerm(user, 'duty.exception.resolve')) {
+      throw new ForbiddenException('Chỉ Điều phối lịch khám (KHTH) được xem lịch sử điều chỉnh trực tiếp');
+    }
+    if (q.from && q.to && q.from > q.to) {
+      throw new BadRequestException('Ngày bắt đầu không thể sau ngày kết thúc');
+    }
+
+    const where: SQL[] = [eq(dutyLogs.action, 'OVERRIDE')];
+    if (q.periodId) where.push(eq(dutyLogs.periodId, q.periodId));
+    if (q.from) where.push(gte(dutyLogs.createdAt, new Date(`${q.from}T00:00:00+07:00`)));
+    if (q.to) where.push(lte(dutyLogs.createdAt, new Date(`${q.to}T23:59:59.999+07:00`)));
+
+    // JSON values are snapshot ids from the original transaction. `nullif`
+    // keeps historical rows with a removal-only/addition-only action readable.
+    const removedId = sql<number | null>`nullif(nullif(${dutyLogs.detail}->>'removed', 'null'), '')::integer`;
+    const addedId = sql<number | null>`nullif(nullif(${dutyLogs.detail}->>'added', 'null'), '')::integer`;
+    const rows = await this.db.db
+      .select({
+        id: dutyLogs.id,
+        periodId: dutyLogs.periodId,
+        periodName: dutyPeriods.name,
+        slotId: dutyLogs.slotId,
+        dutyDate: sql<string | null>`coalesce(${dutySlots.dutyDate}::text, ${dutyLogs.detail}->>'date')`,
+        roomCode: sql<string | null>`coalesce(${dutyRooms.code}, ${dutyLogs.detail}->>'room')`,
+        roomName: sql<string | null>`coalesce(${dutyRooms.name}, ${dutyLogs.detail}->>'roomName')`,
+        shiftCode: sql<string | null>`coalesce(${dutyShiftTypes.code}, ${dutyLogs.detail}->>'shift')`,
+        shiftName: sql<string | null>`coalesce(${dutyShiftTypes.name}, ${dutyLogs.detail}->>'shiftName')`,
+        startTime: sql<string | null>`coalesce(${dutyShiftTypes.startTime}, ${dutyLogs.detail}->>'startTime')`,
+        endTime: sql<string | null>`coalesce(${dutyShiftTypes.endTime}, ${dutyLogs.detail}->>'endTime')`,
+        roleName: sql<string | null>`coalesce(${dutyRoles.name}, ${dutyLogs.detail}->>'roleName')`,
+        removedUserId: removedId,
+        addedUserId: addedId,
+        removedName: sql<string | null>`(select full_name from users where id = ${removedId})`,
+        addedName: sql<string | null>`(select full_name from users where id = ${addedId})`,
+        actorName: sql<string | null>`(select full_name from users where id = ${dutyLogs.actorId})`,
+        reason: dutyLogs.reason,
+        detail: dutyLogs.detail,
+        createdAt: dutyLogs.createdAt,
+      })
+      .from(dutyLogs)
+      .leftJoin(dutyPeriods, eq(dutyPeriods.id, dutyLogs.periodId))
+      .leftJoin(dutySlots, eq(dutySlots.id, dutyLogs.slotId))
+      .leftJoin(dutyRooms, eq(dutyRooms.id, dutySlots.roomId))
+      .leftJoin(dutyShiftTypes, eq(dutyShiftTypes.id, dutySlots.shiftId))
+      .leftJoin(dutyRoles, eq(dutyRoles.id, dutySlots.roleId))
+      .where(and(...where))
+      .orderBy(desc(dutyLogs.createdAt))
+      .limit(Math.min(Math.max(limit, 1), 5_000));
+
+    const text = (detail: Record<string, unknown>, key: string) =>
+      typeof detail[key] === 'string' ? detail[key] : '';
+    const displayPerson = (id: number | null, current: string | null, snapshot: string) =>
+      current || snapshot || (id ? `Người dùng #${id} (hồ sơ đã xoá)` : '—');
+    return rows.map((row) => {
+      const detail = row.detail ?? {};
+      return {
+        id: row.id,
+        periodId: row.periodId,
+        periodName: row.periodName || text(detail, 'periodName') || 'Kỳ lịch đã xoá',
+        slotId: row.slotId,
+        dutyDate: row.dutyDate ?? '',
+        roomCode: row.roomCode ?? '',
+        roomName: row.roomName ?? '',
+        shiftCode: row.shiftCode ?? '',
+        shiftName: row.shiftName ?? '',
+        startTime: row.startTime ?? '',
+        endTime: row.endTime ?? '',
+        roleName: row.roleName ?? '',
+        removedUserId: row.removedUserId,
+        removedName: displayPerson(row.removedUserId, row.removedName, text(detail, 'removedName')),
+        addedUserId: row.addedUserId,
+        addedName: displayPerson(row.addedUserId, row.addedName, text(detail, 'addedName')),
+        actorName: row.actorName || text(detail, 'actorName') || 'Hệ thống',
+        reason: row.reason,
+        forced: detail.forced === true,
+        violations: Array.isArray(detail.violations) ? detail.violations.filter((v): v is string => typeof v === 'string') : [],
+        createdAt: row.createdAt,
+      };
+    });
+  }
+
+  async exportAdjustmentHistory(
+    user: AccessContext,
+    q: AdjustmentHistoryQueryDto = {},
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const rows = await this.adjustmentHistory(user, q, 5_000);
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'QLBS — Lịch bác sĩ khám';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Lịch sử điều chỉnh', { views: [{ state: 'frozen', ySplit: 3 }] });
+    ws.columns = [
+      { header: 'STT', key: 'stt', width: 7 },
+      { header: 'Thời điểm điều chỉnh', key: 'createdAt', width: 22 },
+      { header: 'Kỳ lịch khám', key: 'periodName', width: 28 },
+      { header: 'Ngày khám', key: 'dutyDate', width: 14 },
+      { header: 'Phòng khám', key: 'room', width: 26 },
+      { header: 'Ca khám', key: 'shift', width: 23 },
+      { header: 'Vai trò', key: 'roleName', width: 20 },
+      { header: 'Bác sĩ được gỡ', key: 'removedName', width: 28 },
+      { header: 'Bác sĩ được xếp', key: 'addedName', width: 28 },
+      { header: 'Người điều chỉnh', key: 'actorName', width: 26 },
+      { header: 'Bỏ qua ràng buộc', key: 'forced', width: 18 },
+      { header: 'Cảnh báo/ràng buộc', key: 'violations', width: 42 },
+      { header: 'Lý do', key: 'reason', width: 54 },
+    ];
+    ws.mergeCells(1, 1, 1, 13);
+    ws.getCell('A1').value = 'LỊCH SỬ ĐIỀU CHỈNH TRỰC TIẾP BÁC SĨ KHÁM';
+    ws.getCell('A1').font = { bold: true, size: 14 };
+    ws.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 26;
+    const filterText = [
+      q.periodId ? `Kỳ lịch: ${rows[0]?.periodName ?? `#${q.periodId}`}` : 'Tất cả kỳ lịch',
+      q.from ? `Từ ${fmtDate(q.from)}` : '',
+      q.to ? `Đến ${fmtDate(q.to)}` : '',
+    ].filter(Boolean).join(' · ');
+    ws.mergeCells(2, 1, 2, 13);
+    ws.getCell('A2').value = `${filterText || 'Tất cả dữ liệu'} · Xuất lúc ${fmtVn(new Date())}`;
+    ws.getCell('A2').font = { italic: true, color: { argb: 'FF475569' } };
+    ws.getCell('A2').alignment = { horizontal: 'left' };
+    const header = ws.getRow(3);
+    header.values = ws.columns.map((column) => column.header as string);
+    header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F766E' } };
+    header.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    header.height = 30;
+    rows.forEach((row, index) => {
+      const x = ws.addRow({
+        stt: index + 1,
+        createdAt: fmtVn(row.createdAt),
+        periodName: row.periodName,
+        dutyDate: row.dutyDate ? fmtDate(row.dutyDate) : '—',
+        room: [row.roomCode, row.roomName].filter(Boolean).join(' · ') || '—',
+        shift: [row.shiftCode, row.shiftName, row.startTime && row.endTime ? `${row.startTime}–${row.endTime}` : ''].filter(Boolean).join(' · ') || '—',
+        roleName: row.roleName || '—',
+        removedName: row.removedName,
+        addedName: row.addedName,
+        actorName: row.actorName,
+        forced: row.forced ? 'Có' : 'Không',
+        violations: row.violations.join('\n') || '—',
+        reason: row.reason || '—',
+      });
+      x.alignment = { vertical: 'top', wrapText: true };
+      x.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        };
+      });
+      if (row.forced) x.getCell(11).font = { bold: true, color: { argb: 'FFB45309' } };
+    });
+    ws.autoFilter = { from: 'A3', to: `M${Math.max(3, rows.length + 3)}` };
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `lich-su-dieu-chinh-bac-si-kham-${stamp}.xlsx`;
+    return { buffer: Buffer.from(await wb.xlsx.writeBuffer()), fileName };
   }
 
   async logs(user: AccessContext, periodId: number) {

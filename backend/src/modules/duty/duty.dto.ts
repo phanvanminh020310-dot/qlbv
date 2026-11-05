@@ -677,6 +677,25 @@ export class CandidateQueryDto {
   q?: string;
 }
 
+/** Bộ lọc lịch sử điều chỉnh trực tiếp bác sĩ khám của KHTH. */
+export class AdjustmentHistoryQueryDto {
+  @ApiPropertyOptional({ description: 'Lọc theo kỳ lịch khám' })
+  @IsOptional()
+  @Transform(toIntOrUndef)
+  @IsInt()
+  periodId?: number;
+
+  @ApiPropertyOptional({ example: '2026-11-01', description: 'Chỉ lấy thao tác từ ngày này (giờ Việt Nam)' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-11-30', description: 'Chỉ lấy thao tác đến hết ngày này (giờ Việt Nam)' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
 export class DeletePeriodDto {
   @ApiPropertyOptional({ example: 'Nhập sai khoảng ngày, sẽ lập lại kỳ mới' })
   @IsOptional()

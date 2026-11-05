@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { AbsenceInbox } from "@/components/duty/absence-inbox";
+import { AdjustmentHistory } from "@/components/duty/adjustment-history";
 import { OverrideDialog, ReviewDialog, useDutyActions } from "@/components/duty/duty-dialogs";
 import { errorText, RequestStatusBadge } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
@@ -29,7 +30,7 @@ export default function YeuCauPage() {
   const [review, setReview] = useState<{ row: RequestRow; kind: "approve" | "reject" | "decline" } | null>(null);
   const [override, setOverride] = useState(false);
 
-  useRealtimeInvalidate({ duty: [["duty-requests"], ["duty-grid"], ["duty-me"], ["duty-options"]] });
+  useRealtimeInvalidate({ duty: [["duty-requests"], ["duty-adjustments"], ["duty-grid"], ["duty-me"], ["duty-options"]] });
 
   const approval = useQuery({ queryKey: [...DUTY_KEYS.requests, "approval"], queryFn: () => dutyApi.requests("approval"), enabled: canApprove });
   const all = useQuery({ queryKey: [...DUTY_KEYS.requests, "all"], queryFn: () => dutyApi.requests("all"), enabled: isKhth });
@@ -139,7 +140,10 @@ export default function YeuCauPage() {
         ]
       : []),
     ...(isKhth
-      ? [{ key: "all", label: "Tất cả", content: <List rows={all.data} loading={all.isLoading} empty="Chưa có yêu cầu nào" /> }]
+      ? [
+          { key: "all", label: "Tất cả", content: <List rows={all.data} loading={all.isLoading} empty="Chưa có yêu cầu nào" /> },
+          { key: "history", label: "Lịch sử điều chỉnh", content: <AdjustmentHistory /> },
+        ]
       : []),
   ];
 

@@ -40,7 +40,7 @@ export function dayName(ymd: string): string {
 export function useRefreshDuty() {
   const qc = useQueryClient();
   return () => {
-    for (const key of [["duty-grid"], ["duty-options"], ["duty-me"], ["duty-requests"], ["duty-candidates"], ["duty-periods"], ["duty-period"], ["duty-summary"], ["duty-logs"], ["duty-absences"], ["duty-absence-requests"]]) {
+    for (const key of [["duty-grid"], ["duty-options"], ["duty-me"], ["duty-requests"], ["duty-candidates"], ["duty-periods"], ["duty-period"], ["duty-summary"], ["duty-logs"], ["duty-adjustments"], ["duty-absences"], ["duty-absence-requests"]]) {
       void qc.invalidateQueries({ queryKey: key });
     }
   };

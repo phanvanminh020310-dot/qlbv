@@ -5,6 +5,7 @@ import type { AccessContext } from '../../common/types/access-context';
 import {
   AbsenceDto,
   AbsenceQueryDto,
+  AdjustmentHistoryQueryDto,
   AssignDto,
   CandidateQueryDto,
   ClonePeriodDto,
@@ -50,6 +51,26 @@ export class DutyController {
   @ApiOperation({ summary: 'Theo dõi thời gian thực bác sĩ đã xác thực vào các ca đang diễn ra' })
   liveMonitor(@CurrentUser() user: AccessContext) {
     return this.service.liveMonitor(user);
+  }
+
+  @Get('adjustments/export')
+  @RequirePermissions('duty.exception.resolve')
+  @Audit({ module: 'DUTY', action: 'EXPORT', entity: 'duty_adjustment_history', description: 'Xuất Excel lịch sử điều chỉnh bác sĩ khám' })
+  @ApiOperation({ summary: 'Xuất Excel lịch sử điều chỉnh trực tiếp bác sĩ khám (KHTH)' })
+  async exportAdjustments(@CurrentUser() user: AccessContext, @Query() q: AdjustmentHistoryQueryDto) {
+    const { buffer, fileName } = await this.service.exportAdjustmentHistory(user, q);
+    return new StreamableFile(buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="${encodeURIComponent(fileName)}"`,
+      length: buffer.length,
+    });
+  }
+
+  @Get('adjustments')
+  @RequirePermissions('duty.exception.resolve')
+  @ApiOperation({ summary: 'Lịch sử điều chỉnh trực tiếp bác sĩ khám tại phòng khám (KHTH)' })
+  adjustments(@CurrentUser() user: AccessContext, @Query() q: AdjustmentHistoryQueryDto) {
+    return this.service.adjustmentHistory(user, q);
   }
 
   @Get('absences')

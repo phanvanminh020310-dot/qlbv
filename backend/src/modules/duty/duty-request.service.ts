@@ -577,6 +577,13 @@ export class DutyRequestService {
         violations = res.errors.map((e) => e.message);
         await tx.insert(dutyAssignments).values({ slotId: dto.slotId, userId: dto.addUserId, source: 'DIEU_CHINH', createdBy: user.id, note: dto.reason });
       }
+      // Keep a complete human-readable snapshot in duty_logs. A later slot/user
+      // deletion must never make the KHTH adjustment report lose who was removed,
+      // who was assigned, or which room/shift was affected.
+      const affectedPeople = await this.core.loadUsers(
+        tx,
+        [dto.removeUserId, dto.addUserId].filter((id): id is number => typeof id === 'number'),
+      );
       await this.core.log(tx, {
         periodId: slot.periodId,
         slotId: slot.id,
@@ -584,7 +591,24 @@ export class DutyRequestService {
         actorId: user.id,
         userId: dto.addUserId ?? dto.removeUserId ?? null,
         reason: dto.reason,
-        detail: { removed: dto.removeUserId ?? null, added: dto.addUserId ?? null, forced, violations, shift: slot.shiftCode, room: slot.roomCode, date: slot.dutyDate },
+        detail: {
+          removed: dto.removeUserId ?? null,
+          removedName: dto.removeUserId ? affectedPeople.get(dto.removeUserId)?.fullName ?? '' : '',
+          added: dto.addUserId ?? null,
+          addedName: dto.addUserId ? affectedPeople.get(dto.addUserId)?.fullName ?? '' : '',
+          actorName: user.fullName,
+          periodName: slot.periodName,
+          forced,
+          violations,
+          room: slot.roomCode,
+          roomName: slot.roomName,
+          shift: slot.shiftCode,
+          shiftName: slot.shiftName,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          roleName: slot.roleName,
+          date: slot.dutyDate,
+        },
       });
     });
     const where = `${slot.roomCode} · ${slot.shiftCode} · ${fmtDate(slot.dutyDate)}`;

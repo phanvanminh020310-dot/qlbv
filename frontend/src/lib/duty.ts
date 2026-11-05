@@ -182,6 +182,31 @@ export interface LogRow {
   userName: string | null;
 }
 
+/** Dòng báo cáo điều phối khi KHTH điều chỉnh trực tiếp bác sĩ trong ca khám. */
+export interface AdjustmentHistoryItem {
+  id: number;
+  periodId: number | null;
+  periodName: string;
+  slotId: number | null;
+  dutyDate: string;
+  roomCode: string;
+  roomName: string;
+  shiftCode: string;
+  shiftName: string;
+  startTime: string;
+  endTime: string;
+  roleName: string;
+  removedUserId: number | null;
+  removedName: string;
+  addedUserId: number | null;
+  addedName: string;
+  actorName: string;
+  reason: string;
+  forced: boolean;
+  violations: string[];
+  createdAt: string;
+}
+
 export interface LiveMonitorDoctor {
   userId: number;
   fullName: string;
@@ -478,6 +503,22 @@ export const dutyApi = {
   approveRequest: (id: number, body: Json = {}) => post<{ ok: boolean }>(`/duty/requests/${id}/approve`, body),
   rejectRequest: (id: number, note: string) => post<{ ok: boolean }>(`/duty/requests/${id}/reject`, { note }),
   override: (body: Json) => post<GridSlot & { forced: boolean; violations: string[] }>('/duty/exceptions/override', body),
+  adjustments: (q?: { periodId?: number; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (q?.periodId) qs.set('periodId', String(q.periodId));
+    if (q?.from) qs.set('from', q.from);
+    if (q?.to) qs.set('to', q.to);
+    const query = qs.toString();
+    return get<AdjustmentHistoryItem[]>(`/duty/adjustments${query ? `?${query}` : ''}`);
+  },
+  adjustmentExportPath: (q?: { periodId?: number; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (q?.periodId) qs.set('periodId', String(q.periodId));
+    if (q?.from) qs.set('from', q.from);
+    if (q?.to) qs.set('to', q.to);
+    const query = qs.toString();
+    return `/duty/adjustments/export${query ? `?${query}` : ''}`;
+  },
   roomOptions: () => get<Array<{ value: number; label: string; departmentId: number | null; active: boolean }>>('/duty/rooms/options'),
   shiftOptions: () =>
     get<Array<{ value: number; label: string; code: string; name: string; startTime: string; endTime: string; isNight: boolean; color: string; active: boolean }>>('/duty/shifts/options'),
@@ -492,6 +533,7 @@ export const DUTY_KEYS = {
   myOptions: (id: number) => ['duty-options', id] as const,
   summary: (id: number) => ['duty-summary', id] as const,
   logs: (id: number) => ['duty-logs', id] as const,
+  adjustments: (periodId?: number) => ['duty-adjustments', periodId ?? 'all'] as const,
   liveMonitor: ['duty-live-monitor'] as const,
   candidates: (slotId: number) => ['duty-candidates', slotId] as const,
   me: ['duty-me'] as const,
