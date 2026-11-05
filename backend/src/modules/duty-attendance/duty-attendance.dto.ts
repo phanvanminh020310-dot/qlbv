@@ -4,6 +4,9 @@ import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsInt, IsNotEmpty, IsOp
 export class AttendanceMonthQueryDto {
   @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'Tháng phải có dạng YYYY-MM' })
   month!: string;
+  /** Chỉ SUPER_ADMIN mới được chọn khoa khác; nhân viên khoa luôn bị ép về khoa được gán. */
+  @IsOptional() @Type(() => Number) @IsInt()
+  departmentId?: number;
 }
 export class AttendanceEntryDto {
   @IsInt() userId!: number;
@@ -13,6 +16,9 @@ export class AttendanceEntryDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class SaveAttendanceEntriesDto {
+  /** Chỉ SUPER_ADMIN mới dùng trường này để chọn khoa cần chấm công. */
+  @IsOptional() @Type(() => Number) @IsInt()
+  departmentId?: number;
   @IsArray() @ArrayMaxSize(5000) @ValidateNested({ each: true }) @Type(() => AttendanceEntryDto)
   entries!: AttendanceEntryDto[];
 }

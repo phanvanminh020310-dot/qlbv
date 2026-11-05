@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Download, FileText, FileSpreadsheet, Loader2, Printer, Settings2, Users } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -26,27 +26,38 @@ export default function ChamCongTrucPage() {
   const can = useAuth((s) => s.can);
   const [month, setMonth] = useState(currentMonth);
   const [mobileDate, setMobileDate] = useState<string>('');
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | undefined>();
   const client = useQueryClient();
   const canView = can('duty-attendance.view'); const canUpdate = can('duty-attendance.update'); const canExport = can('duty-attendance.export'); const canCatalog = can('duty-attendance.catalog.manage');
-  const query = useQuery({ queryKey: attendanceKeys.month(month), queryFn: () => dutyAttendanceApi.month(month), enabled: canView });
+  const departmentScope = useQuery({ queryKey: attendanceKeys.departments, queryFn: dutyAttendanceApi.departments, enabled: canView });
+  useEffect(() => {
+    if (selectedDepartmentId || !departmentScope.data?.items.length) return;
+    setSelectedDepartmentId(departmentScope.data.items[0].id);
+  }, [departmentScope.data, selectedDepartmentId]);
+  const departmentId = selectedDepartmentId ?? departmentScope.data?.items[0]?.id;
+  const query = useQuery({ queryKey: attendanceKeys.month(month, departmentId), queryFn: () => dutyAttendanceApi.month(month, departmentId), enabled: canView && !!departmentId });
   const data = query.data;
   const activeDate = mobileDate && data?.dates.some((d) => d.date === mobileDate) ? mobileDate : data?.dates[0]?.date ?? '';
   const save = useMutation({
-    mutationFn: (entry: { userId: number; workDate: string; code: string }) => dutyAttendanceApi.save([{ ...entry, code: entry.code || null }]),
-    onMutate: async (entry) => { await client.cancelQueries({ queryKey: attendanceKeys.month(month) }); const before = client.getQueryData<AttendanceMonth>(attendanceKeys.month(month)); if (before) client.setQueryData<AttendanceMonth>(attendanceKeys.month(month), { ...before, entries: { ...before.entries, [cellKey(entry.userId, entry.workDate)]: entry.code ? { code: entry.code, note: '' } : undefined as never } }); return { before }; },
-    onError: (err: Error, _entry, context) => { if (context?.before) client.setQueryData(attendanceKeys.month(month), context.before); toast.error(err.message || 'Không lưu được ô chấm công'); },
-    onSuccess: () => { void client.invalidateQueries({ queryKey: attendanceKeys.month(month) }); },
+    mutationFn: (entry: { userId: number; workDate: string; code: string }) => dutyAttendanceApi.save([{ ...entry, code: entry.code || null }], departmentId),
+    onMutate: async (entry) => { await client.cancelQueries({ queryKey: attendanceKeys.month(month, departmentId) }); const before = client.getQueryData<AttendanceMonth>(attendanceKeys.month(month, departmentId)); if (before) client.setQueryData<AttendanceMonth>(attendanceKeys.month(month, departmentId), { ...before, entries: { ...before.entries, [cellKey(entry.userId, entry.workDate)]: entry.code ? { code: entry.code, note: '' } : undefined as never } }); return { before }; },
+    onError: (err: Error, _entry, context) => { if (context?.before) client.setQueryData(attendanceKeys.month(month, departmentId), context.before); toast.error(err.message || 'Không lưu được ô chấm công'); },
+    onSuccess: () => { void client.invalidateQueries({ queryKey: attendanceKeys.month(month, departmentId) }); },
   });
-  const doExport = async (format: 'xlsx' | 'docx' | 'pdf') => { try { await downloadFile(dutyAttendanceApi.exportPath(format, month), `BANG_CHAM_CONG_${month}.${format}`); } catch (e) { toast.error(e instanceof Error ? e.message : 'Không thể xuất tệp'); } };
+  const doExport = async (format: 'xlsx' | 'docx' | 'pdf') => { try { await downloadFile(dutyAttendanceApi.exportPath(format, month, departmentId), `BANG_CHAM_CONG_${month}.${format}`); } catch (e) { toast.error(e instanceof Error ? e.message : 'Không thể xuất tệp'); } };
   const selected = useMemo(() => data?.dates.find((d) => d.date === activeDate), [data, activeDate]);
 
   if (!canView) return <EmptyState title="Bạn chưa có quyền xem bảng chấm công" description="Vai trò Nhập chấm công trực khoa được cấp riêng cho Hành chính trưởng hoặc Chủ nhiệm khoa." />;
-  if (query.isLoading) return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-[32rem] w-full" /></div>;
-  if (!data) return <EmptyState title="Không tải được bảng chấm công" description="Hãy thử tải lại trang hoặc liên hệ quản trị hệ thống." />;
+  if (departmentScope.isLoading || query.isLoading) return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-[32rem] w-full" /></div>;
+  if (departmentScope.isError) return <EmptyState title="Không tải được danh sách khoa/phòng" description={departmentScope.error instanceof Error ? departmentScope.error.message : 'Hãy thử lại hoặc liên hệ quản trị hệ thống.'} />;
+  if (!departmentId) return <EmptyState title="Chưa có khoa/phòng để chấm công" description="Hãy tạo hoặc kích hoạt khoa/phòng, sau đó thử lại." />;
+  if (query.isError) return <EmptyState title="Không tải được bảng chấm công" description={query.error instanceof Error ? query.error.message : 'Hãy thử lại hoặc liên hệ quản trị hệ thống.'} />;
+  if (!data) return <EmptyState title="Không tải được bảng chấm công" description="Hãy thử lại hoặc liên hệ quản trị hệ thống." />;
 
   return <>
     <PageHeader title="Bảng chấm công trực và chấm công khác" description={`Nhập thủ công cho ${data.department.name}. T: trực; hệ thống tự tách NN (ngày nghỉ/lễ) và NT (ngày thường).`} actions={<div className="flex w-full flex-wrap gap-2 sm:w-auto">
       <div className="flex items-center rounded-lg border bg-white shadow-sm"><Button variant="ghost" size="sm" aria-label="Tháng trước" onClick={() => setMonth(previousMonth(month, -1))}><ChevronLeft className="h-4 w-4" /></Button><input aria-label="Chọn tháng" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-9 w-35 border-x bg-transparent px-2 text-sm font-semibold outline-none" /><Button variant="ghost" size="sm" aria-label="Tháng sau" onClick={() => setMonth(previousMonth(month, 1))}><ChevronRight className="h-4 w-4" /></Button></div>
+      {departmentScope.data?.canSelect && <select aria-label="Chọn khoa/phòng" value={departmentId ?? ''} onChange={(e) => setSelectedDepartmentId(Number(e.target.value))} className="h-9 max-w-64 rounded-lg border bg-white px-3 text-sm font-medium shadow-sm"><option value="" disabled>Chọn khoa/phòng</option>{departmentScope.data.items.map((dept) => <option key={dept.id} value={dept.id}>{dept.shortName || dept.name}{dept.code ? ` (${dept.code})` : ''}</option>)}</select>}
       {canExport && <><Button variant="outline" size="sm" onClick={() => doExport('xlsx')}><FileSpreadsheet className="h-4 w-4" /> <span className="hidden sm:inline">Excel</span></Button><Button variant="outline" size="sm" onClick={() => doExport('docx')}><FileText className="h-4 w-4" /> <span className="hidden sm:inline">Word</span></Button><Button variant="outline" size="sm" onClick={() => doExport('pdf')}><Download className="h-4 w-4" /> PDF</Button></>}
       {canCatalog && <Link href="/cham-cong-truc/danh-muc"><Button variant="outline" size="sm"><Settings2 className="h-4 w-4" /> <span className="hidden sm:inline">Ký hiệu & ngày nghỉ</span></Button></Link>}
       <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4" /><span className="hidden sm:inline"> In</span></Button>

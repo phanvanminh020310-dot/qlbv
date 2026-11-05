@@ -20,17 +20,39 @@ export interface AttendanceExport { buffer: Buffer; fileName: string; mime: stri
 export class DutyAttendanceService {
   constructor(private readonly db: DbService) {}
 
-  /** Chỉ tài khoản có khoa công tác được nhập bảng. Không nhận khoa từ client. */
-  private deptId(user: AccessContext) {
-    if (!user.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng; không thể nhập bảng chấm công');
-    return user.departmentId;
+  /** SUPER_ADMIN có thể chọn khoa để hỗ trợ; mọi tài khoản khoa bị khóa cứng vào khoa công tác của mình. */
+  private async deptId(user: AccessContext, requestedDepartmentId?: number) {
+    if (!user.isSuperAdmin) {
+      if (!user.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng; không thể nhập bảng chấm công');
+      if (requestedDepartmentId !== undefined && requestedDepartmentId !== user.departmentId) {
+        throw new ForbiddenException('Bạn chỉ được xem và chấm công cho khoa/phòng được gán');
+      }
+      return user.departmentId;
+    }
+    if (!requestedDepartmentId) throw new BadRequestException('Vui lòng chọn khoa/phòng cần xem bảng chấm công');
+    const [department] = await this.db.db.select({ id: departments.id }).from(departments)
+      .where(and(eq(departments.id, requestedDepartmentId), eq(departments.active, true), isNull(departments.deletedAt)));
+    if (!department) throw new NotFoundException('Không tìm thấy khoa/phòng đang hoạt động');
+    return department.id;
   }
+
+  async availableDepartments(user: AccessContext) {
+    if (user.isSuperAdmin) {
+      const items = await this.db.db.select({ id: departments.id, name: departments.name, code: departments.code, shortName: departments.shortName })
+        .from(departments).where(and(eq(departments.active, true), isNull(departments.deletedAt))).orderBy(asc(departments.name));
+      return { canSelect: true, items };
+    }
+    const id = await this.deptId(user);
+    const [item] = await this.db.db.select({ id: departments.id, name: departments.name, code: departments.code, shortName: departments.shortName })
+      .from(departments).where(eq(departments.id, id));
+    return { canSelect: false, items: item ? [item] : [] };
+  }
+
   private assertMonth(month: string) { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException('Tháng phải có dạng YYYY-MM'); }
-  private assertDateInMonth(date: string, month: string) { if (!YMD.test(date) || !date.startsWith(`${month}-`)) throw new BadRequestException('Ngày chấm công phải thuộc đúng tháng đang chọn'); }
 
   async month(user: AccessContext, q: AttendanceMonthQueryDto) {
     this.assertMonth(q.month);
-    const departmentId = this.deptId(user);
+    const departmentId = await this.deptId(user, q.departmentId);
     const { from, to } = monthBounds(q.month);
     const [department] = await this.db.db.select().from(departments).where(eq(departments.id, departmentId));
     if (!department) throw new NotFoundException('Không tìm thấy khoa/phòng được gán');
@@ -65,7 +87,7 @@ export class DutyAttendanceService {
   }
 
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
-    const departmentId = this.deptId(user);
+    const departmentId = await this.deptId(user, dto.departmentId);
     if (!dto.entries.length) return { saved: 0 };
     const dates = [...new Set(dto.entries.map((x) => x.workDate))];
     for (const d of dates) if (!YMD.test(d)) throw new BadRequestException('Ngày chấm công không hợp lệ');
@@ -99,10 +121,10 @@ export class DutyAttendanceService {
   async saveHoliday(user: AccessContext, dto: AttendanceHolidayDto) { const [v] = await this.db.db.insert(dutyAttendanceHolidays).values({ ...dto, name: dto.name.trim(), note: dto.note?.trim() ?? '', createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceHolidays.holidayDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '' } }).returning(); return v; }
   async deleteHoliday(id: number) { const [v] = await this.db.db.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)).returning(); if (!v) throw new NotFoundException('Không tìm thấy ngày nghỉ'); return { deleted: true }; }
 
-  private async exportData(user: AccessContext, month: string) { return this.month(user, { month }); }
+  private async exportData(user: AccessContext, month: string, departmentId?: number) { return this.month(user, { month, departmentId }); }
   private matrix(data: Awaited<ReturnType<DutyAttendanceService['month']>>) { return data.staff.map((s) => [s.stt, s.fullName, s.title, ...data.dates.map((d) => data.entries[`${s.id}:${d.date}`]?.code ?? ''), s.totals.NN, s.totals.NT, ...data.summaryCodes.map((c) => s.totals[c] ?? 0)]); }
-  async exportExcel(user: AccessContext, month: string): Promise<AttendanceExport> {
-    const d = await this.exportData(user, month), wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Cham cong');
+  async exportExcel(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
+    const d = await this.exportData(user, month, departmentId), wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Cham cong');
     const total = 3 + d.dates.length + 2 + d.summaryCodes.length; const last = String.fromCharCode(64 + Math.min(total, 26));
     ws.mergeCells(1, 1, 1, total); ws.getCell('A1').value = d.department.hospital.toUpperCase(); ws.getCell('A1').font = { name: 'Times New Roman', bold: true, size: 12 }; ws.getCell('A1').alignment = { horizontal: 'center' };
     ws.mergeCells(2, 1, 2, total); ws.getCell('A2').value = 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC'; ws.getCell('A2').font = { name: 'Times New Roman', bold: true, size: 15 }; ws.getCell('A2').alignment = { horizontal: 'center' };
@@ -114,15 +136,15 @@ export class DutyAttendanceService {
     for (let r = 6; r <= ws.rowCount; r++) ws.getRow(r).eachCell((cell) => { cell.alignment = { horizontal: Number(cell.col) > 3 ? 'center' : 'left', vertical: 'middle' }; cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }; });
     return { buffer: Buffer.from(await wb.xlsx.writeBuffer()), fileName: `BANG_CHAM_CONG_${month}_${d.department.id}.xlsx`, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
   }
-  async exportWord(user: AccessContext, month: string): Promise<AttendanceExport> {
-    const d = await this.exportData(user, month); const headers = ['STT', 'Họ và tên', 'Chức danh', ...d.dates.map((x) => String(x.day)), 'NN', 'NT', ...d.summaryColumns.map((x) => x.name)];
+  async exportWord(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
+    const d = await this.exportData(user, month, departmentId); const headers = ['STT', 'Họ và tên', 'Chức danh', ...d.dates.map((x) => String(x.day)), 'NN', 'NT', ...d.summaryColumns.map((x) => x.name)];
     const mkCell = (v: unknown, bold = false) => new TableCell({ width: { size: Math.max(200, Math.floor(9500 / headers.length)), type: WidthType.DXA }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: String(v ?? ''), bold, size: 14 })] })] });
     const rows = [new TableRow({ children: headers.map((x) => mkCell(x, true)) }), new TableRow({ children: ['', '', '', ...d.dates.map((x) => x.weekday), '', '', ...d.summaryCodes.map(() => '')].map((x) => mkCell(x, true)) }), ...this.matrix(d).map((r) => new TableRow({ children: r.map((x) => mkCell(x)) }))];
     const doc = new Document({ sections: [{ properties: { page: { size: { width: 16840, height: 11900 }, margin: { top: 600, right: 500, bottom: 600, left: 500 } } }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: d.department.hospital.toUpperCase(), bold: true, size: 20 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC', bold: true, size: 26 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: `Khoa/Phòng: ${d.department.name} — Tháng ${month.slice(5)}/${month.slice(0,4)}`, italics: true, size: 18 })] }), new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })] }] });
     return { buffer: await Packer.toBuffer(doc), fileName: `BANG_CHAM_CONG_${month}_${d.department.id}.docx`, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
   }
-  async exportPdf(user: AccessContext, month: string): Promise<AttendanceExport> {
-    const d = await this.exportData(user, month); const columns = [{ id: 'stt', title: 'STT', width: 8 }, { id: 'name', title: 'Họ và tên', width: 33 }, { id: 'title', title: 'Chức danh', width: 24 }, ...d.dates.map((x) => ({ id: `d${x.day}`, title: String(x.day), width: 8 })), { id: 'nn', title: 'NN', width: 9 }, { id: 'nt', title: 'NT', width: 9 }, ...d.summaryColumns.map((c) => ({ id: `s${c.code}`, title: c.name, width: 9 }))];
+  async exportPdf(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
+    const d = await this.exportData(user, month, departmentId); const columns = [{ id: 'stt', title: 'STT', width: 8 }, { id: 'name', title: 'Họ và tên', width: 33 }, { id: 'title', title: 'Chức danh', width: 24 }, ...d.dates.map((x) => ({ id: `d${x.day}`, title: String(x.day), width: 8 })), { id: 'nn', title: 'NN', width: 9 }, { id: 'nt', title: 'NT', width: 9 }, ...d.summaryColumns.map((c) => ({ id: `s${c.code}`, title: c.name, width: 9 }))];
     const rows = d.staff.map((s) => Object.assign({ stt: s.stt, name: s.fullName, title: s.title, nn: s.totals.NN, nt: s.totals.NT }, Object.fromEntries([...d.dates.map((x) => [`d${x.day}`, d.entries[`${s.id}:${x.date}`]?.code ?? '']), ...d.summaryCodes.map((c) => [`s${c}`, s.totals[c] ?? 0])] )));
     const W = 273, L = 12; const doc = { paperSize: 'A4', orientation: 'landscape', margins: { top: 8, right: 8, bottom: 10, left: 8 }, defaultStyle: { fontFamily: 'Times New Roman', fontSize: 6.5 }, pageNumbering: { show: true, position: 'bottom-right', format: 'Trang {page}/{pages}' }, pages: [{ id: 'p', name: 'Bảng chấm công', elements: [
       { id: 'org', type: 'text', x: L, y: 7, w: W, h: 5, text: d.department.hospital.toUpperCase(), style: { bold: true, align: 'center', fontSize: 9 } },

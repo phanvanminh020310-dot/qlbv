@@ -11,8 +11,12 @@ import { DutyAttendanceService } from './duty-attendance.service';
 export class DutyAttendanceController {
   constructor(private readonly service: DutyAttendanceService) {}
 
+  @Get('departments') @RequirePermissions('duty-attendance.view')
+  @ApiOperation({ summary: 'Khoa/phòng được phép xem bảng chấm công; chỉ SUPER_ADMIN được chọn nhiều khoa' })
+  departments(@CurrentUser() user: AccessContext) { return this.service.availableDepartments(user); }
+
   @Get('month') @RequirePermissions('duty-attendance.view')
-  @ApiOperation({ summary: 'Bảng chấm công tháng của chính khoa được gán' })
+  @ApiOperation({ summary: 'Bảng chấm công tháng của khoa được gán; SUPER_ADMIN có thể chọn khoa' })
   month(@CurrentUser() user: AccessContext, @Query() q: AttendanceMonthQueryDto) { return this.service.month(user, q); }
 
   @Put('entries') @RequirePermissions('duty-attendance.update')
@@ -22,7 +26,7 @@ export class DutyAttendanceController {
   @Get('export/:format') @RequirePermissions('duty-attendance.export')
   @Audit({ module: 'DUTY_ATTENDANCE', action: 'EXPORT', entity: 'duty_attendance_entries', description: 'Xuất bảng chấm công tháng' })
   async export(@CurrentUser() user: AccessContext, @Param('format') format: string, @Query() q: AttendanceMonthQueryDto) {
-    const result = format === 'xlsx' ? await this.service.exportExcel(user, q.month) : format === 'docx' ? await this.service.exportWord(user, q.month) : format === 'pdf' ? await this.service.exportPdf(user, q.month) : null;
+    const result = format === 'xlsx' ? await this.service.exportExcel(user, q.month, q.departmentId) : format === 'docx' ? await this.service.exportWord(user, q.month, q.departmentId) : format === 'pdf' ? await this.service.exportPdf(user, q.month, q.departmentId) : null;
     if (!result) throw new Error('Định dạng xuất không hỗ trợ');
     return new StreamableFile(result.buffer, { type: result.mime, disposition: `attachment; filename="${encodeURIComponent(result.fileName)}"`, length: result.buffer.length });
   }
