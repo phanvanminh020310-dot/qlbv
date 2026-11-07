@@ -385,52 +385,44 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
 function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: () => void; periodId: number }) {
   const refresh = useRefreshDuty();
   const [roomIds, setRoomIds] = useState<number[]>([]);
+  const [shiftIds, setShiftIds] = useState<number[]>([]);
   const [roleIds, setRoleIds] = useState<number[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [required, setRequired] = useState(1);
   const [skipClosed, setSkipClosed] = useState(true);
-  const [scheduleMode, setScheduleMode] = useState<"THEO_BUOI" | "CA_NGAY" | "DOC_LAP">("THEO_BUOI");
   const catalog = useCatalogOptions(open);
-  const shifts = catalog.shifts.filter((shift) => shift.scheduleMode === scheduleMode);
-  const shiftIds = shifts.map((shift) => shift.value);
+  const selectedShifts = catalog.shifts.filter((shift) => shiftIds.includes(shift.value));
+  // All configured shifts remain visible and selectable. The guard merely prevents
+  // an invalid, unsaved mixed selection from reaching the existing server safeguard.
+  const hasMixedSchedulingWays = selectedShifts.some((shift) => shift.scheduleMode === "THEO_BUOI")
+    && selectedShifts.some((shift) => shift.scheduleMode === "CA_NGAY");
   const toggle = (arr: number[], v: number, set: (a: number[]) => void) => set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   const gen = useMutation({
     mutationFn: () => dutyApi.generate(periodId, { roomIds, shiftIds, roleIds, weekdays, requiredCount: required, skipClosedDays: skipClosed }),
     onSuccess: (r) => {
-      toast.success(`Đã tạo ${r.created} ca khám${r.skipped ? ` (bỏ qua ${r.skipped} ca đã có hoặc không cùng cách xếp)` : ""}`);
+      toast.success(`Đã tạo ${r.created} ca khám${r.skipped ? ` (bỏ qua ${r.skipped} ca đã có)` : ""}`);
       refresh();
       onClose();
     },
     onError: (e) => toast.error(errorText(e)),
   });
   const total = weekdays.length * roomIds.length * shiftIds.length * roleIds.length;
-  const scheduleOptions: Array<{ value: "THEO_BUOI" | "CA_NGAY" | "DOC_LAP"; title: string; description: string }> = [
-    { value: "THEO_BUOI", title: "Theo buổi", description: "Tạo các ca Sáng và Chiều. Có thể xếp hai bác sĩ khác nhau hoặc chỉ xếp một buổi." },
-    { value: "CA_NGAY", title: "Hành chính cả ngày", description: "Tạo một ca cả ngày. Không tạo Sáng và Chiều cho cùng phòng, ngày, vai trò." },
-    { value: "DOC_LAP", title: "Ca độc lập", description: "Dùng cho khung giờ chuyên biệt, không thay thế Sáng/Chiều hoặc Hành chính." },
-  ];
-  const options = scheduleOptions.filter((option) => catalog.shifts.some((shift) => shift.scheduleMode === option.value));
   return (
     <Dialog
       open={open}
       onClose={onClose}
       size="lg"
       title="Sinh ca khám hàng loạt"
-      description="Chọn một cách xếp cho các phòng và vai trò trong lần tạo này. Sáng/Chiều và Hành chính không thể cùng tồn tại tại một vị trí."
-      footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button disabled={!total || gen.isPending} onClick={() => gen.mutate()}><Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}</Button></>}
+      description="Chọn phòng, ca khám, vai trò và ngày cần tạo. Danh sách ca lấy trực tiếp từ các ca đang khai báo."
+      footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button disabled={!total || hasMixedSchedulingWays || gen.isPending} onClick={() => gen.mutate()}><Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}</Button></>}
     >
       <div className="space-y-4">
         <CheckGroup label="Phòng khám" items={catalog.rooms} selected={roomIds} onToggle={(v) => toggle(roomIds, v, setRoomIds)} onSelectAll={() => setRoomIds(catalog.rooms.map((room) => room.value))} />
-        <div>
-          <Label className="mb-1.5 block text-xs">Cách xếp lịch</Label>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {options.map((option) => <button key={option.value} type="button" onClick={() => setScheduleMode(option.value)} className={`rounded-xl border p-3 text-left transition-colors ${scheduleMode === option.value ? "border-[var(--primary)] bg-[var(--accent)] ring-1 ring-[var(--primary)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}><span className="block text-sm font-semibold">{option.title}</span><span className="mt-1 block text-xs text-[var(--muted-foreground)]">{option.description}</span></button>)}
-          </div>
-          <p className="mt-2 text-xs text-[var(--muted-foreground)]">Ca sẽ tạo: {shifts.map((shift) => `${shift.code} (${shift.startTime}–${shift.endTime})`).join(" · ") || "Chưa cấu hình ca thuộc cách xếp này"}</p>
-        </div>
+        <CheckGroup label="Ca khám" items={catalog.shifts} selected={shiftIds} onToggle={(v) => toggle(shiftIds, v, setShiftIds)} />
+        {hasMixedSchedulingWays ? <p className="-mt-2 text-xs text-amber-700 dark:text-amber-300">Các ca đã chọn không thể được tạo cùng một phòng, ngày và vai trò. Bỏ một nhóm ca trước khi tạo.</p> : null}
         <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} onSelectAll={() => setRoleIds(catalog.roles.map((role) => role.value))} />
         <div><Label className="mb-1.5 block text-xs">Các ngày trong tuần</Label><div className="flex flex-wrap gap-1.5">{[1,2,3,4,5,6,7].map((d) => <button key={d} type="button" onClick={() => toggle(weekdays,d,setWeekdays)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${weekdays.includes(d) ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}>{weekdayLabel(d)}</button>)}</div></div>
-        <div className="grid gap-3 sm:grid-cols-2"><NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Có thể xếp bác sĩ khác nhau cho từng buổi" /><div className="flex items-end gap-2 pb-2"><Switch checked={skipClosed} onCheckedChange={setSkipClosed} /><span className="text-sm">Bỏ qua ngày nghỉ lễ</span></div></div>
+        <div className="grid gap-3 sm:grid-cols-2"><NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Có thể xếp bác sĩ khác nhau cho từng ca" /><div className="flex items-end gap-2 pb-2"><Switch checked={skipClosed} onCheckedChange={setSkipClosed} /><span className="text-sm">Bỏ qua ngày nghỉ lễ</span></div></div>
       </div>
     </Dialog>
   );
@@ -447,15 +439,15 @@ function CheckGroup({
   items: { value: number; label: string }[];
   selected: number[];
   onToggle: (v: number) => void;
-  onSelectAll: () => void;
+  onSelectAll?: () => void;
 }) {
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
         <Label className="text-xs">{label}</Label>
-        <button type="button" className="text-xs text-[var(--primary)] hover:underline" onClick={onSelectAll}>
+        {onSelectAll ? <button type="button" className="text-xs text-[var(--primary)] hover:underline" onClick={onSelectAll}>
           Chọn tất cả
-        </button>
+        </button> : null}
       </div>
       <div className="flex flex-wrap gap-1.5">
         {items.length === 0 ? <span className="text-xs text-[var(--muted-foreground)]">Chưa có dữ liệu trong danh mục</span> : null}
@@ -481,7 +473,7 @@ function useCatalogOptions(enabled: boolean) {
   const roles = useQuery({ queryKey: ["duty-role-options"], queryFn: () => dutyApi.roleOptions(), enabled, staleTime: 60_000 });
   return {
     rooms: (rooms.data ?? []).filter((r) => r.active).map((r) => ({ value: r.value, label: r.label })),
-    shifts: (shifts.data ?? []).filter((s) => s.active).map((s) => ({ value: s.value, label: `${s.code} · ${s.startTime}–${s.endTime}`, code: s.code, startTime: s.startTime, endTime: s.endTime, scheduleMode: s.scheduleMode })),
+    shifts: (shifts.data ?? []).filter((s) => s.active).map((s) => ({ value: s.value, label: s.label, scheduleMode: s.scheduleMode })),
     roles: (roles.data ?? []).filter((r) => r.active).map((r) => ({ value: r.value, label: r.label })),
   };
 }
