@@ -56,6 +56,7 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
     "0019_kiosk_duty_attendance.sql",
     "0020_them_avatar_data_sinh_trac_hoc.sql",
     "0026_kiosk_biometric_terminal_leases.sql",
+    "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql",
   ])
     await pg.exec(
       readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"),

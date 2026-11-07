@@ -536,6 +536,10 @@ export class DutyRequestService {
   private async resolveException(user: AccessContext, req: typeof dutyRequests.$inferSelect, dto: RequestRespondDto) {
     const replacementId = dto.replacementUserId ?? req.replacementUserId ?? null;
     const removedId = req.targetUserId ?? req.requesterId;
+    // Capture the complete before/after identity and slot context in the immutable log.
+    // The adjustment report must remain useful even if a later cleanup removes a slot or user.
+    const slot = await this.core.getSlot(req.slotId);
+    const people = await this.core.loadUsers(this.db.db, [removedId, replacementId ?? 0]);
     let forced = false;
     let violations: string[] = [];
     await this.db.db.transaction(async (tx) => {
@@ -570,10 +574,26 @@ export class DutyRequestService {
         actorId: user.id,
         userId: removedId,
         reason: req.reason,
-        detail: { replacementUserId: replacementId, forced, violations },
+        detail: {
+          removed: removedId,
+          removedName: people.get(removedId)?.fullName ?? '',
+          added: replacementId,
+          addedName: replacementId ? people.get(replacementId)?.fullName ?? '' : '',
+          actorName: user.fullName,
+          periodName: slot.periodName,
+          room: slot.roomCode,
+          roomName: slot.roomName,
+          shift: slot.shiftCode,
+          shiftName: slot.shiftName,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          roleName: slot.roleName,
+          date: slot.dutyDate,
+          forced,
+          violations,
+        },
       });
     });
-    const slot = await this.core.getSlot(req.slotId);
     const where = `${slot.roomCode} · ${slot.shiftCode} · ${fmtDate(slot.dutyDate)}`;
     this.core.notifyAfterCommit([removedId], { title: 'Ca khám đã được điều chỉnh (ngoại lệ)', body: `${where}. KHTH đã cập nhật bác sĩ khám.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
     if (replacementId) {

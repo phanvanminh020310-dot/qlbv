@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, Plus, ShieldAlert } from "lucide-react";
 import { useState } from "react";
-import { AbsenceInbox } from "@/components/duty/absence-inbox";
 import { AdjustmentHistory } from "@/components/duty/adjustment-history";
 import { DepartmentChangeDialog, OverrideDialog, ReviewDialog, useDutyActions } from "@/components/duty/duty-dialogs";
 import { errorText, RequestStatusBadge } from "@/components/duty/duty-shared";
@@ -24,10 +23,9 @@ export default function YeuCauPage() {
   const actions = useDutyActions();
   const canApprove = can("duty.swap.approve") || can("duty.exception.resolve");
   const isKhth = can("duty.exception.resolve");
-  const canManageAbsence = can("duty.manage") || can("duty.manage-all");
-  const canRequestDepartmentChange = canManageAbsence;
+  const canRequestDepartmentChange = can("duty.manage") || can("duty.manage-all");
   const [selectedTab, setTab] = useState<string>();
-  const tab = selectedTab ?? (canRequestDepartmentChange ? "mine" : canApprove ? "approval" : canManageAbsence ? "absences" : "incoming");
+  const tab = selectedTab ?? (canRequestDepartmentChange ? "mine" : canApprove ? "approval" : "incoming");
   const [review, setReview] = useState<{ row: RequestRow; kind: "approve" | "reject" | "decline" } | null>(null);
   const [override, setOverride] = useState(false);
   const [departmentChange, setDepartmentChange] = useState(false);
@@ -35,7 +33,7 @@ export default function YeuCauPage() {
   useRealtimeInvalidate({ duty: [["duty-requests"], ["duty-adjustments"], ["duty-grid"], ["duty-me"], ["duty-options"]] });
 
   const approval = useQuery({ queryKey: [...DUTY_KEYS.requests, "approval"], queryFn: () => dutyApi.requests("approval"), enabled: canApprove });
-  const all = useQuery({ queryKey: [...DUTY_KEYS.requests, "all"], queryFn: () => dutyApi.requests("all"), enabled: isKhth });
+  const approved = useQuery({ queryKey: [...DUTY_KEYS.requests, "approved"], queryFn: () => dutyApi.requests("all", { status: "DA_DUYET" }), enabled: isKhth });
   const mine = useQuery({ queryKey: [...DUTY_KEYS.requests, "mine"], queryFn: () => dutyApi.requests("mine"), enabled: canRequestDepartmentChange });
 
   const approve = useMutation({
@@ -139,7 +137,6 @@ export default function YeuCauPage() {
   };
 
   const items = [
-    ...(canManageAbsence ? [{ key: "absences", label: "Nghỉ / bận chờ duyệt", content: <AbsenceInbox /> }] : []),
     ...(canRequestDepartmentChange
       ? [{ key: "mine", label: "Yêu cầu đã gửi", badge: counts.mine ? <Badge tone="warning">{counts.mine}</Badge> : undefined, content: <List rows={mine.data} loading={mine.isLoading} empty="Chưa gửi yêu cầu đổi lịch nào" /> }]
       : []),
@@ -155,7 +152,7 @@ export default function YeuCauPage() {
       : []),
     ...(isKhth
       ? [
-          { key: "all", label: "Tất cả", content: <List rows={all.data} loading={all.isLoading} empty="Chưa có yêu cầu nào" /> },
+          { key: "approved", label: "Đã duyệt", content: <List rows={approved.data} loading={approved.isLoading} empty="Chưa có yêu cầu nào đã duyệt" /> },
           { key: "history", label: "Lịch sử điều chỉnh", content: <AdjustmentHistory /> },
         ]
       : []),

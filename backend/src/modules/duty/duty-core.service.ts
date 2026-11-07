@@ -166,6 +166,7 @@ export class DutyCoreService {
       endTime: dutyShiftTypes.endTime,
       crossesMidnight: dutyShiftTypes.crossesMidnight,
       isNight: dutyShiftTypes.isNight,
+      scheduleMode: dutyShiftTypes.scheduleMode,
       shiftColor: dutyShiftTypes.color,
       shiftSort: dutyShiftTypes.sortOrder,
       roleCode: dutyRoles.code,

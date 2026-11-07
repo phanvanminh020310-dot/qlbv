@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   CalendarPlus,
+  CircleAlert,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -419,7 +420,7 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
       footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button disabled={!total || gen.isPending} onClick={() => gen.mutate()}><Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}</Button></>}
     >
       <div className="space-y-4">
-        <CheckGroup label="Phòng khám" items={catalog.rooms} selected={roomIds} onToggle={(v) => toggle(roomIds, v, setRoomIds)} />
+        <CheckGroup label="Phòng khám" items={catalog.rooms} selected={roomIds} onToggle={(v) => toggle(roomIds, v, setRoomIds)} onSelectAll={() => setRoomIds(catalog.rooms.map((room) => room.value))} />
         <div>
           <Label className="mb-1.5 block text-xs">Cách xếp lịch</Label>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -427,7 +428,7 @@ function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: (
           </div>
           <p className="mt-2 text-xs text-[var(--muted-foreground)]">Ca sẽ tạo: {shifts.map((shift) => `${shift.code} (${shift.startTime}–${shift.endTime})`).join(" · ") || "Chưa cấu hình ca thuộc cách xếp này"}</p>
         </div>
-        <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} />
+        <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} onSelectAll={() => setRoleIds(catalog.roles.map((role) => role.value))} />
         <div><Label className="mb-1.5 block text-xs">Các ngày trong tuần</Label><div className="flex flex-wrap gap-1.5">{[1,2,3,4,5,6,7].map((d) => <button key={d} type="button" onClick={() => toggle(weekdays,d,setWeekdays)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${weekdays.includes(d) ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}>{weekdayLabel(d)}</button>)}</div></div>
         <div className="grid gap-3 sm:grid-cols-2"><NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Có thể xếp bác sĩ khác nhau cho từng buổi" /><div className="flex items-end gap-2 pb-2"><Switch checked={skipClosed} onCheckedChange={setSkipClosed} /><span className="text-sm">Bỏ qua ngày nghỉ lễ</span></div></div>
       </div>
@@ -440,17 +441,19 @@ function CheckGroup({
   items,
   selected,
   onToggle,
+  onSelectAll,
 }: {
   label: string;
   items: { value: number; label: string }[];
   selected: number[];
   onToggle: (v: number) => void;
+  onSelectAll: () => void;
 }) {
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
         <Label className="text-xs">{label}</Label>
-        <button type="button" className="text-xs text-[var(--primary)] hover:underline" onClick={() => items.forEach((i) => !selected.includes(i.value) && onToggle(i.value))}>
+        <button type="button" className="text-xs text-[var(--primary)] hover:underline" onClick={onSelectAll}>
           Chọn tất cả
         </button>
       </div>
@@ -488,6 +491,7 @@ function useCatalogOptions(enabled: boolean) {
 function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => void; period: DutyPeriod }) {
   const refresh = useRefreshDuty();
   const catalog = useCatalogOptions(open);
+  const periodGrid = useQuery({ queryKey: DUTY_KEYS.grid(period.id), queryFn: () => dutyApi.grid(period.id), enabled: open });
   const [date, setDate] = useState(period.startDate);
   const [roomId, setRoomId] = useState("");
   const [shiftId, setShiftId] = useState("");
@@ -495,6 +499,12 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
   const [required, setRequired] = useState("1");
   const [switchPrompt, setSwitchPrompt] = useState<"CA_NGAY" | "THEO_BUOI" | null>(null);
   const payload = () => ({ dutyDate: date, roomId: Number(roomId), shiftId: Number(shiftId), roleId: Number(roleId), requiredCount: Number(required) || 1 });
+  const selectedShift = catalog.shifts.find((shift) => shift.value === Number(shiftId));
+  const targetMode = selectedShift?.scheduleMode;
+  const currentModes = new Set((periodGrid.data?.slots ?? [])
+    .filter((slot) => slot.dutyDate === date && slot.roomId === Number(roomId) && slot.roleId === Number(roleId))
+    .map((slot) => slot.scheduleMode));
+  const canNormalizeExisting = (targetMode === "CA_NGAY" && currentModes.has("THEO_BUOI")) || (targetMode === "THEO_BUOI" && currentModes.has("CA_NGAY"));
   const create = useMutation({
     mutationFn: () => dutyApi.createSlot(period.id, payload()),
     onSuccess: () => {
@@ -506,6 +516,8 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
       const message = errorText(e);
       if (message.startsWith("Đổi sang ca Hành chính?")) setSwitchPrompt("CA_NGAY");
       else if (message.startsWith("Đổi sang lịch Theo buổi?")) setSwitchPrompt("THEO_BUOI");
+      // Kỳ cũ có thể đã sinh cả ba ca. Nếu ca đích đã tồn tại, vẫn chuyển qua xác nhận ngắn.
+      else if (message === "Ca khám này đã tồn tại" && canNormalizeExisting) setSwitchPrompt(targetMode);
       else toast.error(message);
     },
   });
@@ -524,14 +536,16 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
     <Dialog
       open={open}
       onClose={onClose}
-      title="Thêm ca khám"
+      title={canNormalizeExisting ? "Chuẩn hóa cách xếp ca" : "Thêm ca khám"}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!roomId || !shiftId || !roleId || create.isPending} onClick={() => create.mutate()}>Thêm ca</Button>
+          <Button disabled={!roomId || !shiftId || !roleId || create.isPending} onClick={() => create.mutate()}>{canNormalizeExisting ? "Đổi cách xếp" : "Thêm ca"}</Button>
         </>
       }
     >
+      <div className="space-y-3">
+        {canNormalizeExisting ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/35 dark:text-amber-100">Vị trí này đang có cả hai cách xếp từ dữ liệu cũ. Chọn cách muốn giữ rồi xác nhận; hệ thống không xóa ngầm.</div> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="s-date">Ngày khám</Label>
@@ -559,6 +573,7 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
           </Select>
         </div>
         <NumField label="Chỉ tiêu bác sĩ" value={Number(required)} onChange={setRequired} hint="Không giới hạn số bác sĩ mà người xếp lịch có thể phân công" />
+      </div>
       </div>
     </Dialog>
     <ConfirmDialog
@@ -746,8 +761,19 @@ export default function KyLichPage() {
     }
   };
 
-  if (!canOversee && !canManage) return <EmptyState title="Trang này dành cho người quản lý lịch khám" />;
   const g = grid.data;
+  const legacyModeConflicts = useMemo(() => {
+    const modes = new Map<string, Set<string>>();
+    for (const slot of g?.slots ?? []) {
+      const key = `${slot.dutyDate}|${slot.roomId}|${slot.roleId}`;
+      const entry = modes.get(key) ?? new Set<string>();
+      entry.add(slot.scheduleMode);
+      modes.set(key, entry);
+    }
+    return [...modes.values()].filter((entry) => entry.has("THEO_BUOI") && entry.has("CA_NGAY")).length;
+  }, [g?.slots]);
+
+  if (!canOversee && !canManage) return <EmptyState title="Trang này dành cho người quản lý lịch khám" />;
 
   return (
     <>
@@ -1095,6 +1121,12 @@ export default function KyLichPage() {
               }
             />
             <CardBody>
+              {legacyModeConflicts && canManage && !selected.locked ? (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/35 dark:text-amber-100">
+                  <div className="flex items-start gap-2"><CircleAlert className="mt-0.5 size-4 shrink-0" /><span>Kỳ này còn <b>{legacyModeConflicts}</b> vị trí cũ có cả lịch Theo buổi và Hành chính. Dữ liệu chưa bị tự xoá.</span></div>
+                  <Button size="sm" variant="outline" onClick={() => setAddingSlot(true)}>Chuẩn hóa cách xếp</Button>
+                </div>
+              ) : null}
               {g ? (
                 <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                   <KpiTile label="Ca khám" value={g.summary.slots} />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, Copy, Search, Sparkles } from "lucide-react";
+import { CalendarDays, Check, Copy, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
@@ -557,19 +557,11 @@ export function ReviewDialog({
 
 /* ================================================================== Điều chỉnh trực tiếp (KHTH) */
 
-function normalizedSlotText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("vi")
-    .replace(/đ/g, "d");
-}
-
 /**
  * The direct-adjustment screen can contain hundreds of slots. A native select
  * flattened date, room, shift and role into one unreadable line, especially on
- * iPhone. Pick a day first, then use tactile, searchable slot cards grouped by
- * clinic room while retaining the exact original slot id for the API.
+ * iPhone. Pick a day, then choose the exact clinic room from a clear list before
+ * touching its shift card; numeric searching never mixes P2 with P12/P22.
  */
 export function OverrideSlotPicker({
   periodId,
@@ -585,15 +577,15 @@ export function OverrideSlotPicker({
   disabled: boolean;
 }) {
   const [date, setDate] = useState("");
-  const [query, setQuery] = useState("");
+  const [roomId, setRoomId] = useState("");
   const dates = useMemo(
     () => [...new Set(slots.map((slot) => slot.dutyDate))].sort((a, b) => a.localeCompare(b)),
     [slots],
   );
 
   useEffect(() => {
-    setQuery("");
     setDate(dates[0] ?? "");
+    setRoomId("");
   }, [periodId]);
 
   useEffect(() => {
@@ -601,23 +593,29 @@ export function OverrideSlotPicker({
     setDate(dates[0] ?? "");
   }, [date, dates]);
 
-  const shownSlots = useMemo(() => {
-    const needle = normalizedSlotText(query.trim());
-    return slots
-      .filter((slot) => !date || slot.dutyDate === date)
-      .filter((slot) => {
-        if (!needle) return true;
-        return normalizedSlotText(
-          `${slot.roomCode} ${slot.roomName} ${slot.shiftCode} ${slot.shiftName} ${slot.startTime} ${slot.endTime} ${slot.roleName}`,
-        ).includes(needle);
-      })
+  const rooms = useMemo(() => {
+    const map = new Map<number, { id: number; code: string; name: string }>();
+    for (const slot of slots) {
+      if (slot.dutyDate === date) map.set(slot.roomId, { id: slot.roomId, code: slot.roomCode, name: slot.roomName });
+    }
+    return [...map.values()].sort((a, b) => a.code.localeCompare(b.code, "vi", { numeric: true }));
+  }, [date, slots]);
+
+  useEffect(() => {
+    if (roomId && rooms.some((room) => String(room.id) === roomId)) return;
+    setRoomId(rooms[0] ? String(rooms[0].id) : "");
+  }, [roomId, rooms]);
+
+  const shownSlots = useMemo(() =>
+    slots
+      .filter((slot) => slot.dutyDate === date && String(slot.roomId) === roomId)
       .sort((a, b) =>
-        `${a.roomCode}\u0000${a.startTime}\u0000${a.shiftCode}\u0000${a.roleName}`.localeCompare(
-          `${b.roomCode}\u0000${b.startTime}\u0000${b.shiftCode}\u0000${b.roleName}`,
+        `${a.startTime}\u0000${a.shiftCode}\u0000${a.roleName}`.localeCompare(
+          `${b.startTime}\u0000${b.shiftCode}\u0000${b.roleName}`,
           "vi",
         ),
-      );
-  }, [date, query, slots]);
+      ),
+  [date, roomId, slots]);
 
   const groups = useMemo(() => {
     const byRoom = new Map<string, GridSlot[]>();
@@ -633,12 +631,12 @@ export function OverrideSlotPicker({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 id="ov-slot-heading" className="text-sm font-semibold">Chọn ca khám cần điều chỉnh</h3>
-          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Chọn ngày rồi chạm vào ô ca tương ứng. Ca được chọn hiển thị rõ phòng, giờ và vị trí.</p>
+          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Chọn ngày, chọn đúng phòng trong danh sách rồi chạm vào ca tương ứng.</p>
         </div>
         {date ? <Badge tone="muted">{shownSlots.length} ca hiển thị</Badge> : null}
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-[minmax(13rem,.85fr)_minmax(16rem,1.15fr)]">
+      <div className="grid gap-2 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="ov-slot-date">Ngày khám</Label>
           <div className="relative">
@@ -662,18 +660,19 @@ export function OverrideSlotPicker({
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="ov-slot-search">Tìm nhanh trong ngày</Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-[var(--muted-foreground)]" />
-            <Input
-              id="ov-slot-search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              disabled={disabled || !date}
-              placeholder="Phòng, ca, giờ hoặc vai trò…"
-              className="pl-8"
-            />
-          </div>
+          <Label htmlFor="ov-slot-room">Phòng khám</Label>
+          <Select
+            id="ov-slot-room"
+            value={roomId}
+            onChange={(event) => {
+              setRoomId(event.target.value);
+              if (value && slots.some((slot) => slot.id === value && String(slot.roomId) !== event.target.value)) onChange(0);
+            }}
+            disabled={disabled || !rooms.length}
+          >
+            {!rooms.length ? <option value="">Chưa có phòng khám trong ngày</option> : null}
+            {rooms.map((room) => <option key={room.id} value={room.id}>{room.code} — {room.name}</option>)}
+          </Select>
         </div>
       </div>
 
@@ -716,7 +715,7 @@ export function OverrideSlotPicker({
             </div>
           );
         })}
-        {date && !shownSlots.length ? <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy ca khám phù hợp trong ngày đã chọn.</div> : null}
+        {date && roomId && !shownSlots.length ? <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">Phòng đã chọn chưa có ca khám phù hợp.</div> : null}
         {!date ? <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">{periodId ? "Kỳ lịch này chưa có ca khám để điều chỉnh." : "Chọn kỳ lịch khám để xem các ca."}</div> : null}
       </div>
     </section>

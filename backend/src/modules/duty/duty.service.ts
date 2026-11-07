@@ -1136,6 +1136,7 @@ export class DutyService {
       startTime: s.startTime,
       endTime: s.endTime,
       isNight: s.isNight,
+      scheduleMode: s.scheduleMode,
       hours: iv.hours,
       start: iv.start,
       end: iv.end,
@@ -1925,15 +1926,21 @@ export class DutyService {
       throw new BadRequestException('Ngày bắt đầu không thể sau ngày kết thúc');
     }
 
-    const where: SQL[] = [eq(dutyLogs.action, 'OVERRIDE')];
+    const where: SQL[] = [inArray(dutyLogs.action, ['OVERRIDE', 'EXCEPTION'])];
     if (q.periodId) where.push(eq(dutyLogs.periodId, q.periodId));
     if (q.from) where.push(gte(dutyLogs.createdAt, new Date(`${q.from}T00:00:00+07:00`)));
     if (q.to) where.push(lte(dutyLogs.createdAt, new Date(`${q.to}T23:59:59.999+07:00`)));
 
     // JSON values are snapshot ids from the original transaction. `nullif`
     // keeps historical rows with a removal-only/addition-only action readable.
-    const removedId = sql<number | null>`nullif(nullif(${dutyLogs.detail}->>'removed', 'null'), '')::integer`;
-    const addedId = sql<number | null>`nullif(nullif(${dutyLogs.detail}->>'added', 'null'), '')::integer`;
+    const removedId = sql<number | null>`coalesce(
+      nullif(nullif(${dutyLogs.detail}->>'removed', 'null'), '')::integer,
+      case when ${dutyLogs.action} = 'EXCEPTION' then ${dutyLogs.userId} else null end
+    )`;
+    const addedId = sql<number | null>`coalesce(
+      nullif(nullif(${dutyLogs.detail}->>'added', 'null'), '')::integer,
+      nullif(nullif(${dutyLogs.detail}->>'replacementUserId', 'null'), '')::integer
+    )`;
     const rows = await this.db.db
       .select({
         id: dutyLogs.id,

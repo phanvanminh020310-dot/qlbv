@@ -45,6 +45,7 @@ test("live monitor shows only exact-active, published roster and preserves depar
     "0017_lich_truc_mau_ca.sql",
     "0019_kiosk_duty_attendance.sql",
     "0026_kiosk_biometric_terminal_leases.sql",
+    "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql",
   ]) {
     await pg.exec(readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"));
   }

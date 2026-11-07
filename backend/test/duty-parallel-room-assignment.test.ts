@@ -37,7 +37,7 @@ test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phé
   const dutyDate = bangkokFutureDate();
   const pg = await PGlite.create();
   t.after(() => pg.close());
-  for (const file of ["0000_init_khoi_tao.sql", "0015_lich_truc.sql"]) {
+  for (const file of ["0000_init_khoi_tao.sql", "0015_lich_truc.sql", "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql"]) {
     await pg.exec(readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"));
   }
   await pg.exec(`

@@ -27,6 +27,7 @@ test("PostgreSQL: direct doctor adjustments remain reportable and exportable aft
     "0000_init_khoi_tao.sql",
     "0015_lich_truc.sql",
     "0027_lich_su_dieu_chinh_bac_si_kham.sql",
+    "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql",
   ]) await pg.exec(migration(file));
   // The reporting index migration is deliberately safe for one-command retries.
   await pg.exec(migration("0027_lich_su_dieu_chinh_bac_si_kham.sql"));

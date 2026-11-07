@@ -35,7 +35,7 @@ function doctorChange(row: AdjustmentHistoryItem) {
   );
 }
 
-/** KHTH report view for immutable duty_logs action=OVERRIDE records. */
+/** KHTH report view for immutable direct adjustments and approved replacement requests. */
 export function AdjustmentHistory() {
   const [periodId, setPeriodId] = useState(0);
   const [query, setQuery] = useState("");
@@ -80,9 +80,9 @@ export function AdjustmentHistory() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold">Lịch sử điều chỉnh trực tiếp bác sĩ khám</h3>
+          <h3 className="text-sm font-semibold">Lịch sử điều chỉnh bác sĩ khám</h3>
           <p className="mt-0.5 max-w-3xl text-xs leading-relaxed text-[var(--muted-foreground)]">
-            Mỗi lần KHTH gỡ hoặc xếp bác sĩ qua chức năng Điều chỉnh trực tiếp được lưu bất biến cùng phòng, ca, người trước/sau, lý do và người thực hiện.
+            Mỗi lần KHTH đổi bác sĩ trực tiếp hoặc duyệt yêu cầu đổi lịch được lưu bất biến cùng phòng, ca, người trước/sau, lý do và người thực hiện.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={exportExcel} disabled={history.isLoading}>
@@ -123,8 +123,8 @@ export function AdjustmentHistory() {
       {history.isError ? <EmptyState title="Không tải được lịch sử điều chỉnh" description="Vui lòng thử lại hoặc kiểm tra quyền Điều phối lịch khám." /> : null}
       {!history.isLoading && !history.isError && !rows.length ? (
         <EmptyState
-          title="Chưa có điều chỉnh trực tiếp"
-          description={periodId ? "Kỳ lịch đã chọn chưa có thao tác KHTH gỡ/xếp bác sĩ trực tiếp." : "Các điều chỉnh trực tiếp của KHTH sẽ xuất hiện tại đây."}
+          title="Chưa có lịch sử điều chỉnh"
+          description={periodId ? "Kỳ lịch đã chọn chưa có thao tác KHTH đổi bác sĩ." : "Các điều chỉnh trực tiếp và yêu cầu đổi lịch đã duyệt sẽ xuất hiện tại đây."}
         />
       ) : null}
 

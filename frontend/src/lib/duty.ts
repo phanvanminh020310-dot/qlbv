@@ -68,6 +68,7 @@ export interface GridSlot {
   startTime: string;
   endTime: string;
   isNight: boolean;
+  scheduleMode: ShiftScheduleMode;
   hours: number;
   start: number;
   end: number;
@@ -496,8 +497,12 @@ export const dutyApi = {
   approveAbsence: (id: number, body: Json) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/approve`, body),
   rejectAbsence: (id: number, note: string) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/reject`, { note }),
   cancelAbsence: (id: number) => post<{ ok: boolean }>(`/duty/absence-requests/${id}/cancel`, {}),
-  requests: (box: 'mine' | 'incoming' | 'approval' | 'all', periodId?: number) =>
-    get<RequestRow[]>(`/duty/requests?box=${box}${periodId ? `&periodId=${periodId}` : ''}`),
+  requests: (box: 'mine' | 'incoming' | 'approval' | 'all', options?: { periodId?: number; status?: RequestStatus }) => {
+    const qs = new URLSearchParams({ box });
+    if (options?.periodId) qs.set('periodId', String(options.periodId));
+    if (options?.status) qs.set('status', options.status);
+    return get<RequestRow[]>(`/duty/requests?${qs.toString()}`);
+  },
   createRequest: (body: Json) => post<RequestRow>('/duty/requests', body),
   createDepartmentChange: (body: Json) => post<RequestRow>('/duty/requests/department-change', body),
   acceptRequest: (id: number) => post<{ ok: boolean; status: string; reason: string }>(`/duty/requests/${id}/accept`),
