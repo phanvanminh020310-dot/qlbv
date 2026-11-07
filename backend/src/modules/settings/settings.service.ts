@@ -89,6 +89,35 @@ export class SettingsService implements OnModuleInit {
     return Math.min(64, Math.max(1, Math.floor(v)));
   }
 
+  /**
+   * Chính sách giữ bộ backup đầy đủ. Không cho thấp hơn 3 để một lỗi chỉ được
+   * phát hiện muộn vẫn còn ít nhất ba điểm khôi phục cục bộ.
+   */
+  async backupKeepCount(): Promise<number> {
+    return this.boundedNumber('backup.keepCount', 3, 3, 365);
+  }
+
+  /** Số ngày giữ tệp xuất tạm (Excel/PDF/Studio), không bao giờ áp dụng lên uploads. */
+  async exportRetentionDays(): Promise<number> {
+    return this.boundedNumber('backup.exportRetentionDays', 30, 1, 3650);
+  }
+
+  /** File .partial/.building cũ hơn mốc này mới được coi là rác sau khi backup lỗi/ngắt. */
+  async backupTemporaryRetentionHours(): Promise<number> {
+    return this.boundedNumber('backup.temporaryRetentionHours', 24, 1, 24 * 30);
+  }
+
+  /** Lịch sử chạy tác vụ là log vận hành, có thể dọn an toàn; nhật ký kiểm toán không bị dọn. */
+  async jobRunRetentionDays(): Promise<number> {
+    return this.boundedNumber('backup.jobRunRetentionDays', 90, 30, 3650);
+  }
+
+  private async boundedNumber(key: string, fallback: number, min: number, max: number): Promise<number> {
+    const value = Number(await this.get<number>(key, fallback));
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(max, Math.max(min, Math.floor(value)));
+  }
+
   async getMany(keys: string[]): Promise<Record<string, unknown>> {
     if (keys.length === 0) return {};
     const rows = await this.db.db
@@ -99,15 +128,16 @@ export class SettingsService implements OnModuleInit {
   }
 
   async set(item: SettingItem, userId?: number) {
+    const value = this.normalizeManagedValue(item.key, item.value);
     await this.db.db
       .insert(settings)
       .values({
         key: item.key,
-        value: item.value as never,
+        value: value as never,
         group: item.group ?? 'general',
         label: item.label ?? '',
         description: item.description ?? '',
-        valueType: item.valueType ?? this.inferType(item.value),
+        valueType: item.valueType ?? this.inferType(value),
         isPublic: item.isPublic ?? false,
         updatedBy: userId ?? null,
         updatedAt: new Date(),
@@ -115,7 +145,7 @@ export class SettingsService implements OnModuleInit {
       .onConflictDoUpdate({
         target: settings.key,
         set: {
-          value: item.value as never,
+          value: value as never,
           ...(item.group !== undefined ? { group: item.group } : {}),
           ...(item.label !== undefined ? { label: item.label } : {}),
           ...(item.description !== undefined ? { description: item.description } : {}),
@@ -126,7 +156,22 @@ export class SettingsService implements OnModuleInit {
         },
       });
     await this.invalidate(item.key);
-    return { key: item.key, value: item.value };
+    return { key: item.key, value };
+  }
+
+  /** Chặn giá trị giữ/dọn nguy hiểm ngay tại API, không chỉ lúc công việc chạy. */
+  private normalizeManagedValue(key: string, value: unknown): unknown {
+    const policies: Record<string, { fallback: number; min: number; max: number }> = {
+      'backup.keepCount': { fallback: 3, min: 3, max: 365 },
+      'backup.exportRetentionDays': { fallback: 30, min: 1, max: 3650 },
+      'backup.temporaryRetentionHours': { fallback: 24, min: 1, max: 24 * 30 },
+      'backup.jobRunRetentionDays': { fallback: 90, min: 30, max: 3650 },
+    };
+    const policy = policies[key];
+    if (!policy) return value;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return policy.fallback;
+    return Math.min(policy.max, Math.max(policy.min, Math.floor(numeric)));
   }
 
   async setMany(items: SettingItem[], userId?: number) {
@@ -290,6 +335,40 @@ export function defaultSettings(): SettingItem[] {
       description: 'Độ tương đồng tối thiểu để hệ thống cảnh báo và từ chối nếu khuôn mặt đăng ký trùng với nhân sự khác trong bệnh viện (chống mượn mặt đồng nghiệp).',
       valueType: 'number',
       isPublic: false,
+    },
+
+    // Sao lưu & vệ sinh lưu trữ. Các giới hạn được ép ở server để không vô tình xoá hết điểm khôi phục.
+    {
+      key: 'backup.keepCount',
+      value: 3,
+      group: 'backup',
+      label: 'Số bộ sao lưu đầy đủ cần giữ',
+      description: 'Giữ số bộ mới nhất gồm CSDL, tệp HSBA/phông tải lên và ảnh khuôn mặt. Tối thiểu 3 để luôn còn điểm khôi phục an toàn.',
+      valueType: 'number',
+    },
+    {
+      key: 'backup.exportRetentionDays',
+      value: 30,
+      group: 'backup',
+      label: 'Số ngày giữ tệp kết xuất tạm',
+      description: 'Áp dụng cho Excel/PDF/ấn bản Studio đã xuất. Không áp dụng lên tệp HSBA, ảnh khuôn mặt hoặc dữ liệu tải lên.',
+      valueType: 'number',
+    },
+    {
+      key: 'backup.temporaryRetentionHours',
+      value: 24,
+      group: 'backup',
+      label: 'Số giờ giữ tệp dở dang',
+      description: 'Chỉ dọn tệp .partial/.building do sao lưu hoặc tải lên bị ngắt; tệp backup hoàn chỉnh không bị dọn theo mục này.',
+      valueType: 'number',
+    },
+    {
+      key: 'backup.jobRunRetentionDays',
+      value: 90,
+      group: 'backup',
+      label: 'Số ngày giữ lịch sử chạy tác vụ',
+      description: 'Dọn lịch sử kỹ thuật của tác vụ nền sau thời hạn này; nhật ký kiểm toán nghiệp vụ không bị xóa.',
+      valueType: 'number',
     },
 
     // Hệ thống

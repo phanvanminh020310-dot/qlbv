@@ -37,6 +37,7 @@ const GROUP_LABEL: Record<string, string> = {
   export: "Kết xuất tệp",
   notification: "Thông báo",
   kiosk: "Kiosk & Điểm danh",
+  backup: "Sao lưu & lưu trữ",
   system: "Hệ thống",
 };
 
@@ -48,6 +49,7 @@ const GROUP_ICON: Record<string, string> = {
   export: "📤",
   notification: "🔔",
   kiosk: "🖥️",
+  backup: "💾",
   system: "⚙️",
 };
 

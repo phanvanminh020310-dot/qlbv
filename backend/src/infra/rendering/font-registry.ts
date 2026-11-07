@@ -10,6 +10,7 @@
  *  - Font tải lên lưu ở `${STORAGE_DIR}/fonts` (nằm trong volume dữ liệu → không mất khi cập nhật).
  */
 import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import fontkit from '@pdf-lib/fontkit';
@@ -337,11 +338,20 @@ export function saveCustomFont(buf: Buffer, originalName: string) {
   fs.mkdirSync(dir, { recursive: true });
   const safeFamily = info.family.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '') || 'font';
   const fileName = `${safeFamily}-${info.variant}${ext}`;
-  // Xoá tệp cũ cùng họ + kiểu (khác phần mở rộng)
-  for (const e of fontRegistry.customFiles()) {
-    if (e.family === info.family && e.variant === info.variant && fs.existsSync(e.file)) fs.unlinkSync(e.file);
+  const finalPath = path.join(dir, fileName);
+  const temporaryPath = `${finalPath}.qlbs-write-${randomUUID()}.partial`;
+  try {
+    fs.writeFileSync(temporaryPath, buf, { mode: 0o600 });
+    fs.renameSync(temporaryPath, finalPath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
   }
-  fs.writeFileSync(path.join(dir, fileName), buf);
+  // Xoá tệp cũ cùng họ + kiểu (khác phần mở rộng) chỉ SAU khi phiên bản mới đã công bố.
+  for (const e of fontRegistry.customFiles()) {
+    if (e.family === info.family && e.variant === info.variant && path.resolve(e.file) !== path.resolve(finalPath) && fs.existsSync(e.file)) {
+      fs.unlinkSync(e.file);
+    }
+  }
   fontRegistry.invalidate();
   return { ...info, fileName, size: buf.length };
 }

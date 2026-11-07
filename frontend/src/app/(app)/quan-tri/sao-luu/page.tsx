@@ -26,7 +26,12 @@ import { formatDateTime, formatNumber } from '@/lib/utils';
 
 interface BackupItem {
   name: string;
+  /** Tổng dung lượng bộ backup: JSON CSDL + archive uploads nếu có. */
   size: number;
+  databaseSize: number;
+  storageName: string | null;
+  storageSize: number;
+  storageIncluded: boolean;
   createdAt: string;
   kind: 'normal' | 'pre-restore' | 'uploaded';
   legacy: boolean;
@@ -39,16 +44,19 @@ interface BackupList {
   totalSize: number;
   diskFree: number | null;
   restoring: boolean;
+  retention: { keepCount: number; exportRetentionDays: number; temporaryRetentionHours: number };
 }
 
 interface BackupDetail {
   name: string;
   size: number;
+  databaseSize: number;
   createdAt: string;
   version: number;
   tables: number;
   totalRows: number;
   counts: Record<string, number>;
+  storage: { included: boolean; fileName: string | null; size: number };
   restorable: boolean;
   reason?: string;
 }
@@ -114,6 +122,7 @@ export default function BackupsPage() {
   const [detailName, setDetailName] = useState<string | null>(null);
   const [restoreName, setRestoreName] = useState<string | null>(null);
   const [deleteName, setDeleteName] = useState<string | null>(null);
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [confirm, setConfirm] = useState('');
 
   const canCreate = can('backup.create');
@@ -141,6 +150,17 @@ export default function BackupsPage() {
       await refresh();
     },
     onError: (err) => toast.error((err as Error).message, { id: 'backup', duration: 10000 }),
+  });
+
+  const cleanup = useMutation({
+    mutationFn: () => apiFetch<{ message: string }>("/backups/cleanup", { method: "POST" }),
+    onMutate: () => toast.loading("Đang dọn theo chính sách lưu trữ…", { id: "backup-cleanup" }),
+    onSuccess: async (res) => {
+      toast.success(res.message, { id: "backup-cleanup", duration: 8000 });
+      setConfirmCleanup(false);
+      await refresh();
+    },
+    onError: (err) => toast.error((err as Error).message, { id: "backup-cleanup", duration: 10000 }),
   });
 
   const upload = useMutation({
@@ -205,18 +225,31 @@ export default function BackupsPage() {
     }
   };
 
+  const downloadStorage = async (name: string, storageName: string) => {
+    try {
+      await downloadFile(`/backups/${encodeURIComponent(name)}/storage/download`, storageName);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const items = data?.items ?? [];
 
   return (
     <div>
       <PageHeader
         title="Sao lưu & phục hồi"
-        description="Tạo bản sao lưu toàn bộ dữ liệu, tải về máy để cất giữ, hoặc phục hồi hệ thống về một thời điểm trước đó."
+        description="Sao lưu đầy đủ CSDL và tệp lưu trữ; tự xoay vòng an toàn theo cấu hình, tải về hoặc phục hồi hệ thống về một thời điểm trước đó."
         actions={
           <>
             <Button variant="outline" onClick={() => refetch()} loading={isFetching && !isLoading}>
               <RefreshCw /> Làm mới
             </Button>
+            {canCreate ? (
+              <Button variant="outline" onClick={() => setConfirmCleanup(true)} loading={cleanup.isPending}>
+                <Trash2 /> Dọn theo chính sách
+              </Button>
+            ) : null}
             {canRestore ? (
               <>
                 <input
@@ -263,7 +296,7 @@ export default function BackupsPage() {
             ). Nếu máy chủ hỏng ổ đĩa, các bản này cũng mất — hãy <b>tải về</b> định kỳ và cất ở nơi khác.
           </div>
           <div className="text-xs opacity-80">
-            Hệ thống tự sao lưu theo lịch ở mục <i>Tác vụ định kỳ</i> (mặc định 23:30 hằng ngày, giữ 14 bản mới nhất).
+            Mỗi bộ mới gồm CSDL và tệp lưu trữ (HSBA, phông, ảnh khuôn mặt). Hệ thống chạy lúc 23:30 hằng ngày, đang giữ {data?.retention?.keepCount ?? 3} bộ mới nhất; chỉnh tại <i>Cấu hình hệ thống → Sao lưu & lưu trữ</i>.
           </div>
         </div>
       </div>
@@ -298,6 +331,9 @@ export default function BackupsPage() {
                     <Td className="whitespace-nowrap">{formatDateTime(item.createdAt)}</Td>
                     <Td>
                       <span className="font-mono text-xs break-all">{item.name}</span>
+                      <div className={`mt-0.5 text-[10px] ${item.storageIncluded ? 'text-teal-700 dark:text-teal-300' : 'text-[var(--muted-foreground)]'}`}>
+                        {item.storageIncluded ? `Đầy đủ: CSDL + tệp lưu trữ (${formatSize(item.storageSize)})` : 'Chỉ có phần CSDL / định dạng cũ'}
+                      </div>
                     </Td>
                     <Td>
                       <KindBadge item={item} />
@@ -350,8 +386,13 @@ export default function BackupsPage() {
           detailName ? (
             <>
               <Button variant="outline" onClick={() => download(detailName)}>
-                <Download /> Tải về
+                <Download /> Tải CSDL
               </Button>
+              {detail?.storage.included && detail.storage.fileName ? (
+                <Button variant="outline" onClick={() => downloadStorage(detailName, detail.storage.fileName!)}>
+                  <Download /> Tải tệp lưu trữ
+                </Button>
+              ) : null}
               {canRestore && detail?.restorable ? (
                 <Button
                   variant="danger"
@@ -433,6 +474,16 @@ export default function BackupsPage() {
       </Dialog>
 
       <ConfirmDialog
+        open={confirmCleanup}
+        title="Dọn theo chính sách lưu trữ"
+        message={`Chỉ giữ ${data?.retention?.keepCount ?? 3} bộ backup mới nhất và xoá tệp QLBS ghi dở dang đã quá ${data?.retention?.temporaryRetentionHours ?? 24} giờ. Tệp HSBA, ảnh khuôn mặt, phông, uploads hoàn chỉnh và dữ liệu CSDL không bị xoá.`}
+        confirmText="Dọn an toàn"
+        loading={cleanup.isPending}
+        onConfirm={() => cleanup.mutate()}
+        onClose={() => setConfirmCleanup(false)}
+      />
+
+      <ConfirmDialog
         open={!!deleteName}
         title="Xoá bản sao lưu"
         message={
@@ -484,6 +535,15 @@ function DetailBody({
           <div className="font-medium">{formatSize(detail.size)}</div>
         </div>
       </div>
+      {detail.storage.included ? (
+        <div className="rounded-lg border border-teal-300/70 bg-teal-50 p-2 text-xs text-teal-900 dark:bg-teal-950/40 dark:text-teal-200">
+          Bộ đầy đủ: CSDL ({formatSize(detail.databaseSize)}) và tệp lưu trữ ({formatSize(detail.storage.size)}) gồm file HSBA, phông tải lên và ảnh khuôn mặt.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          Bản cũ chỉ có phần CSDL. Ảnh khuôn mặt vẫn được phục hồi từ dữ liệu sinh trắc học trong CSDL; tệp đính kèm HSBA/phông không có archive đi kèm.
+        </div>
+      )}
       {!detail.restorable ? (
         <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           {detail.reason ?? 'Bản sao lưu này không phục hồi được'}

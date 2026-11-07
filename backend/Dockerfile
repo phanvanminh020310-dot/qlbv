@@ -27,7 +27,8 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # fontconfig + dejavu để PDF/bản in có đủ ký tự tiếng Việt khi dùng font hệ thống
-RUN apk add --no-cache tini fontconfig ttf-dejavu && fc-cache -f
+# tar được dùng để tạo/phục hồi archive STORAGE_DIR đi kèm mỗi bộ sao lưu đầy đủ.
+RUN apk add --no-cache tini fontconfig ttf-dejavu tar && fc-cache -f
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle

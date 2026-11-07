@@ -830,7 +830,15 @@ export class HsbaService {
     const relPath = path.join('hsba', String(id), `${randomUUID()}${ATTACHMENT_MIME[mime]}`);
     const absPath = path.join(config.storage.dir, relPath);
     await fs.mkdir(path.dirname(absPath), { recursive: true });
-    await fs.writeFile(absPath, buffer);
+    // Chỉ công bố tệp HSBA sau khi ghi xong: backup chạy đồng thời sẽ thấy tệp cũ
+    // hoặc tệp hoàn chỉnh, không bao giờ archive một PDF/Word đang ghi dở.
+    const temporaryPath = `${absPath}.qlbs-write-${randomUUID()}.partial`;
+    try {
+      await fs.writeFile(temporaryPath, buffer, { mode: 0o600 });
+      await fs.rename(temporaryPath, absPath);
+    } finally {
+      await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
 
     const [row] = await this.db.db
       .insert(hsbaAttachments)

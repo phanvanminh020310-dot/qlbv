@@ -49,6 +49,17 @@ import type {
   ClientMeta,
 } from "../../common/types/access-context";
 
+/** Công bố ảnh khuôn mặt nguyên vẹn để backup/đọc đồng thời không thấy file đang ghi dở. */
+function writeStorageFileAtomically(filePath: string, content: Buffer): void {
+  const temporary = `${filePath}.qlbs-write-${crypto.randomUUID()}.partial`;
+  try {
+    fs.writeFileSync(temporary, content, { mode: 0o600 });
+    fs.renameSync(temporary, filePath);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
 export interface KioskSession {
   sessionId: string;
   roomCode: string;
@@ -293,7 +304,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
             let b64 = rec.avatarData;
             if (b64.includes(",")) b64 = b64.split(",")[1];
             if (b64) {
-              fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
+              writeStorageFileAtomically(filePath, Buffer.from(b64, "base64"));
               restoredCount++;
             }
           } catch (e) {
@@ -2891,7 +2902,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
     const filePath = path.join(this.uploadDir, filename);
-    fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
+    writeStorageFileAtomically(filePath, Buffer.from(b64, "base64"));
 
     const avatarDataUrl = imageBase64.startsWith("data:image")
       ? imageBase64
@@ -3020,7 +3031,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       }
 
       const filePath = path.join(this.uploadDir, `user_${userId}_avatar.jpg`);
-      fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
+      writeStorageFileAtomically(filePath, Buffer.from(b64, "base64"));
       this.logger.log(
         `Đã tự động khôi phục ảnh chân dung ra đĩa cho bác sĩ userId=${userId}`,
       );

@@ -20,9 +20,11 @@ import { jobRuns, scheduledJobs } from '../../db/schema';
 import type { JobStatus } from '../../db/schema/types';
 import { buildPage, type AdvancedQueryDto, type Paginated, parseFilters } from '../../common/dto/query.dto';
 import { CacheService } from '../../infra/cache/cache.service';
+import { MaintenanceService } from '../../infra/maintenance/maintenance.service';
 import type { JobContext, JobHandler, JobResult } from '../../infra/queue/queue.service';
 import { QueueService } from '../../infra/queue/queue.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { SettingsService } from '../settings/settings.service';
 import { builtinHandlers, registerBuiltinHandlers } from './handlers';
 
 export interface UpsertJobDto {
@@ -43,7 +45,7 @@ const HANDLER_LABELS: Record<string, string> = {
   'cache.warm': 'Làm nóng bộ đệm',
   'cache.cleanup': 'Dọn dẹp bộ đệm',
   'session.cleanup': 'Dọn phiên đăng nhập',
-  'storage.cleanup': 'Dọn tệp kết xuất quá hạn',
+  'storage.cleanup': 'Dọn tệp kết xuất & rác sao lưu',
   'audit.digest': 'Tổng hợp nhật ký hoạt động',
   'report.daily-digest': 'Nhắc nhập báo cáo hằng ngày',
   'report.snapshot': 'Chốt số liệu báo cáo kỳ',
@@ -55,7 +57,7 @@ const HANDLER_DESCRIPTIONS: Record<string, string> = {
   'cache.warm': 'Nạp sẵn danh mục khoa, vai trò vào bộ đệm cho trang chủ tải nhanh hơn',
   'cache.cleanup': 'Xoá các khoá bộ đệm tạm',
   'session.cleanup': 'Thu hồi phiên đăng nhập của tài khoản đã bị vô hiệu hoá',
-  'storage.cleanup': 'Xoá tệp kết xuất/sao lưu cũ hơn số ngày lưu trữ',
+  'storage.cleanup': 'Dọn tệp xuất quá hạn, tệp backup dở dang và xoay vòng các bộ backup đầy đủ',
   'audit.digest': 'Tổng hợp số liệu thao tác trong 24 giờ qua',
   'report.daily-digest': 'Liệt kê các khoa chưa nhập số liệu báo cáo trong ngày',
   'report.snapshot': 'Kiểm tra và chốt số liệu báo cáo của kỳ đã kết thúc',
@@ -91,6 +93,8 @@ export class SchedulerService implements OnModuleInit, OnApplicationBootstrap {
     private readonly cache: CacheService,
     private readonly queue: QueueService,
     private readonly realtime: RealtimeService,
+    private readonly settings: SettingsService,
+    private readonly maintenance: MaintenanceService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -99,6 +103,8 @@ export class SchedulerService implements OnModuleInit, OnApplicationBootstrap {
       db: this.db,
       cache: this.cache,
       logger: this.logger,
+      settings: this.settings,
+      maintenance: this.maintenance,
       realtime: this.realtime,
     });
 
@@ -454,7 +460,7 @@ export class SchedulerService implements OnModuleInit, OnApplicationBootstrap {
 
   /** Danh mục hàm xử lý có sẵn — gợi ý khi tạo tác vụ mới */
   availableHandlers() {
-    return [...builtinHandlers({ db: this.db, cache: this.cache, logger: this.logger, realtime: this.realtime }).keys()].map(
+    return [...builtinHandlers({ db: this.db, cache: this.cache, logger: this.logger, settings: this.settings, maintenance: this.maintenance, realtime: this.realtime }).keys()].map(
       (code) => ({
         code,
         label: HANDLER_LABELS[code] ?? code,

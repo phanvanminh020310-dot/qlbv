@@ -1,12 +1,12 @@
 /**
- * Sao lưu & phục hồi CSDL từ giao diện.
+ * Sao lưu & phục hồi đầy đủ từ giao diện.
  *
- * - Bản sao lưu là tệp `qlbs-*.json.gz` do hàm xử lý `db.backup` tạo ra (xem
- *   scheduler/handlers.ts) nằm trong `BACKUPS_DIR` (Docker: ./data/backups trên máy chủ).
- * - Phục hồi = thay TOÀN BỘ dữ liệu hiện tại bằng dữ liệu trong bản sao lưu, chạy trong
- *   MỘT giao dịch: lỗi ở bất kỳ bảng nào → quay lui, dữ liệu hiện tại giữ nguyên.
- * - Trước khi phục hồi luôn tự tạo một bản sao lưu an toàn (`…-truoc-phuc-hoi.json.gz`)
- *   để có thể quay lại trạng thái ngay trước đó.
+ * - Mỗi backup mới có JSON CSDL + archive STORAGE_DIR (tệp HSBA, phông, ảnh mặt)
+ *   trong BACKUPS_DIR (Docker: ./data/backups trên máy chủ).
+ * - Phục hồi CSDL chạy trong MỘT giao dịch; archive storage được kiểm tra trước,
+ *   phục hồi trong maintenance và luôn có archive an toàn trước phục hồi.
+ * - Backup JSON cũ/tải lên vẫn được đọc tương thích; ảnh khuôn mặt vẫn được dựng
+ *   lại từ avatar_data trong CSDL như cơ chế trước đây.
  */
 import {
   BadRequestException,
@@ -28,13 +28,26 @@ import { scheduledJobs, userBiometrics } from '../../db/schema';
 import { CacheService } from '../../infra/cache/cache.service';
 import { MaintenanceService } from '../../infra/maintenance/maintenance.service';
 import { QueueService } from '../../infra/queue/queue.service';
-import { backupFileName, rotateBackups, writeBackup, type SqlExecutor } from './backup-writer';
+import {
+  backupFileName,
+  bundleArtifactNames,
+  cleanupBackupTemporaryArtifacts,
+  cleanupStorageWriteTemporaryArtifacts,
+  restoreStorageArchive,
+  rotateBackups,
+  storageArchiveFileName,
+  validateStorageArchive,
+  writeBackup,
+  writeStorageArchive,
+  type SqlExecutor,
+} from './backup-writer';
 import { AuditService } from '../audit/audit.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
+import { SettingsService } from '../settings/settings.service';
 import type { AccessContext } from '../../common/types/access-context';
 
 /** Tên tệp hợp lệ (chặn đi ra ngoài thư mục sao lưu) */
-const FILE_RE = /^qlbs-[A-Za-z0-9._-]+\.json(\.gz)?$/;
+const FILE_RE = /^qlbs-(?!.*\.manifest\.json$)[A-Za-z0-9._-]+\.json(\.gz)?$/;
 /** Bảng không bao giờ ghi đè khi phục hồi: lịch sử migration phải khớp với mã nguồn hiện tại */
 const NEVER_RESTORE = new Set(['_qlbs_migrations']);
 /** Cụm từ người dùng phải gõ để xác nhận phục hồi */
@@ -84,6 +97,7 @@ export class BackupsService {
     private readonly audit: AuditService,
     private readonly scheduler: SchedulerService,
     private readonly maintenance: MaintenanceService,
+    private readonly settings: SettingsService,
   ) {}
 
   private get dir(): string {
@@ -99,18 +113,42 @@ export class BackupsService {
     return full;
   }
 
+  /**
+   * Giữ inode archive nguồn trong suốt restore. Điều này chặn race rất hẹp với
+   * một db.backup đã bắt đầu trước maintenance và đang xoay vòng file gốc.
+   * Hard link không tốn thêm dung lượng; copy là phương án dự phòng an toàn.
+   */
+  private holdStorageArchive(source: string): string {
+    const held = path.join(this.dir, `qlbs-restore-source-${Date.now()}-${process.pid}.hold`);
+    try {
+      fs.linkSync(source, held);
+    } catch {
+      fs.copyFileSync(source, held);
+      fs.chmodSync(held, 0o600);
+    }
+    return held;
+  }
+
   /* ------------------------------------------------------------------ Danh sách */
 
-  list() {
+  async list() {
     fs.mkdirSync(this.dir, { recursive: true });
     const items = fs
       .readdirSync(this.dir)
       .filter((f) => FILE_RE.test(f))
       .map((f) => {
         const st = fs.statSync(path.join(this.dir, f));
+        const storageName = storageArchiveFileName(f);
+        const storagePath = path.join(this.dir, storageName);
+        const storageSize = fs.existsSync(storagePath) ? fs.statSync(storagePath).size : 0;
         return {
           name: f,
-          size: st.size,
+          // size là bộ đầy đủ để dashboard phản ánh đúng chỗ đĩa, không chỉ JSON CSDL.
+          size: st.size + storageSize,
+          databaseSize: st.size,
+          storageName: storageSize ? storageName : null,
+          storageSize,
+          storageIncluded: storageSize > 0,
           createdAt: st.mtime.toISOString(),
           kind: f.includes('truoc-phuc-hoi') ? 'pre-restore' : f.includes('tai-len') ? 'uploaded' : 'normal',
           // Bản cũ (JSON không nén, trước bản vá) chỉ chứa 17 bảng danh mục → không phục hồi được
@@ -126,7 +164,20 @@ export class BackupsService {
     } catch {
       /* statfs không khả dụng */
     }
-    return { dir: this.dir, items, total: items.length, totalSize, diskFree, restoring: this.restoring };
+    const [keepCount, exportRetentionDays, temporaryRetentionHours] = await Promise.all([
+      this.settings.backupKeepCount(),
+      this.settings.exportRetentionDays(),
+      this.settings.backupTemporaryRetentionHours(),
+    ]);
+    return {
+      dir: this.dir,
+      items,
+      total: items.length,
+      totalSize,
+      diskFree,
+      restoring: this.restoring,
+      retention: { keepCount, exportRetentionDays, temporaryRetentionHours },
+    };
   }
 
   /* ------------------------------------------------------------ Đọc nội dung */
@@ -158,15 +209,24 @@ export class BackupsService {
     const counts: Record<string, number> = {};
     for (const [t, rows] of Object.entries(data.tables)) counts[t] = Array.isArray(rows) ? rows.length : 0;
     const check = this.restorable(data);
+    const storageName = storageArchiveFileName(path.basename(full));
+    const storagePath = path.join(this.dir, storageName);
+    const storageSize = fs.existsSync(storagePath) ? fs.statSync(storagePath).size : 0;
     return {
       name: path.basename(full),
-      size: fs.statSync(full).size,
+      size: fs.statSync(full).size + storageSize,
+      databaseSize: fs.statSync(full).size,
       createdAt: data.createdAt ?? fs.statSync(full).mtime.toISOString(),
       format: data.format ?? 'qlbs-backup',
       version: data.version ?? 1,
       tables: Object.keys(counts).length,
       totalRows: Object.values(counts).reduce((s, n) => s + n, 0),
       counts,
+      storage: {
+        included: storageSize > 0,
+        fileName: storageSize ? storageName : null,
+        size: storageSize,
+      },
       restorable: check.ok,
       reason: check.reason,
     };
@@ -193,6 +253,14 @@ export class BackupsService {
     return { stream: fs.createReadStream(full), fileName: path.basename(full), size: fs.statSync(full).size };
   }
 
+  downloadStorage(name: string): { stream: fs.ReadStream; fileName: string; size: number } {
+    const full = this.resolve(name);
+    const storageName = storageArchiveFileName(path.basename(full));
+    const storagePath = path.join(this.dir, storageName);
+    if (!fs.existsSync(storagePath)) throw new NotFoundException('Bản sao lưu này chưa có gói tệp lưu trữ đi kèm');
+    return { stream: fs.createReadStream(storagePath), fileName: storageName, size: fs.statSync(storagePath).size };
+  }
+
   /* ------------------------------------------------------------ Tạo / xoá / tải lên */
 
   /** Tìm tác vụ định kỳ dùng hàm db.backup để ghi chung lịch sử chạy */
@@ -211,9 +279,41 @@ export class BackupsService {
     return result as { message: string; fileName: string; size: number };
   }
 
+  /** Chạy ngay chính sách retention đã cấu hình, không tạo thêm backup và không đụng uploads. */
+  async cleanup(user: AccessContext) {
+    const [keep, temporaryHours] = await Promise.all([
+      this.settings.backupKeepCount(),
+      this.settings.backupTemporaryRetentionHours(),
+    ]);
+    const removed = rotateBackups(this.dir, keep);
+    const temporary = cleanupBackupTemporaryArtifacts(this.dir, temporaryHours * 3_600_000);
+    const storageTemporary = cleanupStorageWriteTemporaryArtifacts(config.storage.dir, temporaryHours * 3_600_000);
+    const message = `Đã áp dụng chính sách lưu trữ: giữ ${keep} bộ backup mới nhất, xoá ${removed.length} bộ cũ và ${temporary.removed + storageTemporary.removed} tệp dở dang có marker QLBS.`;
+    await this.audit.log({
+      userId: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      action: 'CLEANUP',
+      module: 'BACKUP',
+      entity: 'backup_retention',
+      entityId: String(keep),
+      description: message,
+      afterData: {
+        keep,
+        removed,
+        temporaryRemoved: temporary.removed,
+        temporaryFreedBytes: temporary.freedBytes,
+        storageTemporaryRemoved: storageTemporary.removed,
+        storageTemporaryFreedBytes: storageTemporary.freedBytes,
+      },
+    });
+    return { message, keep, removed, temporary, storageTemporary };
+  }
+
   remove(name: string, user: AccessContext) {
     const full = this.resolve(name);
-    fs.rmSync(full, { force: true });
+    const base = path.basename(full);
+    for (const artifact of bundleArtifactNames(base)) fs.rmSync(path.join(this.dir, artifact), { force: true });
     void this.audit.log({
       userId: user.id,
       username: user.username,
@@ -221,10 +321,10 @@ export class BackupsService {
       action: 'DELETE',
       module: 'BACKUP',
       entity: 'backup_file',
-      entityId: path.basename(full),
-      description: `Xoá bản sao lưu ${path.basename(full)}`,
+      entityId: base,
+      description: `Xoá bộ sao lưu ${base} (CSDL và tệp lưu trữ đi kèm nếu có)`,
     });
-    return { message: `Đã xoá ${path.basename(full)}` };
+    return { message: `Đã xoá bộ sao lưu ${base}` };
   }
 
   /** Nhận tệp sao lưu tải lên (luồng nhị phân thô), kiểm tra hợp lệ rồi lưu vào thư mục sao lưu */
@@ -295,11 +395,21 @@ export class BackupsService {
     const full = this.resolve(name);
     this.restoring = true;
     const started = Date.now();
+    let heldStorageArchive: string | null = null;
     try {
       // 1) Đọc & kiểm tra bản sao lưu vào bộ nhớ trước (tệp có thể bị xoay vòng xoá sau đó)
       const data = await this.load(full);
       const check = this.restorable(data);
       if (!check.ok) throw new BadRequestException(check.reason);
+      // Backup từ phiên bản mới có archive toàn bộ uploads. Bản cũ vẫn phục hồi
+      // như trước (dữ liệu khuôn mặt nằm trong DB và được dựng lại ở bước cuối).
+      const sourceStoragePath = path.join(this.dir, storageArchiveFileName(path.basename(full)));
+      const hasStorageArchive = fs.existsSync(sourceStoragePath);
+      if (hasStorageArchive) {
+        await validateStorageArchive(sourceStoragePath);
+        heldStorageArchive = this.holdStorageArchive(sourceStoragePath);
+        await validateStorageArchive(heldStorageArchive);
+      }
 
       // 2) Bật bảo trì: yêu cầu mới của người khác nhận 503 "đang phục hồi" thay vì treo/ghi mất.
       //    Chờ các thao tác ghi đang xử lý dở hoàn tất (tối đa 10 giây).
@@ -314,6 +424,10 @@ export class BackupsService {
       // 3) Phục hồi — tự thử lại khi tranh khoá (deadlock / hết thời gian chờ khoá)
       const safetyName = backupFileName('truoc-phuc-hoi');
       const safetyPath = path.join(this.dir, safetyName);
+      const safetyStoragePath = path.join(this.dir, storageArchiveFileName(safetyName));
+      // Khi phục hồi bộ đầy đủ, chụp trước cả STORAGE_DIR để không mất tệp HSBA/
+      // ảnh nếu xảy ra lỗi copy filesystem sau khi CSDL đã khôi phục.
+      if (hasStorageArchive) await writeStorageArchive(config.storage.dir, safetyStoragePath);
       let summary: Awaited<ReturnType<BackupsService['applyRestore']>> | undefined;
       for (let attempt = 1; ; attempt++) {
         try {
@@ -322,6 +436,7 @@ export class BackupsService {
         } catch (err) {
           // Giao dịch đã quay lui → dữ liệu hiện tại còn nguyên, bản an toàn dở dang không cần giữ
           fs.rmSync(safetyPath, { force: true });
+          fs.rmSync(safetyStoragePath, { force: true });
           const code = pgErrorCode(err);
           const retryable = code === '40P01' || code === '55P03' || code === '40001';
           // Deadlock: thử lại tối đa 3 lần. Hết giờ chờ khoá (có truy vấn chạy lâu): chỉ thử thêm
@@ -341,7 +456,43 @@ export class BackupsService {
         }
       }
 
-      // 4) Xoá cache nghiệp vụ (giữ phiên đăng nhập và hàng đợi)
+      // 4) Với backup v3, phục hồi đúng snapshot STORAGE_DIR (tệp HSBA, fonts,
+      // ảnh). Nếu lỗi copy, thử trả lại storage trước phục hồi từ archive an toàn.
+      let storageRestored = false;
+      if (hasStorageArchive) {
+        try {
+          await restoreStorageArchive(heldStorageArchive!, config.storage.dir);
+          storageRestored = true;
+        } catch (err) {
+          this.logger.error(`Không thể phục hồi STORAGE_DIR từ ${path.basename(sourceStoragePath)}: ${err instanceof Error ? err.message : String(err)}`);
+          let storageRolledBack = false;
+          let databaseRolledBack = false;
+          try {
+            await restoreStorageArchive(safetyStoragePath, config.storage.dir);
+            storageRolledBack = true;
+            this.logger.error('Đã trả lại STORAGE_DIR trước phục hồi từ bản an toàn.');
+          } catch (rollbackErr) {
+            this.logger.error(`Không thể trả STORAGE_DIR an toàn: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+          }
+          try {
+            // applyRestore không cần chụp thêm snapshot: safetyPath chính là trạng thái
+            // trước restore, vẫn còn nguyên và maintenance vẫn đang chặn mọi ghi mới.
+            await this.applyRestore(await this.load(safetyPath));
+            databaseRolledBack = true;
+            await this.scheduler.syncSchedules().catch((syncErr: Error) => this.logger.warn(`Không đồng bộ được lịch sau rollback: ${syncErr.message}`));
+            this.logger.error('Đã trả lại CSDL trước phục hồi từ bản an toàn.');
+          } catch (rollbackErr) {
+            this.logger.error(`Không thể trả CSDL an toàn: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+          }
+          throw new ServiceUnavailableException(
+            storageRolledBack && databaseRolledBack
+              ? 'Không thể thay thế kho tệp từ backup; CSDL và kho tệp đã được trả lại trạng thái trước phục hồi. Hãy kiểm tra dung lượng/nhật ký rồi thử lại.'
+              : 'Không thể thay thế kho tệp và rollback chưa hoàn tất. Không thực hiện thao tác mới; hãy liên hệ quản trị viên để phục hồi lại từ bản an toàn.',
+          );
+        }
+      }
+
+      // 5) Xoá cache nghiệp vụ (giữ phiên đăng nhập và hàng đợi)
       for (const p of CACHE_PREFIXES) await this.cache.delByPrefix(p).catch(() => 0);
 
       // Tự động khôi phục toàn bộ tệp ảnh chân dung sinh trắc học ra thư mục uploads/faces từ CSDL vừa phục hồi
@@ -349,7 +500,7 @@ export class BackupsService {
         const bios = await this.db.db
           .select({ userId: userBiometrics.userId, avatarData: userBiometrics.avatarData })
           .from(userBiometrics);
-        const facesDir = path.resolve(process.cwd(), 'uploads', 'faces');
+        const facesDir = path.join(config.storage.dir, 'faces');
         fs.mkdirSync(facesDir, { recursive: true });
         let restoredAvatars = 0;
         for (const b of bios) {
@@ -372,13 +523,12 @@ export class BackupsService {
       // Lịch chạy định kỳ có thể khác trong bản sao lưu → đăng ký lại
       await this.scheduler.syncSchedules().catch((err: Error) => this.logger.warn(`Đồng bộ lịch tác vụ: ${err.message}`));
 
-      // Xoay vòng theo số bản cần giữ của tác vụ sao lưu (không bao giờ xoá bản an toàn vừa tạo)
-      const job = await this.backupJob().catch(() => undefined);
-      const keepRaw = Number((job?.payload as { keep?: unknown } | null)?.keep ?? 14);
-      rotateBackups(this.dir, Number.isFinite(keepRaw) && keepRaw >= 1 ? Math.floor(keepRaw) : 14, [safetyName]);
+      // Xoay vòng theo cấu hình chung; không bao giờ xoá bản an toàn vừa tạo.
+      const keep = await this.settings.backupKeepCount();
+      rotateBackups(this.dir, keep, [safetyName]);
 
       const durationMs = Date.now() - started;
-      const message = `Đã phục hồi ${summary.tables} bảng · ${summary.rows.toLocaleString('vi-VN')} dòng từ ${path.basename(full)} (${(durationMs / 1000).toFixed(1)}s). Bản an toàn trước phục hồi: ${safetyName}`;
+      const message = `Đã phục hồi ${summary.tables} bảng · ${summary.rows.toLocaleString('vi-VN')} dòng${storageRestored ? ' · toàn bộ tệp lưu trữ đi kèm' : ' · ảnh khuôn mặt từ CSDL'} từ ${path.basename(full)} (${(durationMs / 1000).toFixed(1)}s). Bản an toàn trước phục hồi: ${safetyName}`;
       this.logger.warn(message);
       await this.audit.log({
         userId: user.id,
@@ -389,18 +539,19 @@ export class BackupsService {
         entity: 'database',
         entityId: path.basename(full),
         description: message,
-        afterData: { counts: summary.counts, skipped: summary.skipped, emptied: summary.emptied },
+        afterData: { counts: summary.counts, skipped: summary.skipped, emptied: summary.emptied, storageRestored },
         ip: meta.ip,
         userAgent: meta.userAgent,
       });
-      return { message, durationMs, safetyBackup: safetyName, ...summary };
+      return { message, durationMs, safetyBackup: safetyName, storageRestored, ...summary };
     } finally {
+      if (heldStorageArchive) fs.rmSync(heldStorageArchive, { force: true });
       this.restoring = false;
       await this.maintenance.end();
     }
   }
 
-  private async applyRestore(data: BackupFile, safetyPath: string) {
+  private async applyRestore(data: BackupFile, safetyPath?: string) {
     return this.db.db.transaction(async (tx) => {
       const rowsOf = <T>(res: unknown): T[] => ((res as { rows?: T[] }).rows ?? []) as T[];
 
@@ -424,9 +575,12 @@ export class BackupsService {
       await tx.execute(sql.raw('set local lock_timeout = 0'));
 
       // Bản an toàn chụp NGAY TRONG giao dịch đang giữ khoá → không lọt thay đổi nào
-      // giữa lúc sao lưu an toàn và lúc thay dữ liệu.
-      const safety = await writeBackup(tx as unknown as SqlExecutor, safetyPath);
-      this.logger.log(`Bản an toàn trước phục hồi: ${path.basename(safetyPath)} (${safety.totalRows} dòng)`);
+      // giữa lúc sao lưu an toàn và lúc thay dữ liệu. Khi rollback lỗi storage, bản an toàn
+      // đã tồn tại nên không tạo thêm một snapshot trung gian không cần thiết.
+      if (safetyPath) {
+        const safety = await writeBackup(tx as unknown as SqlExecutor, safetyPath);
+        this.logger.log(`Bản an toàn trước phục hồi: ${path.basename(safetyPath)} (${safety.totalRows} dòng)`);
+      }
 
       // Thứ tự chèn theo khoá ngoại: bảng cha trước, bảng con sau
       const fks = rowsOf<{ child: string; parent: string }>(
