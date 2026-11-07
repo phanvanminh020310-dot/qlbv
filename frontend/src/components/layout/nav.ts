@@ -110,7 +110,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/lich-truc', label: 'Lịch bác sĩ khám', icon: CalendarDays, permission: 'duty.view' },
       { href: '/lich-truc/cua-toi', label: 'Lịch khám của tôi', icon: UserCheck, permission: 'duty.view' },
       { href: '/lich-truc/theo-doi-xac-thuc', label: 'Theo dõi ca khám', icon: Radio, permission: 'duty.manage', anyPermissions: ['duty.manage-all'] },
-      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu lịch khám', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },
+      { href: '/lich-truc/yeu-cau', label: 'Yêu cầu đổi lịch khám', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },
       { href: '/lich-truc/ky-lich', label: 'Kỳ lịch khám', icon: CalendarRange, permission: 'duty.period.manage' },
       { href: '/lich-truc/danh-muc', label: 'Danh mục lịch khám', icon: Settings2, permission: 'duty.catalog.manage' },
     ],

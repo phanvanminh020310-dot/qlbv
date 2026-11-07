@@ -59,6 +59,7 @@ export default function DanhMucTrucPage() {
     { name: "startTime", label: "Giờ bắt đầu", type: "time", required: true },
     { name: "endTime", label: "Giờ kết thúc", type: "time", required: true, help: "Kết thúc trước giờ bắt đầu = ca qua đêm" },
     { name: "isNight", label: "Ca đêm", type: "switch", defaultValue: false, hideInTable: true, help: "Ca đêm có giới hạn riêng và cần khoảng nghỉ liền kề" },
+    { name: "scheduleMode", label: "Cách xếp lịch", type: "select", defaultValue: "THEO_BUOI", options: [{ value: "THEO_BUOI", label: "Theo buổi (Sáng/Chiều)" }, { value: "CA_NGAY", label: "Hành chính cả ngày" }, { value: "DOC_LAP", label: "Ca độc lập" }], help: "Ca Hành chính cả ngày không thể cùng tồn tại với ca theo buổi trong cùng phòng, ngày và vai trò." },
     { name: "color", label: "Màu hiển thị", type: "color", palette: SHIFT_PALETTE, defaultValue: SHIFT_PALETTE[0].value, hideInTable: true, help: 'Chọn từ bảng màu; cần màu khác thì bấm "Màu khác"' },
     { name: "sortOrder", label: "Thứ tự", type: "number", hideInTable: true },
     { name: "active", label: "Đang sử dụng", type: "switch", defaultValue: true },
@@ -122,7 +123,7 @@ export default function DanhMucTrucPage() {
             content: (
               <CrudTable
                 title="Ca khám"
-                description="Khung giờ các ca khám. Có thể cấu hình sáng, chiều hoặc các khung giờ chuyên biệt."
+                description="Khung giờ ca khám và cách xếp. Đặt Sáng/Chiều là Theo buổi, Hành chính là Cả ngày để không sinh cả hai cách xếp cùng lúc."
                 endpoint="/duty/shifts"
                 fields={shiftFields}
                 canCreate={canManage}

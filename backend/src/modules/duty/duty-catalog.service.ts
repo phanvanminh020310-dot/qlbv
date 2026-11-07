@@ -156,6 +156,7 @@ export class DutyCatalogService {
         endTime: dutyShiftTypes.endTime,
         crossesMidnight: dutyShiftTypes.crossesMidnight,
         isNight: dutyShiftTypes.isNight,
+        scheduleMode: dutyShiftTypes.scheduleMode,
         color: dutyShiftTypes.color,
         sortOrder: dutyShiftTypes.sortOrder,
         active: dutyShiftTypes.active,
@@ -172,7 +173,7 @@ export class DutyCatalogService {
 
   async shiftOptions() {
     const rows = await this.db.db
-      .select({ id: dutyShiftTypes.id, code: dutyShiftTypes.code, name: dutyShiftTypes.name, startTime: dutyShiftTypes.startTime, endTime: dutyShiftTypes.endTime, isNight: dutyShiftTypes.isNight, color: dutyShiftTypes.color, active: dutyShiftTypes.active })
+      .select({ id: dutyShiftTypes.id, code: dutyShiftTypes.code, name: dutyShiftTypes.name, startTime: dutyShiftTypes.startTime, endTime: dutyShiftTypes.endTime, isNight: dutyShiftTypes.isNight, scheduleMode: dutyShiftTypes.scheduleMode, color: dutyShiftTypes.color, active: dutyShiftTypes.active })
       .from(dutyShiftTypes)
       .orderBy(asc(dutyShiftTypes.sortOrder), asc(dutyShiftTypes.startTime));
     return rows.map((r) => ({ value: r.id, label: `${r.code} — ${r.name} (${r.startTime}–${r.endTime})`, ...r }));
@@ -190,6 +191,7 @@ export class DutyCatalogService {
         endTime: dto.endTime,
         crossesMidnight: t.crossesMidnight,
         isNight: dto.isNight ?? t.isNightDefault,
+        scheduleMode: dto.scheduleMode ?? 'THEO_BUOI',
         color: dto.color ?? '#0F766E',
         sortOrder: dto.sortOrder ?? 0,
         active: dto.active ?? true,
@@ -227,6 +229,7 @@ export class DutyCatalogService {
     if (dto.code !== undefined) patch.code = dto.code;
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.isNight !== undefined) patch.isNight = dto.isNight;
+    if (dto.scheduleMode !== undefined) patch.scheduleMode = dto.scheduleMode;
     else if (dto.startTime !== undefined || dto.endTime !== undefined) patch.isNight = t.isNightDefault;
     if (dto.color !== undefined) patch.color = dto.color;
     if (dto.sortOrder !== undefined) patch.sortOrder = dto.sortOrder;

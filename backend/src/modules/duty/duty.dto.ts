@@ -114,6 +114,11 @@ export class ShiftDto {
   @IsBoolean()
   isNight?: boolean;
 
+  @ApiPropertyOptional({ enum: ['THEO_BUOI', 'CA_NGAY', 'DOC_LAP'], description: 'Theo buổi: sáng/chiều; Ca ngày: Hành chính thay cho sáng/chiều; Độc lập: không thuộc hai cách xếp này' })
+  @IsOptional()
+  @IsIn(['THEO_BUOI', 'CA_NGAY', 'DOC_LAP'])
+  scheduleMode?: 'THEO_BUOI' | 'CA_NGAY' | 'DOC_LAP';
+
   @ApiPropertyOptional({ example: '#0ea5e9' })
   @IsOptional()
   @Matches(HEX, { message: 'Màu phải dạng #RRGGBB' })
@@ -439,6 +444,18 @@ export class SlotDto {
   note?: string;
 }
 
+/** Chuyển giữa Theo buổi và Hành chính trong một phòng × ngày × vai trò. confirm luôn bắt buộc để tránh xoá lịch ngầm. */
+export class SwitchSlotModeDto {
+  @Matches(YMD, { message: 'Ngày khám phải dạng YYYY-MM-DD' })
+  dutyDate!: string;
+  @Transform(toIntOrUndef) @IsInt() roomId!: number;
+  @Transform(toIntOrUndef) @IsInt() roleId!: number;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsInt({ each: true }) shiftIds!: number[];
+  @IsOptional() @Transform(toIntOrUndef) @IsInt() @Min(1) @Max(20) requiredCount?: number;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+  @Transform(toBoolean) @IsBoolean() confirm!: boolean;
+}
+
 export class UpdateSlotDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -628,6 +645,14 @@ export class RequestCreateDto {
   @Transform(toBoolean)
   @IsBoolean()
   urgent?: boolean;
+}
+
+/** Người xếp lịch khoa đề nghị KHTH thay một bác sĩ đã có phân công. */
+export class DepartmentChangeRequestDto {
+  @Transform(toIntOrUndef) @IsInt() @Min(1) slotId!: number;
+  @Transform(toIntOrUndef) @IsInt() @Min(1) targetUserId!: number;
+  @Transform(toIntOrUndef) @IsInt() @Min(1) replacementUserId!: number;
+  @Transform(trim) @IsString() @MinLength(5, { message: 'Vui lòng nêu lý do (tối thiểu 5 ký tự)' }) @MaxLength(500) reason!: string;
 }
 
 export class RequestRespondDto {

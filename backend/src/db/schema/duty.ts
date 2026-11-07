@@ -18,11 +18,14 @@ import { departments } from './org';
 import { users } from './system';
 
 export const DUTY_PERIOD_STATUSES = ['NHAP', 'CONG_BO', 'DA_CHOT'] as const;
+/** Cách một ca khám tham gia lịch: sáng/chiều đi cùng nhau, ca cả ngày thay thế chúng. */
+export const DUTY_SHIFT_SCHEDULE_MODES = ['THEO_BUOI', 'CA_NGAY', 'DOC_LAP'] as const;
 export const DUTY_REQUEST_TYPES = ['NHUONG', 'DOI', 'NGOAI_LE'] as const;
 export const DUTY_REQUEST_STATUSES = ['CHO_NGUOI_NHAN', 'CHO_DUYET', 'DA_DUYET', 'TU_CHOI', 'HUY'] as const;
 export const DUTY_ASSIGN_SOURCES = ['DANG_KY', 'PHAN_CONG', 'NHUONG', 'DOI', 'NGOAI_LE', 'DIEU_CHINH'] as const;
 
 export type DutyPeriodStatus = (typeof DUTY_PERIOD_STATUSES)[number];
+export type DutyShiftScheduleMode = (typeof DUTY_SHIFT_SCHEDULE_MODES)[number];
 export type DutyRequestType = (typeof DUTY_REQUEST_TYPES)[number];
 export type DutyRequestStatus = (typeof DUTY_REQUEST_STATUSES)[number];
 
@@ -80,6 +83,8 @@ export const dutyShiftTypes = pgTable(
     crossesMidnight: boolean('crosses_midnight').default(false).notNull(),
     /** Ca đêm: tính riêng giới hạn ca đêm và khoảng nghỉ liền kề */
     isNight: boolean('is_night').default(false).notNull(),
+    /** THEO_BUOI (sáng/chiều) hoặc CA_NGAY (Hành chính); hai nhóm loại trừ nhau trên cùng phòng/ngày/vai trò. */
+    scheduleMode: text('schedule_mode').$type<DutyShiftScheduleMode>().default('THEO_BUOI').notNull(),
     color: text('color').default('#2563eb').notNull(),
     sortOrder: integer('sort_order').default(0).notNull(),
     active: boolean('active').default(true).notNull(),

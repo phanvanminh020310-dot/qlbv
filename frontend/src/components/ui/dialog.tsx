@@ -80,6 +80,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmText = 'Xác nhận',
+  cancelText = 'Huỷ',
   loading,
   onConfirm,
   onClose,
@@ -88,6 +89,7 @@ export function ConfirmDialog({
   title: string;
   message: ReactNode;
   confirmText?: string;
+  cancelText?: string;
   loading?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -101,7 +103,7 @@ export function ConfirmDialog({
       footer={
         <>
           <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={onClose} type="button">
-            Huỷ
+            {cancelText}
           </button>
           <button
             className="rounded-lg bg-[var(--danger)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"

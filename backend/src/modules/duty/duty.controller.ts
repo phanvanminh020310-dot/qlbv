@@ -15,6 +15,7 @@ import {
   PeriodQueryDto,
   PublishDto,
   SlotDto,
+  SwitchSlotModeDto,
   DeletePeriodDto,
   UnlockDto,
   UpdatePeriodDto,
@@ -223,6 +224,13 @@ export class DutyController {
   @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_slot', description: 'Sinh hàng loạt ca khám' })
   generateSlots(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: GenerateSlotsDto) {
     return this.service.generateSlots(user, id, dto);
+  }
+
+  @Post('periods/:id/slots/switch-mode')
+  @RequirePermissions(MANAGE_ANY, 'any')
+  @Audit({ module: 'DUTY', action: 'SLOT_MODE_SWITCH', entity: 'duty_slot', description: 'Đổi lịch Theo buổi và Hành chính' })
+  switchSlotMode(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: SwitchSlotModeDto) {
+    return this.service.switchSlotMode(user, id, dto);
   }
 
   @Post('periods/:id/slots')

@@ -18,7 +18,7 @@ import type { AccessContext } from '../../common/types/access-context';
 import { DutyCoreService } from './duty-core.service';
 import { DutyService } from './duty.service';
 import { fmtDate, violationText, type EvaluateResult } from './duty-rules';
-import type { OverrideDto, RequestCreateDto, RequestQueryDto, RequestRespondDto } from './duty.dto';
+import type { DepartmentChangeRequestDto, OverrideDto, RequestCreateDto, RequestQueryDto, RequestRespondDto } from './duty.dto';
 
 const ADVISORY_NS = 9301;
 const SWAP_TYPES: DutyRequestType[] = ['NHUONG', 'DOI'];
@@ -294,6 +294,46 @@ export class DutyRequestService {
     return view ?? { id: row.id };
   }
 
+  /**
+   * Luồng chính của người xếp lịch khoa: chọn đúng ca đã có bác sĩ, bác sĩ thay
+   * và lý do; KHTH là nơi duyệt duy nhất. Dùng bản ghi NGOAI_LE tương thích dữ
+   * liệu cũ, nhưng kiểm soát quyền/phạm vi riêng để không biến nó thành đổi ca cá nhân.
+   */
+  async createDepartmentChange(user: AccessContext, dto: DepartmentChangeRequestDto) {
+    this.core.ensureManageSchedule(user, 'Gửi yêu cầu đổi lịch khám');
+    const slot = await this.core.getSlot(dto.slotId);
+    if (slot.periodStatus === 'NHAP') throw new ConflictException('Kỳ lịch chưa được công bố');
+    if (this.core.toEngineSlot(slot).start <= Date.now()) throw new ConflictException('Ca đã bắt đầu, không thể yêu cầu thay đổi');
+    if (dto.targetUserId === dto.replacementUserId) throw new BadRequestException('Bác sĩ thay không thể là bác sĩ đang được xếp');
+    if (!(await this.assignmentOf(slot.id, dto.targetUserId))) throw new ConflictException('Bác sĩ đang xếp không còn trong ca đã chọn');
+    const people = await this.core.loadUsers(this.db.db, [dto.targetUserId, dto.replacementUserId]);
+    const outgoing = people.get(dto.targetUserId);
+    const incoming = people.get(dto.replacementUserId);
+    if (!outgoing || !incoming) throw new NotFoundException('Không tìm thấy bác sĩ được chọn');
+    this.core.ensureManageDept(user, outgoing.departmentId, `Bác sĩ ${outgoing.fullName}`);
+    this.core.ensureManageDept(user, incoming.departmentId, `Bác sĩ ${incoming.fullName}`);
+    const [dupe] = await this.db.db
+      .select({ id: dutyRequests.id })
+      .from(dutyRequests)
+      .where(and(eq(dutyRequests.type, 'NGOAI_LE'), eq(dutyRequests.slotId, slot.id), eq(dutyRequests.targetUserId, dto.targetUserId), inArray(dutyRequests.status, OPEN_STATUSES)))
+      .limit(1);
+    if (dupe) throw new ConflictException('Đã có yêu cầu đổi lịch đang chờ xử lý cho bác sĩ này trong ca đã chọn');
+    const [row] = await this.db.db
+      .insert(dutyRequests)
+      .values({ periodId: slot.periodId, type: 'NGOAI_LE', status: 'CHO_DUYET', requesterId: user.id, slotId: slot.id, targetUserId: dto.targetUserId, replacementUserId: dto.replacementUserId, reason: dto.reason, urgent: false })
+      .returning();
+    await this.core.log(this.db.db, {
+      periodId: slot.periodId, slotId: slot.id, requestId: row.id, action: 'DEPARTMENT_CHANGE_REQUEST', actorId: user.id, userId: dto.targetUserId, reason: dto.reason,
+      detail: { room: slot.roomCode, shift: slot.shiftCode, date: slot.dutyDate, outgoing: { id: outgoing.id, name: outgoing.fullName }, replacement: { id: incoming.id, name: incoming.fullName } },
+    });
+    const holders = await this.core.holderIds(['duty.exception.resolve']);
+    const where = `${slot.roomCode} · ${slot.shiftCode} · ${fmtDate(slot.dutyDate)}`;
+    this.core.notifyAfterCommit(holders.filter((id) => id !== user.id), { title: 'Yêu cầu đổi lịch khám chờ duyệt', body: `${user.fullName}: ${outgoing.fullName} → ${incoming.fullName} · ${where}. ${dto.reason}`, level: 'WARNING', link: '/lich-truc/yeu-cau', module: 'DUTY', entityId: String(row.id) });
+    this.core.emit('request', slot.periodId);
+    const [view] = (await this.list(user, { box: 'mine', periodId: slot.periodId })).filter((request) => request.id === row.id);
+    return view ?? { id: row.id };
+  }
+
   /* ================================================================ Phản hồi của người nhận */
 
   async accept(user: AccessContext, id: number) {
@@ -501,7 +541,8 @@ export class DutyRequestService {
     await this.db.db.transaction(async (tx) => {
       await lockAll(tx, [req.slotId], [removedId, replacementId ?? 0]);
       const old = await this.assignmentOf(req.slotId, removedId, tx);
-      if (old) await tx.delete(dutyAssignments).where(eq(dutyAssignments.id, old.id));
+      if (!old) throw new ConflictException('Bác sĩ cần thay không còn trong ca — yêu cầu không còn hiệu lực');
+      await tx.delete(dutyAssignments).where(eq(dutyAssignments.id, old.id));
       if (replacementId) {
         if (replacementId === removedId) throw new BadRequestException('Người thay không thể là người cần thay');
         const res = await this.checkMove(tx, req.slotId, replacementId, { filledDelta: 0, locked: false });
@@ -538,7 +579,7 @@ export class DutyRequestService {
     if (replacementId) {
       this.core.notifyAfterCommit([replacementId], { title: 'Bạn được xếp khám thay (ngoại lệ)', body: `${where}. Vui lòng xác nhận lịch của bạn.`, level: 'WARNING', link: '/lich-truc/cua-toi', module: 'DUTY', entityId: String(req.id) });
     }
-    this.core.notifyAfterCommit([req.requesterId], { title: 'Yêu cầu ngoại lệ đã được xử lý', body: `${where}: ${dto.note ?? 'KHTH đã duyệt'}`, level: 'INFO', link: '/lich-truc/yeu-cau', module: 'DUTY', entityId: String(req.id) });
+    this.core.notifyAfterCommit([req.requesterId], { title: 'Yêu cầu đổi lịch khám đã được duyệt', body: `${where}: ${dto.note ?? 'KHTH đã duyệt và cập nhật bác sĩ thay'}`, level: 'SUCCESS', link: '/lich-truc/yeu-cau', module: 'DUTY', entityId: String(req.id) });
   }
 
   private notifySwapDone(requesterId: number, receiverId: number, periodId: number, requestId: number) {

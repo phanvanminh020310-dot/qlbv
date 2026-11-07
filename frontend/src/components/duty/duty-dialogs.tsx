@@ -571,7 +571,7 @@ function normalizedSlotText(value: string): string {
  * iPhone. Pick a day first, then use tactile, searchable slot cards grouped by
  * clinic room while retaining the exact original slot id for the API.
  */
-function OverrideSlotPicker({
+export function OverrideSlotPicker({
   periodId,
   slots,
   value,
@@ -723,6 +723,57 @@ function OverrideSlotPicker({
   );
 }
 
+/** Người xếp lịch khoa chỉ cần chọn ca, bác sĩ đang xếp, bác sĩ thay và lý do. */
+export function DepartmentChangeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const actions = useDutyActions();
+  const [periodId, setPeriodId] = useState(0);
+  const [slotId, setSlotId] = useState(0);
+  const [outgoingId, setOutgoingId] = useState<number | null>(null);
+  const [replacementId, setReplacementId] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [query, setQuery] = useState("");
+  const periods = useQuery({ queryKey: DUTY_KEYS.periods, queryFn: () => dutyApi.periods(), enabled: open });
+  const grid = useQuery({ queryKey: DUTY_KEYS.grid(periodId), queryFn: () => dutyApi.grid(periodId), enabled: open && periodId > 0 });
+  const slot = (grid.data?.slots ?? []).find((item) => item.id === slotId);
+  const candidates = useQuery({
+    queryKey: [...DUTY_KEYS.candidates(slotId), "department-change", query],
+    queryFn: () => dutyApi.candidates(slotId, query.trim() || undefined),
+    enabled: open && !!slotId,
+  });
+  const submit = useMutation({
+    mutationFn: () => dutyApi.createDepartmentChange({ slotId, targetUserId: outgoingId, replacementUserId: replacementId, reason: reason.trim() }),
+    onSuccess: () => {
+      toast.success("Đã gửi yêu cầu đổi lịch khám tới KHTH");
+      actions.refresh();
+      setReason(""); setReplacementId(null); setOutgoingId(null); setSlotId(0);
+      onClose();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const selectSlot = (id: number) => {
+    setSlotId(id); setOutgoingId(null); setReplacementId(null); setQuery("");
+  };
+  const replacementList = (candidates.data ?? []).filter((person) => person.userId !== outgoingId && person.ok);
+  return (
+    <Dialog
+      open={open} onClose={onClose} size="lg" title="Yêu cầu đổi lịch khám"
+      description="Chọn đúng ca và bác sĩ đang xếp. KHTH duyệt là lịch được thay ngay; tất cả thay đổi đều được lưu lịch sử."
+      footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button disabled={!slotId || !outgoingId || !replacementId || reason.trim().length < 5 || submit.isPending} onClick={() => submit.mutate()}>Gửi KHTH duyệt</Button></>}
+    >
+      <div className="space-y-4">
+        <div className="space-y-1.5"><Label>Kỳ lịch khám</Label><PeriodPicker periods={(periods.data ?? []).filter((period) => period.status !== "NHAP")} value={periodId || null} onChange={(id) => { setPeriodId(id); selectSlot(0); }} placeholder="Chọn kỳ đã công bố" /></div>
+        {grid.isLoading ? <Skeleton className="h-56 w-full" /> : <OverrideSlotPicker periodId={periodId} slots={grid.data?.slots ?? []} value={slotId} onChange={selectSlot} disabled={!periodId || grid.isFetching} />}
+        {slot ? <div className="space-y-3 rounded-xl border bg-[var(--accent)]/25 p-3">
+          <div className="text-sm font-semibold">{dayName(slot.dutyDate)} {fmtDate(slot.dutyDate)} · {slot.roomCode} · {slot.shiftCode} · {slot.roleName}</div>
+          <div className="space-y-1.5"><Label>Bác sĩ đang xếp</Label><div className="flex flex-wrap gap-2">{slot.assignments.length ? slot.assignments.map((person) => <button key={person.id} type="button" onClick={() => { setOutgoingId(person.userId); setReplacementId(null); }} className={`rounded-lg border px-3 py-2 text-left text-sm ${outgoingId === person.userId ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card)] hover:bg-[var(--muted)]"}`}><span className="font-medium">{person.fullName}</span>{person.title ? <span className="block text-xs opacity-75">{person.title}</span> : null}</button>) : <p className="text-sm text-[var(--muted-foreground)]">Ca này chưa có bác sĩ để thay.</p>}</div></div>
+          {outgoingId ? <div className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><Label>Bác sĩ thay</Label><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm bác sĩ trong khoa…" className="h-8 w-56" /></div><div className="max-h-44 divide-y overflow-y-auto rounded-lg border bg-[var(--card)]">{candidates.isLoading ? <div className="p-3"><Skeleton className="h-5 w-full" /></div> : replacementList.map((person) => <button key={person.userId} type="button" onClick={() => setReplacementId(person.userId)} className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm ${replacementId === person.userId ? "bg-[var(--accent)]" : "hover:bg-[var(--muted)]/60"}`}><span><b>{person.fullName}</b>{person.title ? ` — ${person.title}` : ""}<span className="block text-xs text-[var(--muted-foreground)]">{person.departmentName}</span></span>{replacementId === person.userId ? <Check className="size-4 text-[var(--primary)]" /> : null}</button>)}{!candidates.isLoading && !replacementList.length ? <p className="p-3 text-sm text-[var(--muted-foreground)]">Không có bác sĩ phù hợp trong phạm vi khoa.</p> : null}</div></div> : null}
+        </div> : null}
+        <div className="space-y-1.5"><Label>Lý do *</Label><Textarea rows={2} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Ví dụ: bác sĩ có lịch công tác, đề nghị bác sĩ khác thay ca" /><p className="text-xs text-[var(--muted-foreground)]">KHTH sẽ thấy đầy đủ lý do khi duyệt.</p></div>
+      </div>
+    </Dialog>
+  );
+}
+
 export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boolean; onClose: () => void; initialPeriodId?: number }) {
   const actions = useDutyActions();
   const [periodId, setPeriodId] = useState<number>(initialPeriodId ?? 0);
@@ -752,7 +803,9 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
   };
   const submit = () => {
     if (!slotId) return toast.error("Chọn ca khám cần điều chỉnh");
-    if (!removeUserId && !addUserId) return toast.error("Chọn bác sĩ cần gỡ hoặc bác sĩ cần thêm");
+    if (!slot) return toast.error("Chọn ca khám cần điều chỉnh");
+    if (slot.assignments.length && !removeUserId) return toast.error("Chọn bác sĩ đang xếp cần thay");
+    if (!addUserId) return toast.error("Chọn bác sĩ thay");
     if (reason.trim().length < 10) return toast.error("Ghi lý do điều chỉnh (tối thiểu 10 ký tự)");
     override.mutate();
   };
@@ -761,12 +814,12 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
       open={open}
       onClose={onClose}
       size="lg"
-      title="Điều chỉnh bác sĩ khám trực tiếp"
-      description="Dành cho tài khoản Điều phối lịch khám (KHTH): đổi bác sĩ khám ngay, kể cả sau khi chốt. Mọi thay đổi được ghi nhật ký kèm lý do."
+      title="Đổi bác sĩ trực tiếp"
+      description="Chọn ca, bác sĩ đang xếp và bác sĩ thay. Lý do là bắt buộc; thay đổi được ghi lịch sử ngay."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Đóng</Button>
-          <Button onClick={submit} disabled={override.isPending}>Thực hiện điều chỉnh</Button>
+          <Button onClick={submit} disabled={override.isPending}>Đổi bác sĩ</Button>
         </>
       }
     >
@@ -805,17 +858,17 @@ export function OverrideDialog({ open, onClose, initialPeriodId }: { open: boole
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="ov-remove">Gỡ khỏi ca</Label>
+                <Label htmlFor="ov-remove">Bác sĩ đang xếp</Label>
                 <Select id="ov-remove" value={removeUserId ? String(removeUserId) : ""} onChange={(e) => setRemoveUserId(e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">— Không gỡ ai —</option>
+                  <option value="">{slot.assignments.length ? "— Chọn bác sĩ cần thay —" : "— Ca đang trống —"}</option>
                   {slot.assignments.map((a) => (
                     <option key={a.userId} value={a.userId}>{a.fullName} — {a.title}</option>
                   ))}
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="ov-add">Xếp thêm / thay vào ca</Label>
-                <StaffSelect id="ov-add" value={addUserId} onChange={setAddUserId} exclude={removeUserId ? [removeUserId] : []} placeholder="— Không thêm ai —" />
+                <Label htmlFor="ov-add">Bác sĩ thay</Label>
+                <StaffSelect id="ov-add" value={addUserId} onChange={setAddUserId} exclude={removeUserId ? [removeUserId] : []} placeholder="— Chọn bác sĩ thay —" />
               </div>
             </div>
           </div>
@@ -849,7 +902,7 @@ export function QuickCreateNextPeriodDialog({
     queryFn: () => dutyApi.suggestNext(),
   });
 
-  const [mode, setMode] = useState<"copy" | "auto" | "empty">("copy");
+  const [mode, setMode] = useState<"copy" | "empty">("empty");
   const [copyAssignments, setCopyAssignments] = useState(true);
   const [customName, setCustomName] = useState("");
 
@@ -864,7 +917,6 @@ export function QuickCreateNextPeriodDialog({
         endDate: data.endDate,
         lockAt: data.lockAt,
         registrationOpensAt: null,
-        autoGenerateSlots: mode === "auto",
         copyFromPeriodId: mode === "copy" && data.lastPeriod ? data.lastPeriod.id : undefined,
         copyAssignments: mode === "copy" && copyAssignments,
       };
@@ -944,7 +996,7 @@ export function QuickCreateNextPeriodDialog({
         {/* Tùy chọn kế thừa */}
         <div className="space-y-2.5">
           <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            Tùy chọn tự động hóa ca khám & phân công
+            Cấu trúc kỳ lịch
           </Label>
 
           {data.lastPeriod ? (
@@ -985,30 +1037,6 @@ export function QuickCreateNextPeriodDialog({
             </div>
           ) : null}
 
-          <div
-            onClick={() => setMode("auto")}
-            className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
-              mode === "auto"
-                ? "border-teal-600 bg-teal-50/40 ring-1 ring-teal-500 dark:bg-teal-950/30"
-                : "hover:bg-[var(--accent)]"
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <input
-                type="radio"
-                name="gen-mode"
-                checked={mode === "auto"}
-                onChange={() => setMode("auto")}
-                className="mt-1"
-              />
-              <div className="flex-1 text-sm">
-                <div className="font-semibold">Tự động sinh toàn bộ ca khám từ danh mục</div>
-                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Tạo ca khám cho mọi phòng và khung giờ đang hoạt động trong toàn bộ 7 ngày (bỏ qua ngày nghỉ lễ).
-                </p>
-              </div>
-            </div>
-          </div>
 
           <div
             onClick={() => setMode("empty")}
@@ -1029,7 +1057,7 @@ export function QuickCreateNextPeriodDialog({
               <div className="flex-1 text-sm">
                 <div className="font-semibold">Chỉ tạo kỳ khám trống</div>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Tạo khung kỳ lịch nháp, cấu hình ca khám thủ công sau.
+                  Tạo khung kỳ lịch nháp. Sau đó chọn cách xếp Theo buổi hoặc Hành chính khi sinh ca; hệ thống không tự tạo cả ba ca.
                 </p>
               </div>
             </div>

@@ -1,11 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, ShieldAlert } from "lucide-react";
+import { ArrowRightLeft, Plus, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { AbsenceInbox } from "@/components/duty/absence-inbox";
 import { AdjustmentHistory } from "@/components/duty/adjustment-history";
-import { OverrideDialog, ReviewDialog, useDutyActions } from "@/components/duty/duty-dialogs";
+import { DepartmentChangeDialog, OverrideDialog, ReviewDialog, useDutyActions } from "@/components/duty/duty-dialogs";
 import { errorText, RequestStatusBadge } from "@/components/duty/duty-shared";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
@@ -25,15 +25,18 @@ export default function YeuCauPage() {
   const canApprove = can("duty.swap.approve") || can("duty.exception.resolve");
   const isKhth = can("duty.exception.resolve");
   const canManageAbsence = can("duty.manage") || can("duty.manage-all");
+  const canRequestDepartmentChange = canManageAbsence;
   const [selectedTab, setTab] = useState<string>();
-  const tab = selectedTab ?? (canManageAbsence ? "absences" : canApprove ? "approval" : "incoming");
+  const tab = selectedTab ?? (canRequestDepartmentChange ? "mine" : canApprove ? "approval" : canManageAbsence ? "absences" : "incoming");
   const [review, setReview] = useState<{ row: RequestRow; kind: "approve" | "reject" | "decline" } | null>(null);
   const [override, setOverride] = useState(false);
+  const [departmentChange, setDepartmentChange] = useState(false);
 
   useRealtimeInvalidate({ duty: [["duty-requests"], ["duty-adjustments"], ["duty-grid"], ["duty-me"], ["duty-options"]] });
 
   const approval = useQuery({ queryKey: [...DUTY_KEYS.requests, "approval"], queryFn: () => dutyApi.requests("approval"), enabled: canApprove });
   const all = useQuery({ queryKey: [...DUTY_KEYS.requests, "all"], queryFn: () => dutyApi.requests("all"), enabled: isKhth });
+  const mine = useQuery({ queryKey: [...DUTY_KEYS.requests, "mine"], queryFn: () => dutyApi.requests("mine"), enabled: canRequestDepartmentChange });
 
   const approve = useMutation({
     mutationFn: (v: { id: number; note: string; replacementUserId: number | null; force: boolean }) =>
@@ -43,6 +46,11 @@ export default function YeuCauPage() {
       setReview(null);
       actions.refresh();
     },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const quickApprove = useMutation({
+    mutationFn: (id: number) => dutyApi.approveRequest(id),
+    onSuccess: () => { toast.success("Đã duyệt và cập nhật bác sĩ thay"); actions.refresh(); },
     onError: (e) => toast.error(errorText(e)),
   });
   const reject = useMutation({
@@ -57,6 +65,7 @@ export default function YeuCauPage() {
 
   const counts = {
     approval: approval.data?.length ?? 0,
+    mine: mine.data?.filter((request) => request.status === "CHO_DUYET").length ?? 0,
   };
 
   const Item = ({ r }: { r: RequestRow }) => (
@@ -92,9 +101,11 @@ export default function YeuCauPage() {
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {r.actions.canApprove ? (
-            <Button size="sm" onClick={() => setReview({ row: r, kind: "approve" })}>
-              Duyệt
-            </Button>
+            r.type === "NGOAI_LE" && r.replacementUserId ? (
+              <Button size="sm" disabled={quickApprove.isPending} onClick={() => quickApprove.mutate(r.id)}>Duyệt đổi</Button>
+            ) : (
+              <Button size="sm" onClick={() => setReview({ row: r, kind: "approve" })}>Duyệt</Button>
+            )
           ) : null}
           {r.actions.canReject ? (
             <Button size="sm" variant="outline" onClick={() => setReview({ row: r, kind: "reject" })}>
@@ -129,6 +140,9 @@ export default function YeuCauPage() {
 
   const items = [
     ...(canManageAbsence ? [{ key: "absences", label: "Nghỉ / bận chờ duyệt", content: <AbsenceInbox /> }] : []),
+    ...(canRequestDepartmentChange
+      ? [{ key: "mine", label: "Yêu cầu đã gửi", badge: counts.mine ? <Badge tone="warning">{counts.mine}</Badge> : undefined, content: <List rows={mine.data} loading={mine.isLoading} empty="Chưa gửi yêu cầu đổi lịch nào" /> }]
+      : []),
     ...(canApprove
       ? [
           {
@@ -150,18 +164,15 @@ export default function YeuCauPage() {
   return (
     <>
       <PageHeader
-        title="Yêu cầu lịch khám"
-        description="Duyệt nghỉ/bận và bố trí bác sĩ thay, nhường/đổi ca khám và xử lý ngoại lệ sau khi chốt."
-        actions={
-          isKhth ? (
-            <Button variant="outline" onClick={() => setOverride(true)}>
-              <ShieldAlert className="h-4 w-4" /> Điều chỉnh trực tiếp
-            </Button>
-          ) : undefined
-        }
+        title="Yêu cầu đổi lịch khám"
+        description="Người xếp lịch khoa đề nghị thay bác sĩ cho một ca cụ thể; KHTH duyệt là lịch cập nhật ngay và có thông báo."
+        actions={<div className="flex flex-wrap gap-2">
+          {canRequestDepartmentChange ? <Button onClick={() => setDepartmentChange(true)}><Plus className="h-4 w-4" /> Tạo yêu cầu đổi lịch</Button> : null}
+          {isKhth ? <Button variant="outline" onClick={() => setOverride(true)}><ShieldAlert className="h-4 w-4" /> Điều chỉnh trực tiếp</Button> : null}
+        </div>}
       />
       <Card>
-        <CardHeader title="Hộp yêu cầu" description={canApprove ? "Nhường/đổi ca trước khi chốt do Trưởng khoa duyệt; ngoại lệ sau khi chốt do KHTH duyệt." : undefined} />
+        <CardHeader title="Hộp yêu cầu đổi lịch" description={canApprove ? "Yêu cầu thay bác sĩ của khoa được gửi thẳng KHTH. Ca có bác sĩ thay đề xuất có thể duyệt ngay." : "Chọn ca, bác sĩ đang xếp, bác sĩ thay và nêu lý do để gửi KHTH."} />
         <CardBody>
           <Tabs value={tab} onChange={setTab} items={items} />
         </CardBody>
@@ -187,6 +198,7 @@ export default function YeuCauPage() {
         />
       ) : null}
 
+      <DepartmentChangeDialog open={departmentChange} onClose={() => setDepartmentChange(false)} />
       <OverrideDialog open={override} onClose={() => setOverride(false)} />
     </>
   );

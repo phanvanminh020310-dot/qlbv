@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Audit, CurrentUser, RequirePermissions } from '../../common/decorators';
 import type { AccessContext } from '../../common/types/access-context';
-import { OverrideDto, RequestCreateDto, RequestQueryDto, RequestRespondDto } from './duty.dto';
+import { DepartmentChangeRequestDto, OverrideDto, RequestCreateDto, RequestQueryDto, RequestRespondDto } from './duty.dto';
 import { DutyRequestService } from './duty-request.service';
 
 @ApiTags('Lịch bác sĩ khám bệnh')
@@ -23,6 +23,13 @@ export class DutyRequestController {
   @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_request', description: 'Tạo yêu cầu nhường/đổi/ngoại lệ ca khám' })
   create(@CurrentUser() user: AccessContext, @Body() dto: RequestCreateDto) {
     return this.service.create(user, dto);
+  }
+
+  @Post('requests/department-change')
+  @RequirePermissions(['duty.manage', 'duty.manage-all'], 'any')
+  @Audit({ module: 'DUTY', action: 'CREATE', entity: 'duty_request', description: 'Người xếp lịch khoa gửi yêu cầu đổi bác sĩ khám tới KHTH' })
+  departmentChange(@CurrentUser() user: AccessContext, @Body() dto: DepartmentChangeRequestDto) {
+    return this.service.createDepartmentChange(user, dto);
   }
 
   @Post('requests/:id/accept')

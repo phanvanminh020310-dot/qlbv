@@ -104,7 +104,6 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
   const [note, setNote] = useState(period?.note ?? "");
   const [rules, setRules] = useState<DutyRules>(period?.rules ?? DEFAULT_RULES);
 
-  const [autoGenSlots, setAutoGenSlots] = useState(false);
   const [copyPeriodId, setCopyPeriodId] = useState<string>("");
   const [copyAssigns, setCopyAssigns] = useState(true);
 
@@ -153,7 +152,6 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
         registrationOpensAt: opensAt ? bkkLocalToIso(opensAt) : null,
         note,
         rules,
-        autoGenerateSlots: !isEdit && autoGenSlots && !copyPeriodId,
         copyFromPeriodId: !isEdit && copyPeriodId ? Number(copyPeriodId) : undefined,
         copyAssignments: !isEdit && !!copyPeriodId && copyAssigns,
       };
@@ -297,7 +295,6 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
                     value={copyPeriodId ? Number(copyPeriodId) : null}
                     onChange={(id) => {
                       setCopyPeriodId(String(id));
-                      setAutoGenSlots(false);
                     }}
                     placeholder="Chọn kỳ để sao chép"
                     label="Sao chép cấu trúc từ kỳ trước"
@@ -319,11 +316,9 @@ function PeriodDialog({ onClose, period }: { onClose: () => void; period: DutyPe
               ) : null}
 
               {!copyPeriodId ? (
-                <ToggleRow
-                  label="Tự động sinh toàn bộ ca khám từ danh mục (mọi phòng và ca đang dùng)"
-                  checked={autoGenSlots}
-                  onChange={setAutoGenSlots}
-                />
+                <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+                  Kỳ mới chỉ tạo khung lịch. Sau đó chọn <b>Sinh ca khám</b> để xếp từng phòng theo <b>Theo buổi</b> hoặc <b>Hành chính cả ngày</b>; hệ thống không tự tạo cả ba ca.
+                </p>
               ) : null}
             </div>
           </div>
@@ -389,65 +384,52 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
 function GenerateDialog({ open, onClose, periodId }: { open: boolean; onClose: () => void; periodId: number }) {
   const refresh = useRefreshDuty();
   const [roomIds, setRoomIds] = useState<number[]>([]);
-  const [shiftIds, setShiftIds] = useState<number[]>([]);
   const [roleIds, setRoleIds] = useState<number[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [required, setRequired] = useState(1);
   const [skipClosed, setSkipClosed] = useState(true);
+  const [scheduleMode, setScheduleMode] = useState<"THEO_BUOI" | "CA_NGAY" | "DOC_LAP">("THEO_BUOI");
   const catalog = useCatalogOptions(open);
+  const shifts = catalog.shifts.filter((shift) => shift.scheduleMode === scheduleMode);
+  const shiftIds = shifts.map((shift) => shift.value);
   const toggle = (arr: number[], v: number, set: (a: number[]) => void) => set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   const gen = useMutation({
     mutationFn: () => dutyApi.generate(periodId, { roomIds, shiftIds, roleIds, weekdays, requiredCount: required, skipClosedDays: skipClosed }),
     onSuccess: (r) => {
-      toast.success(`Đã tạo ${r.created} ca khám${r.skipped ? ` (bỏ qua ${r.skipped} ca đã có hoặc ngày nghỉ)` : ""}`);
+      toast.success(`Đã tạo ${r.created} ca khám${r.skipped ? ` (bỏ qua ${r.skipped} ca đã có hoặc không cùng cách xếp)` : ""}`);
       refresh();
       onClose();
     },
     onError: (e) => toast.error(errorText(e)),
   });
   const total = weekdays.length * roomIds.length * shiftIds.length * roleIds.length;
+  const scheduleOptions: Array<{ value: "THEO_BUOI" | "CA_NGAY" | "DOC_LAP"; title: string; description: string }> = [
+    { value: "THEO_BUOI", title: "Theo buổi", description: "Tạo các ca Sáng và Chiều. Có thể xếp hai bác sĩ khác nhau hoặc chỉ xếp một buổi." },
+    { value: "CA_NGAY", title: "Hành chính cả ngày", description: "Tạo một ca cả ngày. Không tạo Sáng và Chiều cho cùng phòng, ngày, vai trò." },
+    { value: "DOC_LAP", title: "Ca độc lập", description: "Dùng cho khung giờ chuyên biệt, không thay thế Sáng/Chiều hoặc Hành chính." },
+  ];
+  const options = scheduleOptions.filter((option) => catalog.shifts.some((shift) => shift.scheduleMode === option.value));
   return (
     <Dialog
       open={open}
       onClose={onClose}
       size="lg"
       title="Sinh ca khám hàng loạt"
-      description="Hệ thống tạo ca khám cho mọi ngày × phòng × khung giờ × vai trò đã chọn. Ngày nghỉ lễ sẽ được bỏ qua."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!total || gen.isPending} onClick={() => gen.mutate()}>
-            <Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}
-          </Button>
-        </>
-      }
+      description="Chọn một cách xếp cho các phòng và vai trò trong lần tạo này. Sáng/Chiều và Hành chính không thể cùng tồn tại tại một vị trí."
+      footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button disabled={!total || gen.isPending} onClick={() => gen.mutate()}><Wand2 className="h-4 w-4" /> Tạo {total ? `${total} ô` : "ca khám"}</Button></>}
     >
       <div className="space-y-4">
         <CheckGroup label="Phòng khám" items={catalog.rooms} selected={roomIds} onToggle={(v) => toggle(roomIds, v, setRoomIds)} />
-        <CheckGroup label="Ca khám" items={catalog.shifts} selected={shiftIds} onToggle={(v) => toggle(shiftIds, v, setShiftIds)} />
-        <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} />
         <div>
-          <Label className="mb-1.5 block text-xs">Các ngày trong tuần</Label>
-          <div className="flex flex-wrap gap-1.5">
-            {[1, 2, 3, 4, 5, 6, 7].map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => toggle(weekdays, d, setWeekdays)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${weekdays.includes(d) ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}
-              >
-                {weekdayLabel(d)}
-              </button>
-            ))}
+          <Label className="mb-1.5 block text-xs">Cách xếp lịch</Label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {options.map((option) => <button key={option.value} type="button" onClick={() => setScheduleMode(option.value)} className={`rounded-xl border p-3 text-left transition-colors ${scheduleMode === option.value ? "border-[var(--primary)] bg-[var(--accent)] ring-1 ring-[var(--primary)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}><span className="block text-sm font-semibold">{option.title}</span><span className="mt-1 block text-xs text-[var(--muted-foreground)]">{option.description}</span></button>)}
           </div>
+          <p className="mt-2 text-xs text-[var(--muted-foreground)]">Ca sẽ tạo: {shifts.map((shift) => `${shift.code} (${shift.startTime}–${shift.endTime})`).join(" · ") || "Chưa cấu hình ca thuộc cách xếp này"}</p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Không giới hạn số bác sĩ mà người xếp lịch có thể phân công" />
-          <div className="flex items-end gap-2 pb-2">
-            <Switch checked={skipClosed} onCheckedChange={setSkipClosed} />
-            <span className="text-sm">Bỏ qua ngày nghỉ lễ</span>
-          </div>
-        </div>
+        <CheckGroup label="Vai trò khám" items={catalog.roles} selected={roleIds} onToggle={(v) => toggle(roleIds, v, setRoleIds)} />
+        <div><Label className="mb-1.5 block text-xs">Các ngày trong tuần</Label><div className="flex flex-wrap gap-1.5">{[1,2,3,4,5,6,7].map((d) => <button key={d} type="button" onClick={() => toggle(weekdays,d,setWeekdays)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${weekdays.includes(d) ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card)] hover:bg-[var(--accent)]"}`}>{weekdayLabel(d)}</button>)}</div></div>
+        <div className="grid gap-3 sm:grid-cols-2"><NumField label="Chỉ tiêu bác sĩ mỗi ca" value={required} onChange={(v) => setRequired(Math.max(1, Number(v) || 1))} hint="Có thể xếp bác sĩ khác nhau cho từng buổi" /><div className="flex items-end gap-2 pb-2"><Switch checked={skipClosed} onCheckedChange={setSkipClosed} /><span className="text-sm">Bỏ qua ngày nghỉ lễ</span></div></div>
       </div>
     </Dialog>
   );
@@ -496,7 +478,7 @@ function useCatalogOptions(enabled: boolean) {
   const roles = useQuery({ queryKey: ["duty-role-options"], queryFn: () => dutyApi.roleOptions(), enabled, staleTime: 60_000 });
   return {
     rooms: (rooms.data ?? []).filter((r) => r.active).map((r) => ({ value: r.value, label: r.label })),
-    shifts: (shifts.data ?? []).filter((s) => s.active).map((s) => ({ value: s.value, label: `${s.code} · ${s.startTime}–${s.endTime}` })),
+    shifts: (shifts.data ?? []).filter((s) => s.active).map((s) => ({ value: s.value, label: `${s.code} · ${s.startTime}–${s.endTime}`, code: s.code, startTime: s.startTime, endTime: s.endTime, scheduleMode: s.scheduleMode })),
     roles: (roles.data ?? []).filter((r) => r.active).map((r) => ({ value: r.value, label: r.label })),
   };
 }
@@ -511,17 +493,34 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
   const [shiftId, setShiftId] = useState("");
   const [roleId, setRoleId] = useState("");
   const [required, setRequired] = useState("1");
+  const [switchPrompt, setSwitchPrompt] = useState<"CA_NGAY" | "THEO_BUOI" | null>(null);
+  const payload = () => ({ dutyDate: date, roomId: Number(roomId), shiftId: Number(shiftId), roleId: Number(roleId), requiredCount: Number(required) || 1 });
   const create = useMutation({
-    mutationFn: () =>
-      dutyApi.createSlot(period.id, { dutyDate: date, roomId: Number(roomId), shiftId: Number(shiftId), roleId: Number(roleId), requiredCount: Number(required) || 1 }),
+    mutationFn: () => dutyApi.createSlot(period.id, payload()),
     onSuccess: () => {
       toast.success("Đã thêm ca khám");
       refresh();
       onClose();
     },
+    onError: (e) => {
+      const message = errorText(e);
+      if (message.startsWith("Đổi sang ca Hành chính?")) setSwitchPrompt("CA_NGAY");
+      else if (message.startsWith("Đổi sang lịch Theo buổi?")) setSwitchPrompt("THEO_BUOI");
+      else toast.error(message);
+    },
+  });
+  const switchMode = useMutation({
+    mutationFn: () => dutyApi.switchSlotMode(period.id, { ...payload(), shiftIds: [Number(shiftId)], confirm: true }),
+    onSuccess: (result) => {
+      toast.success(`Đã đổi cách xếp ca${result.affectedAssignments ? ` và xoá ${result.affectedAssignments} phân công cũ` : ""}`);
+      refresh();
+      setSwitchPrompt(null);
+      onClose();
+    },
     onError: (e) => toast.error(errorText(e)),
   });
   return (
+    <>
     <Dialog
       open={open}
       onClose={onClose}
@@ -562,6 +561,18 @@ function SlotDialog({ open, onClose, period }: { open: boolean; onClose: () => v
         <NumField label="Chỉ tiêu bác sĩ" value={Number(required)} onChange={setRequired} hint="Không giới hạn số bác sĩ mà người xếp lịch có thể phân công" />
       </div>
     </Dialog>
+    <ConfirmDialog
+      open={!!switchPrompt}
+      title={switchPrompt === "CA_NGAY" ? "Đổi sang ca Hành chính?" : "Đổi sang lịch Theo buổi?"}
+      message={switchPrompt === "CA_NGAY" ? "Lịch Sáng và Chiều sẽ bị xóa." : "Lịch Hành chính sẽ bị xóa."}
+      confirmText="Đổi ca"
+      cancelText="Không đổi"
+      loading={switchMode.isPending}
+      onClose={() => setSwitchPrompt(null)}
+      onConfirm={() => switchMode.mutate()}
+    />
+
+    </>
   );
 }
 

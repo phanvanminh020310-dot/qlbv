@@ -8,6 +8,7 @@ export { defaultLockAtLocal } from './duty-period-defaults';
 
 export type PeriodStatus = 'NHAP' | 'CONG_BO' | 'DA_CHOT';
 export type Phase = 'NHAP' | 'MO' | 'CHOT';
+export type ShiftScheduleMode = 'THEO_BUOI' | 'CA_NGAY' | 'DOC_LAP';
 export type RequestType = 'NHUONG' | 'DOI' | 'NGOAI_LE';
 export type RequestStatus = 'CHO_NGUOI_NHAN' | 'CHO_DUYET' | 'DA_DUYET' | 'TU_CHOI' | 'HUY';
 
@@ -48,7 +49,7 @@ export interface DutyPeriod {
 }
 
 export interface GridRoom { id: number; code: string; name: string; departmentId: number | null; location: string; sortOrder: number }
-export interface GridShift { id: number; code: string; name: string; startTime: string; endTime: string; color: string; isNight: boolean; sortOrder: number }
+export interface GridShift { id: number; code: string; name: string; startTime: string; endTime: string; color: string; isNight: boolean; scheduleMode: ShiftScheduleMode; sortOrder: number }
 export interface GridRole { id: number; code: string; name: string; requiredTitle: string; sortOrder: number }
 export interface GridDay { date: string; weekday: number; label: string; closed: boolean; closedName: string }
 export interface GridAssignment { id: number; userId: number; fullName: string; title: string; departmentName: string; source: string; note: string }
@@ -250,7 +251,7 @@ export interface LiveMonitorResponse {
 
 export const PHASE_LABEL: Record<Phase, string> = { NHAP: 'Bản nháp', MO: 'Đã công bố', CHOT: 'Đã chốt' };
 export const PHASE_TONE: Record<Phase, 'muted' | 'info' | 'success'> = { NHAP: 'muted', MO: 'info', CHOT: 'success' };
-export const REQUEST_TYPE_LABEL: Record<RequestType, string> = { NHUONG: 'Nhường ca khám', DOI: 'Đổi ca khám', NGOAI_LE: 'Ngoại lệ (KHTH)' };
+export const REQUEST_TYPE_LABEL: Record<RequestType, string> = { NHUONG: 'Nhường ca khám', DOI: 'Đổi ca khám', NGOAI_LE: 'Đổi lịch (KHTH)' };
 export const REQUEST_STATUS_LABEL: Record<RequestStatus, string> = {
   CHO_NGUOI_NHAN: 'Chờ người nhận',
   CHO_DUYET: 'Chờ duyệt',
@@ -470,6 +471,7 @@ export const dutyApi = {
   logs: (id: number) => get<LogRow[]>(`/duty/periods/${id}/logs`),
   generate: (id: number, body: Json) => post<{ created: number; skipped: number; days: number }>(`/duty/periods/${id}/slots/generate`, body),
   createSlot: (id: number, body: Json) => post<GridSlot>(`/duty/periods/${id}/slots`, body),
+  switchSlotMode: (id: number, body: Json) => post<{ removed: number; affectedAssignments: number; created: number }>(`/duty/periods/${id}/slots/switch-mode`, body),
   updateSlot: (id: number, body: Json) => put<GridSlot>(`/duty/slots/${id}`, body),
   deleteSlot: (id: number, body: Json) => post<{ ok: boolean }>(`/duty/slots/${id}/delete`, body),
   candidates: (slotId: number, q?: string) => get<Candidate[]>(`/duty/slots/${slotId}/candidates${q ? `?q=${encodeURIComponent(q)}` : ''}`),
@@ -497,6 +499,7 @@ export const dutyApi = {
   requests: (box: 'mine' | 'incoming' | 'approval' | 'all', periodId?: number) =>
     get<RequestRow[]>(`/duty/requests?box=${box}${periodId ? `&periodId=${periodId}` : ''}`),
   createRequest: (body: Json) => post<RequestRow>('/duty/requests', body),
+  createDepartmentChange: (body: Json) => post<RequestRow>('/duty/requests/department-change', body),
   acceptRequest: (id: number) => post<{ ok: boolean; status: string; reason: string }>(`/duty/requests/${id}/accept`),
   declineRequest: (id: number, note?: string) => post<{ ok: boolean }>(`/duty/requests/${id}/decline`, { note: note ?? '' }),
   cancelRequest: (id: number) => post<{ ok: boolean }>(`/duty/requests/${id}/cancel`),
@@ -521,7 +524,7 @@ export const dutyApi = {
   },
   roomOptions: () => get<Array<{ value: number; label: string; departmentId: number | null; active: boolean }>>('/duty/rooms/options'),
   shiftOptions: () =>
-    get<Array<{ value: number; label: string; code: string; name: string; startTime: string; endTime: string; isNight: boolean; color: string; active: boolean }>>('/duty/shifts/options'),
+    get<Array<{ value: number; label: string; code: string; name: string; startTime: string; endTime: string; isNight: boolean; scheduleMode: ShiftScheduleMode; color: string; active: boolean }>>('/duty/shifts/options'),
   roleOptions: () => get<Array<{ value: number; label: string; name: string; requiredTitle: string; active: boolean }>>('/duty/roles/options'),
   exportPath: (id: number) => `/duty/periods/${id}/export`,
 };

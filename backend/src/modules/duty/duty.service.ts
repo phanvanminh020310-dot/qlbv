@@ -297,6 +297,17 @@ export class DutyService {
 
     const oldSlots = await tx.select().from(dutySlots).where(eq(dutySlots.periodId, sourcePeriodId));
     if (!oldSlots.length) return { copiedSlots: 0, copiedAssignments: 0 };
+    const shiftModes = new Map((await tx.select({ id: dutyShiftTypes.id, scheduleMode: dutyShiftTypes.scheduleMode }).from(dutyShiftTypes)).map((shift) => [shift.id, shift.scheduleMode]));
+    const sourceWays = new Map<string, Set<string>>();
+    for (const slot of oldSlots) {
+      const key = `${slot.dutyDate}|${slot.roomId}|${slot.roleId}`;
+      const modes = sourceWays.get(key) ?? new Set<string>();
+      modes.add(shiftModes.get(slot.shiftId) ?? 'THEO_BUOI');
+      sourceWays.set(key, modes);
+    }
+    if ([...sourceWays.values()].some((modes) => modes.has('THEO_BUOI') && modes.has('CA_NGAY'))) {
+      throw new ConflictException('Kỳ lịch gốc có cả lịch Theo buổi và Hành chính cho cùng một vị trí. Hãy đổi cách xếp ca ở kỳ gốc trước khi sao chép.');
+    }
 
     const activeRooms = new Set((await tx.select({ id: dutyRooms.id }).from(dutyRooms).where(eq(dutyRooms.active, true))).map((r) => r.id));
     const activeShifts = new Set((await tx.select({ id: dutyShiftTypes.id }).from(dutyShiftTypes).where(eq(dutyShiftTypes.active, true))).map((s) => s.id));
@@ -399,14 +410,14 @@ export class DutyService {
 
   /** Tự động sinh ca khám chuẩn từ danh mục cho toàn bộ phòng và ca đang mở */
   private async autoGenerateStandardSlots(
-    tx: Executor,
+    tx: Tx,
     actorUserId: number,
     periodId: number,
     startDate: string,
     endDate: string,
   ) {
     const rooms = await tx.select().from(dutyRooms).where(eq(dutyRooms.active, true));
-    const shifts = await tx.select().from(dutyShiftTypes).where(eq(dutyShiftTypes.active, true));
+    const shifts = await tx.select().from(dutyShiftTypes).where(and(eq(dutyShiftTypes.active, true), eq(dutyShiftTypes.scheduleMode, 'THEO_BUOI')));
     const roles = await tx.select().from(dutyRoles).where(eq(dutyRoles.active, true));
 
     if (!rooms.length || !shifts.length || !roles.length) {
@@ -442,7 +453,8 @@ export class DutyService {
     }
 
     if (!values.length) return { created: 0 };
-    const inserted = await tx.insert(dutySlots).values(values).onConflictDoNothing().returning({ id: dutySlots.id });
+    const accepted = await this.filterScheduleModeConflicts(tx, periodId, values, new Map(shifts.map((shift) => [shift.id, shift.scheduleMode])));
+    const inserted = accepted.length ? await tx.insert(dutySlots).values(accepted).onConflictDoNothing().returning({ id: dutySlots.id }) : [];
     return { created: inserted.length };
   }
 
@@ -823,6 +835,51 @@ export class DutyService {
     return this.db.db.select().from(dutyRooms).where(inArray(dutyRooms.id, ids));
   }
 
+  /**
+   * Sáng/chiều và Hành chính là hai cách xếp thay thế cho cùng phòng × ngày × vai trò.
+   * Khóa tư vấn theo từng tổ hợp trước khi kiểm tra/ghi để hai lần tạo đồng thời cũng không
+   * thể tạo ra cả hai cách xếp. DOC_LAP là ca chuyên biệt và không tham gia loại trừ này.
+   */
+  private async filterScheduleModeConflicts(
+    tx: Tx,
+    periodId: number,
+    values: Array<typeof dutySlots.$inferInsert>,
+    shiftModes: Map<number, 'THEO_BUOI' | 'CA_NGAY' | 'DOC_LAP'>,
+  ) {
+    const keys = [...new Set(values.map((v) => `${v.dutyDate}|${v.roomId}|${v.roleId}`))];
+    for (const key of keys) {
+      await tx.execute(sql`select pg_advisory_xact_lock(9202, hashtext(${key}))`);
+    }
+    if (!values.length) return values;
+    const dates = [...new Set(values.map((v) => v.dutyDate))] as string[];
+    const rooms = [...new Set(values.map((v) => v.roomId))] as number[];
+    const roles = [...new Set(values.map((v) => v.roleId))] as number[];
+    const existing = await tx
+      .select({ dutyDate: dutySlots.dutyDate, roomId: dutySlots.roomId, roleId: dutySlots.roleId, scheduleMode: dutyShiftTypes.scheduleMode })
+      .from(dutySlots)
+      .innerJoin(dutyShiftTypes, eq(dutyShiftTypes.id, dutySlots.shiftId))
+      .where(and(eq(dutySlots.periodId, periodId), inArray(dutySlots.dutyDate, dates), inArray(dutySlots.roomId, rooms), inArray(dutySlots.roleId, roles)));
+    const present = new Map<string, Set<string>>();
+    for (const row of existing) {
+      const key = `${row.dutyDate}|${row.roomId}|${row.roleId}`;
+      const modes = present.get(key) ?? new Set<string>();
+      modes.add(row.scheduleMode);
+      present.set(key, modes);
+    }
+    return values.filter((value) => {
+      const incoming = shiftModes.get(value.shiftId) ?? 'THEO_BUOI';
+      const modes = present.get(`${value.dutyDate}|${value.roomId}|${value.roleId}`);
+      return !(incoming === 'CA_NGAY' && modes?.has('THEO_BUOI')) && !(incoming === 'THEO_BUOI' && modes?.has('CA_NGAY'));
+    });
+  }
+
+  private assertSingleSchedulingWay(shifts: Array<{ scheduleMode: 'THEO_BUOI' | 'CA_NGAY' | 'DOC_LAP' }>) {
+    const modes = new Set(shifts.map((s) => s.scheduleMode));
+    if (modes.has('THEO_BUOI') && modes.has('CA_NGAY')) {
+      throw new BadRequestException('Mỗi lần tạo chỉ chọn Theo buổi hoặc Hành chính cả ngày; không chọn đồng thời hai cách xếp.');
+    }
+  }
+
   /** Tạo hàng loạt ô: ngày (theo thứ) × phòng × ca × vai trò, bỏ qua ngày nghỉ và ca khám đã có */
   async generateSlots(user: AccessContext, periodId: number, dto: GenerateSlotsDto) {
     const p = await this.core.getPeriod(periodId);
@@ -840,6 +897,7 @@ export class DutyService {
     }
     const shifts = await this.db.db.select().from(dutyShiftTypes).where(inArray(dutyShiftTypes.id, shiftIds));
     if (shifts.length !== shiftIds.length || shifts.some((s) => !s.active)) throw new BadRequestException('Ca khám không tồn tại hoặc đang tắt');
+    this.assertSingleSchedulingWay(shifts);
     const roles = await this.db.db.select().from(dutyRoles).where(inArray(dutyRoles.id, roleIds));
     if (roles.length !== roleIds.length || roles.some((r) => !r.active)) throw new BadRequestException('Vai trò khám không tồn tại hoặc đang tắt');
 
@@ -867,9 +925,20 @@ export class DutyService {
       }
     }
     let created = 0;
+    let preventedByMode = 0;
     if (values.length) {
-      const inserted = await this.db.db.insert(dutySlots).values(values).onConflictDoNothing().returning({ id: dutySlots.id });
-      created = inserted.length;
+      const res = await this.db.db.transaction(async (tx) => {
+        const accepted = await this.filterScheduleModeConflicts(
+          tx,
+          periodId,
+          values,
+          new Map(shifts.map((shift) => [shift.id, shift.scheduleMode])),
+        );
+        const inserted = accepted.length ? await tx.insert(dutySlots).values(accepted).onConflictDoNothing().returning({ id: dutySlots.id }) : [];
+        return { created: inserted.length, preventedByMode: values.length - accepted.length };
+      });
+      created = res.created;
+      preventedByMode = res.preventedByMode;
     }
     await this.core.log(this.db.db, {
       periodId,
@@ -878,7 +947,7 @@ export class DutyService {
       detail: { created, attempted: values.length, rooms: rooms.map((r) => r.code), shifts: shifts.map((s) => s.code), roles: roles.map((r) => r.code), weekdays },
     });
     this.core.emit('slots', periodId);
-    return { created, skipped: values.length - created, days: days.length };
+    return { created, skipped: values.length - created, preventedByMode, days: days.length };
   }
 
   async createSlot(user: AccessContext, periodId: number, dto: SlotDto) {
@@ -888,6 +957,10 @@ export class DutyService {
     const [room] = await this.roomsByIds([dto.roomId]);
     if (!room) throw new NotFoundException('Không tìm thấy phòng khám');
     this.core.ensureManageSchedule(user, `Tạo ca khám cho phòng ${room.code}`);
+    const [shift] = await this.db.db.select().from(dutyShiftTypes).where(eq(dutyShiftTypes.id, dto.shiftId)).limit(1);
+    if (!shift || !shift.active) throw new BadRequestException('Ca khám không tồn tại hoặc đang tắt');
+    const [role] = await this.db.db.select().from(dutyRoles).where(eq(dutyRoles.id, dto.roleId)).limit(1);
+    if (!role || !role.active) throw new BadRequestException('Vai trò khám không tồn tại hoặc đang tắt');
     const [dup] = await this.db.db
       .select({ id: dutySlots.id })
       .from(dutySlots)
@@ -902,13 +975,68 @@ export class DutyService {
       )
       .limit(1);
     if (dup) throw new ConflictException('Ca khám này đã tồn tại');
-    const [row] = await this.db.db
-      .insert(dutySlots)
-      .values({ periodId, dutyDate: dto.dutyDate, roomId: dto.roomId, shiftId: dto.shiftId, roleId: dto.roleId, requiredCount: dto.requiredCount ?? 1, note: dto.note ?? '' })
-      .returning();
+    const [row] = await this.db.db.transaction(async (tx) => {
+      const values = [{ periodId, dutyDate: dto.dutyDate, roomId: dto.roomId, shiftId: dto.shiftId, roleId: dto.roleId, requiredCount: dto.requiredCount ?? 1, note: dto.note ?? '' }];
+      const accepted = await this.filterScheduleModeConflicts(tx, periodId, values, new Map([[shift.id, shift.scheduleMode]]));
+      if (!accepted.length) {
+        const changingToDay = shift.scheduleMode === 'CA_NGAY';
+        throw new ConflictException(changingToDay ? 'Đổi sang ca Hành chính? Lịch Sáng và Chiều sẽ bị xóa.' : 'Đổi sang lịch Theo buổi? Lịch Hành chính sẽ bị xóa.');
+      }
+      return tx.insert(dutySlots).values(accepted).returning();
+    });
     await this.core.log(this.db.db, { periodId, slotId: row.id, action: 'SLOT_CREATE', actorId: user.id, detail: { date: dto.dutyDate, room: room.code } });
     this.core.emit('slots', periodId);
     return this.slotDetail(row.id);
+  }
+
+  /**
+   * Chuyển cách xếp đã có. Đây là đường duy nhất được phép xoá ca đối nghịch;
+   * UI phải gửi confirm=true sau câu hỏi ngắn, và log lưu rõ ca/nhân sự bị thay.
+   */
+  async switchSlotMode(user: AccessContext, periodId: number, dto: import('./duty.dto').SwitchSlotModeDto) {
+    if (!dto.confirm) throw new BadRequestException('Cần xác nhận đổi ca trước khi thay lịch hiện có');
+    const period = await this.core.getPeriod(periodId);
+    if (this.core.phaseOf(period).locked) throw new ConflictException('Kỳ lịch đã chốt — không thể đổi cách xếp ca');
+    if (dto.dutyDate < period.startDate || dto.dutyDate > period.endDate) throw new BadRequestException('Ngày khám nằm ngoài kỳ lịch');
+    const [room] = await this.roomsByIds([dto.roomId]);
+    if (!room) throw new NotFoundException('Không tìm thấy phòng khám');
+    this.core.ensureManageSchedule(user, `Đổi cách xếp ca phòng ${room.code}`);
+    const shiftIds = [...new Set(dto.shiftIds)];
+    const selectedShifts = await this.db.db.select().from(dutyShiftTypes).where(inArray(dutyShiftTypes.id, shiftIds));
+    if (selectedShifts.length !== shiftIds.length || selectedShifts.some((shift) => !shift.active)) throw new BadRequestException('Ca khám không tồn tại hoặc đang tắt');
+    this.assertSingleSchedulingWay(selectedShifts);
+    const mode = selectedShifts.find((shift) => shift.scheduleMode !== 'DOC_LAP')?.scheduleMode;
+    if (!mode) throw new BadRequestException('Chỉ chuyển giữa lịch Theo buổi và ca Hành chính cả ngày');
+    // Theo buổi là một bố cục: đổi về Theo buổi luôn tạo đủ các ca Sáng/Chiều đã cấu hình.
+    const shifts = mode === 'THEO_BUOI'
+      ? await this.db.db.select().from(dutyShiftTypes).where(and(eq(dutyShiftTypes.active, true), eq(dutyShiftTypes.scheduleMode, 'THEO_BUOI')))
+      : selectedShifts;
+    const [role] = await this.db.db.select({ id: dutyRoles.id }).from(dutyRoles).where(eq(dutyRoles.id, dto.roleId)).limit(1);
+    if (!role) throw new NotFoundException('Không tìm thấy vai trò khám');
+
+    const result = await this.db.db.transaction(async (tx) => {
+      // Khóa/đọc cùng tổ hợp trước khi thay thế để bảo toàn loại trừ hai mode.
+      await this.filterScheduleModeConflicts(tx, periodId, [{ periodId, dutyDate: dto.dutyDate, roomId: dto.roomId, roleId: dto.roleId, shiftId: shifts[0].id, requiredCount: dto.requiredCount ?? 1 }], new Map([[shifts[0].id, mode]]));
+      const existing = await tx
+        .select({ id: dutySlots.id, shiftId: dutySlots.shiftId, scheduleMode: dutyShiftTypes.scheduleMode })
+        .from(dutySlots)
+        .innerJoin(dutyShiftTypes, eq(dutyShiftTypes.id, dutySlots.shiftId))
+        .where(and(eq(dutySlots.periodId, periodId), eq(dutySlots.dutyDate, dto.dutyDate), eq(dutySlots.roomId, dto.roomId), eq(dutySlots.roleId, dto.roleId)));
+      const opposite = mode === 'CA_NGAY' ? 'THEO_BUOI' : 'CA_NGAY';
+      const removeIds = existing.filter((slot) => slot.scheduleMode === opposite).map((slot) => slot.id);
+      const removedAssignments = removeIds.length
+        ? await tx.select({ slotId: dutyAssignments.slotId, userId: dutyAssignments.userId }).from(dutyAssignments).where(inArray(dutyAssignments.slotId, removeIds))
+        : [];
+      if (removeIds.length) await tx.delete(dutySlots).where(inArray(dutySlots.id, removeIds));
+      const targetExisting = new Set(existing.filter((slot) => slot.scheduleMode === mode).map((slot) => slot.shiftId));
+      const newValues = shifts.filter((shift) => !targetExisting.has(shift.id)).map((shift) => ({ periodId, dutyDate: dto.dutyDate, roomId: dto.roomId, roleId: dto.roleId, shiftId: shift.id, requiredCount: dto.requiredCount ?? 1, note: dto.note ?? '' }));
+      const added = newValues.length ? await tx.insert(dutySlots).values(newValues).returning({ id: dutySlots.id }) : [];
+      await this.core.log(tx, { periodId, action: 'SLOT_MODE_SWITCH', actorId: user.id, reason: mode === 'CA_NGAY' ? 'Đổi sang ca Hành chính' : 'Đổi sang lịch Theo buổi', detail: { date: dto.dutyDate, room: room.code, roleId: dto.roleId, mode, removedSlotIds: removeIds, removedAssignments, addedSlotIds: added.map((slot) => slot.id) } });
+      return { removed: removeIds.length, affectedAssignments: removedAssignments.length, created: added.length };
+    });
+    this.core.emit('slots', periodId);
+    this.core.emit('assign', periodId);
+    return result;
   }
 
   async updateSlot(user: AccessContext, slotId: number, dto: UpdateSlotDto) {
