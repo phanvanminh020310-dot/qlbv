@@ -55,11 +55,31 @@ export class BackupsController {
     return this.service.upload(req, name, user);
   }
 
+  @Post('upload/bundle')
+  @RequirePermissions('backup.restore')
+  @ApiOperation({ summary: 'Tải lên một bundle QLBS đầy đủ (.bundle.tar.gz) có kiểm tra SHA-256' })
+  uploadPortableBundle(@Req() req: Request, @Query('name') name: string, @CurrentUser() user: AccessContext) {
+    return this.service.uploadPortableBundle(req, name, user);
+  }
+
   @Get(':name')
   @RequirePermissions('backup.view')
   @ApiOperation({ summary: 'Chi tiết một bản sao lưu (số dòng từng bảng, có phục hồi được không)' })
   detail(@Param('name') name: string) {
     return this.service.detail(name);
+  }
+
+  @Get(':name/bundle/download')
+  @RequirePermissions('backup.view')
+  @ApiOperation({ summary: 'Tải một file bundle đầy đủ (CSDL + HSBA/ảnh/phông + manifest kiểm tra) để cất ngoài máy chủ' })
+  async downloadPortableBundle(@Param('name') name: string, @Res({ passthrough: true }) res: Response) {
+    const f = await this.service.downloadPortableBundle(name);
+    res.set({
+      'Content-Type': 'application/gzip',
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(f.fileName)}"`,
+      'Cache-Control': 'no-store',
+    });
+    return new StreamableFile(f.stream);
   }
 
   @Get(':name/storage/download')

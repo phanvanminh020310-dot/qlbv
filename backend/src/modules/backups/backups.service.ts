@@ -31,12 +31,16 @@ import { QueueService } from '../../infra/queue/queue.service';
 import {
   backupFileName,
   bundleArtifactNames,
+  createPortableBundleStream,
   cleanupBackupTemporaryArtifacts,
   cleanupStorageWriteTemporaryArtifacts,
+  importPortableBundle,
+  manifestFileName,
   restoreStorageArchive,
   rotateBackups,
   storageArchiveFileName,
   validateStorageArchive,
+  verifyBackupBundle,
   writeBackup,
   writeStorageArchive,
   type SqlExecutor,
@@ -224,6 +228,8 @@ export class BackupsService {
       counts,
       storage: {
         included: storageSize > 0,
+        // Chỉ bộ có manifest SHA-256 mới được đóng/tải một-file và nhập lại qua giao diện.
+        portable: storageSize > 0 && fs.existsSync(path.join(this.dir, manifestFileName(path.basename(full)))),
         fileName: storageSize ? storageName : null,
         size: storageSize,
       },
@@ -259,6 +265,17 @@ export class BackupsService {
     const storagePath = path.join(this.dir, storageName);
     if (!fs.existsSync(storagePath)) throw new NotFoundException('Bản sao lưu này chưa có gói tệp lưu trữ đi kèm');
     return { stream: fs.createReadStream(storagePath), fileName: storageName, size: fs.statSync(storagePath).size };
+  }
+
+  /** Một file .bundle.tar.gz tự đủ để cất ngoài máy chủ và nhập lại đầy đủ sau này. */
+  async downloadPortableBundle(name: string): Promise<{ stream: Readable; fileName: string }> {
+    const full = this.resolve(name);
+    try {
+      await verifyBackupBundle(this.dir, path.basename(full));
+      return createPortableBundleStream(this.dir, path.basename(full));
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'Không thể đóng gói bộ backup');
+    }
   }
 
   /* ------------------------------------------------------------ Tạo / xoá / tải lên */
@@ -383,6 +400,51 @@ export class BackupsService {
     }
   }
 
+  /**
+   * Nhập một gói .bundle.tar.gz do nút “Tải bộ đầy đủ” tạo. Khác với JSON cũ,
+   * endpoint này bắt buộc manifest SHA-256 cho cả CSDL và storage trước khi nhận.
+   */
+  async uploadPortableBundle(stream: Readable, originalName: string, user: AccessContext) {
+    fs.mkdirSync(this.dir, { recursive: true });
+    if (!String(originalName ?? '').toLowerCase().endsWith('.bundle.tar.gz')) {
+      throw new BadRequestException('Chỉ nhận tệp .bundle.tar.gz được tải từ QLBS');
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const temporary = path.join(this.dir, `.upload-${stamp}.bundle.partial`);
+    const maxBytes = 20 * 1024 * 1024 * 1024; // 20 GiB: gói có thể chứa toàn bộ tệp HSBA.
+    let received = 0;
+    stream.on('data', (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > maxBytes) stream.destroy(new Error('Gói backup vượt quá 20 GiB'));
+    });
+    const finalName = backupFileName('tai-len-day-du');
+    try {
+      await pipeline(stream, fs.createWriteStream(temporary, { mode: 0o600 }));
+      if (received === 0) throw new BadRequestException('Tệp rỗng');
+      await importPortableBundle(temporary, this.dir, finalName);
+      let info;
+      try {
+        info = await this.detail(finalName);
+      } catch (error) {
+        for (const artifact of bundleArtifactNames(finalName)) fs.rmSync(path.join(this.dir, artifact), { force: true });
+        throw error;
+      }
+      void this.audit.log({
+        userId: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        action: 'UPLOAD',
+        module: 'BACKUP',
+        entity: 'backup_bundle',
+        entityId: finalName,
+        description: `Tải lên bộ backup đầy đủ ${originalName} → ${finalName}`,
+      });
+      return { message: `Đã tải lên và kiểm tra bộ backup đầy đủ ${originalName}`, ...info };
+    } finally {
+      fs.rmSync(temporary, { force: true });
+    }
+  }
+
   /* ------------------------------------------------------------------ Phục hồi */
 
   async restore(name: string, confirm: string, user: AccessContext, meta: { ip?: string; userAgent?: string }) {
@@ -403,9 +465,15 @@ export class BackupsService {
       if (!check.ok) throw new BadRequestException(check.reason);
       // Backup từ phiên bản mới có archive toàn bộ uploads. Bản cũ vẫn phục hồi
       // như trước (dữ liệu khuôn mặt nằm trong DB và được dựng lại ở bước cuối).
-      const sourceStoragePath = path.join(this.dir, storageArchiveFileName(path.basename(full)));
+      const sourceName = path.basename(full);
+      const sourceStoragePath = path.join(this.dir, storageArchiveFileName(sourceName));
       const hasStorageArchive = fs.existsSync(sourceStoragePath);
       if (hasStorageArchive) {
+        // Bundle mới phải qua SHA-256; backup legacy/pre-restore chưa có manifest vẫn được
+        // hỗ trợ để không cắt đường khôi phục, nhưng archive luôn được kiểm tra an toàn.
+        if (fs.existsSync(path.join(this.dir, manifestFileName(sourceName)))) {
+          await verifyBackupBundle(this.dir, sourceName);
+        }
         await validateStorageArchive(sourceStoragePath);
         heldStorageArchive = this.holdStorageArchive(sourceStoragePath);
         await validateStorageArchive(heldStorageArchive);

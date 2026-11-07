@@ -1,8 +1,9 @@
 /** Full QLBS backup bundles: dynamic tables + uploads/faces + safe retention/temporary cleanup. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createWriteStream, mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as zlib from "node:zlib";
@@ -12,7 +13,10 @@ import {
   backupFileName,
   cleanupBackupTemporaryArtifacts,
   cleanupStorageWriteTemporaryArtifacts,
+  createPortableBundleStream,
+  importPortableBundle,
   manifestFileName,
+  verifyBackupBundle,
   restoreStorageArchive,
   rotateBackups,
   storageArchiveFileName,
@@ -72,6 +76,43 @@ test("backup bundle captures every current public table and all persistent files
   assert.equal(existsSync(join(restoreDir, "obsolete.txt")), false);
   assert.equal(readFileSync(join(restoreDir, "faces", "user_41_avatar.jpg"), "utf8"), "face-image-bytes");
   assert.equal(readFileSync(join(restoreDir, "hsba", "99", "attachment.pdf"), "utf8"), "clinical-attachment");
+});
+
+test("portable bundle round-trips CSDL, storage and SHA-256 manifest as one external file", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "qlbs-backup-portable-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const backups = join(root, "backups");
+  const uploads = join(root, "uploads");
+  file(join(uploads, "hsba", "42", "signed.pdf"), "signed clinical bytes");
+
+  const pg = await PGlite.create();
+  t.after(() => pg.close());
+  await pg.exec("CREATE TABLE users (id serial primary key, username text); INSERT INTO users (username) VALUES ('doctor');");
+  await pg.exec("CREATE TABLE roles (id serial primary key, code text); INSERT INTO roles (code) VALUES ('ADMIN');");
+  await pg.exec("CREATE TABLE permissions (id serial primary key, code text); INSERT INTO permissions (code) VALUES ('backup.restore');");
+  const sourceName = backupFileName("portable-source");
+  const db = drizzle(pg);
+  await writeBackupBundle({ execute: db.execute.bind(db) } as any, {
+    backupsDir: backups,
+    storageDir: uploads,
+    fileName: sourceName,
+  });
+
+  const exported = join(root, "offsite.bundle.tar.gz");
+  const stream = createPortableBundleStream(backups, sourceName);
+  await pipeline(stream.stream, createWriteStream(exported));
+  const imported = join(root, "imported-backups");
+  const targetName = backupFileName("portable-import");
+  await importPortableBundle(exported, imported, targetName);
+  assert.ok(existsSync(join(imported, targetName)));
+  assert.ok(existsSync(join(imported, storageArchiveFileName(targetName))));
+  assert.ok(existsSync(join(imported, manifestFileName(targetName))));
+  const restored = join(root, "imported-uploads");
+  await restoreStorageArchive(join(imported, storageArchiveFileName(targetName)), restored);
+  assert.equal(readFileSync(join(restored, "hsba", "42", "signed.pdf"), "utf8"), "signed clinical bytes");
+  await verifyBackupBundle(imported, targetName);
+  writeFileSync(join(imported, targetName), "tamper", { flag: "a" });
+  await assert.rejects(verifyBackupBundle(imported, targetName), /SHA-256/);
 });
 
 test("storage archive validation refuses links before anything is extracted", async (t) => {

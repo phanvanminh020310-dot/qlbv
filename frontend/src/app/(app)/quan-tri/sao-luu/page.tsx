@@ -56,7 +56,7 @@ interface BackupDetail {
   tables: number;
   totalRows: number;
   counts: Record<string, number>;
-  storage: { included: boolean; fileName: string | null; size: number };
+  storage: { included: boolean; portable: boolean; fileName: string | null; size: number };
   restorable: boolean;
   reason?: string;
 }
@@ -164,12 +164,14 @@ export default function BackupsPage() {
   });
 
   const upload = useMutation({
-    mutationFn: (file: File) =>
-      apiFetch<{ message: string; name: string }>(`/backups/upload?name=${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        body: file,
-      }),
-    onMutate: () => toast.loading('Đang tải tệp lên và kiểm tra…', { id: 'upload' }),
+    mutationFn: (file: File) => {
+      const isPortableBundle = file.name.toLowerCase().endsWith('.bundle.tar.gz');
+      return apiFetch<{ message: string; name: string }>(
+        `${isPortableBundle ? '/backups/upload/bundle' : '/backups/upload'}?name=${encodeURIComponent(file.name)}`,
+        { method: 'POST', body: file },
+      );
+    },
+    onMutate: () => toast.loading('Đang tải backup lên và kiểm tra toàn vẹn…', { id: 'upload' }),
     onSuccess: async (res) => {
       toast.success(`${res.message} → ${res.name}`, { id: 'upload', duration: 8000 });
       await refresh();
@@ -233,6 +235,14 @@ export default function BackupsPage() {
     }
   };
 
+  const downloadPortableBundle = async (name: string) => {
+    try {
+      await downloadFile(`/backups/${encodeURIComponent(name)}/bundle/download`, `${name.replace(/\.json(?:\.gz)?$/, '')}.bundle.tar.gz`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const items = data?.items ?? [];
 
   return (
@@ -255,12 +265,12 @@ export default function BackupsPage() {
                 <input
                   ref={fileInput}
                   type="file"
-                  accept=".gz,.json,application/gzip,application/json"
+                  accept=".bundle.tar.gz,.gz,.json,application/gzip,application/json"
                   className="hidden"
                   onChange={onPickFile}
                 />
                 <Button variant="outline" onClick={() => fileInput.current?.click()} loading={upload.isPending}>
-                  <Upload /> Tải lên bản sao lưu
+                  <Upload /> Tải lên backup / bundle
                 </Button>
               </>
             ) : null}
@@ -293,7 +303,7 @@ export default function BackupsPage() {
         <div className="space-y-1">
           <div>
             Bản sao lưu được lưu trên chính máy chủ (thư mục <code className="font-mono text-xs">{data?.dir ?? '…'}</code>
-            ). Nếu máy chủ hỏng ổ đĩa, các bản này cũng mất — hãy <b>tải về</b> định kỳ và cất ở nơi khác.
+). Nếu máy chủ hỏng ổ đĩa, các bản này cũng mất — mở chi tiết một bộ đầy đủ, chọn <b>Tải bộ đầy đủ</b> (.bundle.tar.gz) và cất ở nơi khác. Tệp đó có thể tải lên lại để phục hồi cả CSDL lẫn tệp lưu trữ.
           </div>
           <div className="text-xs opacity-80">
             Mỗi bộ mới gồm CSDL và tệp lưu trữ (HSBA, phông, ảnh khuôn mặt). Hệ thống chạy lúc 23:30 hằng ngày, đang giữ {data?.retention?.keepCount ?? 3} bộ mới nhất; chỉnh tại <i>Cấu hình hệ thống → Sao lưu & lưu trữ</i>.
@@ -389,9 +399,16 @@ export default function BackupsPage() {
                 <Download /> Tải CSDL
               </Button>
               {detail?.storage.included && detail.storage.fileName ? (
-                <Button variant="outline" onClick={() => downloadStorage(detailName, detail.storage.fileName!)}>
-                  <Download /> Tải tệp lưu trữ
-                </Button>
+                <>
+                  {detail.storage.portable ? (
+                    <Button variant="outline" onClick={() => downloadPortableBundle(detailName)}>
+                      <Download /> Tải bộ đầy đủ
+                    </Button>
+                  ) : null}
+                  <Button variant="outline" onClick={() => downloadStorage(detailName, detail.storage.fileName!)}>
+                    <Download /> Tải tệp lưu trữ
+                  </Button>
+                </>
               ) : null}
               {canRestore && detail?.restorable ? (
                 <Button
