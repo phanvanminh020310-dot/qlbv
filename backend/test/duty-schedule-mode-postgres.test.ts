@@ -57,7 +57,8 @@ test("PostgreSQL: Theo buổi and Hành chính are exclusive, switch is explicit
     INSERT INTO duty_roles (id, code, name) VALUES (1, 'BS', 'Bác sĩ khám');
     INSERT INTO duty_periods (id, name, start_date, end_date, status, lock_at) VALUES
       (1, 'Kỳ nháp theo buổi', '2027-01-04', '2027-01-10', 'NHAP', '2027-01-03T17:00:00+07:00'),
-      (2, 'Kỳ KHTH duyệt', '2027-02-01', '2027-02-07', 'CONG_BO', '2027-01-31T17:00:00+07:00');
+      (2, 'Kỳ KHTH duyệt', '2027-02-01', '2027-02-07', 'CONG_BO', '2027-01-31T17:00:00+07:00'),
+      (3, 'Kỳ đang diễn ra', '2027-03-03', '2027-03-03', 'CONG_BO', '2027-03-02T17:00:00+07:00');
   `);
 
   const database = { db: drizzle(pg, { schema }) };
@@ -132,4 +133,30 @@ test("PostgreSQL: Theo buổi and Hành chính are exclusive, switch is explicit
   assert.equal(history.length, 1, "an approved KHTH replacement appears in the adjustment-history report, not only in the request list");
   assert.equal(history[0].removedName, "Bác sĩ cũ");
   assert.equal(history[0].addedName, "Bác sĩ thay");
+
+  // Hành chính khoa must be able to submit an exception proposal while the
+  // chosen shift is live; KHTH still owns the later validation/approval.
+  await pg.exec(`
+    INSERT INTO duty_slots (id, period_id, duty_date, room_id, shift_id, role_id) VALUES (30, 3, '2027-03-03', 1, 1, 1);
+    INSERT INTO duty_assignments (slot_id, user_id, source, created_by) VALUES (30, 3, 'PHAN_CONG', 1);
+  `);
+  const originalNow = Date.now;
+  try {
+    Date.now = () => Date.parse('2027-03-03T09:00:00+07:00');
+    const activeRequest = await requests.createDepartmentChange(scheduler as any, {
+      slotId: 30, targetUserId: 3, replacementUserId: 4, reason: 'Bác sĩ cần được thay ngay trong ca đang diễn ra',
+    });
+    assert.equal(activeRequest.status, 'CHO_DUYET', 'a live shift can be proposed to KHTH without silently editing the roster');
+
+    Date.now = () => Date.parse('2027-03-03T12:00:00+07:00');
+    await assert.rejects(
+      requests.createDepartmentChange(scheduler as any, {
+        slotId: 30, targetUserId: 3, replacementUserId: 4, reason: 'Không được sửa ca đã kết thúc',
+      }),
+      /Ca đã kết thúc/,
+      'completed shifts remain immutable clinical history',
+    );
+  } finally {
+    Date.now = originalNow;
+  }
 });

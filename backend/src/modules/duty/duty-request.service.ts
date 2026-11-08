@@ -303,7 +303,9 @@ export class DutyRequestService {
     this.core.ensureManageSchedule(user, 'Gửi yêu cầu đổi lịch khám');
     const slot = await this.core.getSlot(dto.slotId);
     if (slot.periodStatus === 'NHAP') throw new ConflictException('Kỳ lịch chưa được công bố');
-    if (this.core.toEngineSlot(slot).start <= Date.now()) throw new ConflictException('Ca đã bắt đầu, không thể yêu cầu thay đổi');
+    // A department manager may urgently propose a replacement while the shift is
+    // underway. Only completed shifts are clinical history and must not change.
+    if (this.core.toEngineSlot(slot).end <= Date.now()) throw new ConflictException('Ca đã kết thúc, không thể yêu cầu thay đổi lịch sử');
     if (dto.targetUserId === dto.replacementUserId) throw new BadRequestException('Bác sĩ thay không thể là bác sĩ đang được xếp');
     if (!(await this.assignmentOf(slot.id, dto.targetUserId))) throw new ConflictException('Bác sĩ đang xếp không còn trong ca đã chọn');
     const people = await this.core.loadUsers(this.db.db, [dto.targetUserId, dto.replacementUserId]);
@@ -539,6 +541,9 @@ export class DutyRequestService {
     // Capture the complete before/after identity and slot context in the immutable log.
     // The adjustment report must remain useful even if a later cleanup removes a slot or user.
     const slot = await this.core.getSlot(req.slotId);
+    if (this.core.toEngineSlot(slot).end <= Date.now()) {
+      throw new ConflictException('Ca đã kết thúc, không thể thay đổi lịch sử');
+    }
     const people = await this.core.loadUsers(this.db.db, [removedId, replacementId ?? 0]);
     let forced = false;
     let violations: string[] = [];

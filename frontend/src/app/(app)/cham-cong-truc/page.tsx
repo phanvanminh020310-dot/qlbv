@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, EmptyState, Skeleton } from '@/components/ui/card';
+import { Select } from '@/components/ui/input';
 import { useAuth } from '@/lib/auth';
 import { downloadFile } from '@/lib/api';
 import { attendanceKeys, dutyAttendanceApi, type AttendanceDate, type AttendanceMonth, type AttendanceStaff } from '@/lib/duty-attendance';
@@ -15,6 +16,25 @@ import { attendanceKeys, dutyAttendanceApi, type AttendanceDate, type Attendance
 const currentMonth = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit' }).format(new Date());
 const previousMonth = (month: string, delta: number) => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 const cellKey = (userId: number, date: string) => `${userId}:${date}`;
+const MONTH_LABELS_VI = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+
+/** Native month controls inherit the browser language. Use explicit Vietnamese controls instead. */
+function VietnameseMonthPicker({ value, onChange }: { value: string; onChange: (month: string) => void }) {
+  const [year, month] = value.split('-').map(Number);
+  const firstYear = Math.min(2000, year - 10);
+  const lastYear = Math.max(2100, year + 10);
+  const setMonth = (nextYear: number, nextMonth: number) => onChange(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
+  return (
+    <div className="flex h-9 items-center border-x bg-transparent">
+      <Select aria-label="Chọn tháng" value={String(month)} onChange={(event) => setMonth(year, Number(event.target.value))} className="h-9 w-32 rounded-none border-0 border-r bg-transparent px-2 font-semibold shadow-none focus-visible:ring-0">
+        {MONTH_LABELS_VI.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+      </Select>
+      <Select aria-label="Chọn năm" value={String(year)} onChange={(event) => setMonth(Number(event.target.value), month)} className="h-9 w-24 rounded-none border-0 bg-transparent px-2 font-semibold shadow-none focus-visible:ring-0">
+        {Array.from({ length: lastYear - firstYear + 1 }, (_, index) => firstYear + index).map((item) => <option key={item} value={item}>Năm {item}</option>)}
+      </Select>
+    </div>
+  );
+}
 
 function CodeSelect({ data, person, date, value, disabled, onSave }: { data: AttendanceMonth; person: AttendanceStaff; date: AttendanceDate; value: string; disabled: boolean; onSave: (code: string) => void }) {
   const tone = date.isWeekend ? 'border-rose-200 bg-rose-50 text-rose-800' : date.isRest ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white';
@@ -168,7 +188,7 @@ export default function ChamCongTrucPage() {
 
   return <>
     <PageHeader title="Bảng chấm công trực và chấm công khác" description={`Nhập thủ công cho ${data.department.name}. T: trực; hệ thống tự tách NN (ngày nghỉ/lễ) và NT (ngày thường).`} actions={<div className="flex w-full flex-wrap gap-2 sm:w-auto">
-      <div className="flex items-center rounded-lg border bg-white shadow-sm"><Button variant="ghost" size="sm" aria-label="Tháng trước" onClick={() => setMonth(previousMonth(month, -1))}><ChevronLeft className="h-4 w-4" /></Button><input aria-label="Chọn tháng" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-9 w-35 border-x bg-transparent px-2 text-sm font-semibold outline-none" /><Button variant="ghost" size="sm" aria-label="Tháng sau" onClick={() => setMonth(previousMonth(month, 1))}><ChevronRight className="h-4 w-4" /></Button></div>
+      <div className="flex items-center rounded-lg border bg-white shadow-sm"><Button variant="ghost" size="sm" aria-label="Tháng trước" onClick={() => setMonth(previousMonth(month, -1))}><ChevronLeft className="h-4 w-4" /></Button><VietnameseMonthPicker value={month} onChange={setMonth} /><Button variant="ghost" size="sm" aria-label="Tháng sau" onClick={() => setMonth(previousMonth(month, 1))}><ChevronRight className="h-4 w-4" /></Button></div>
       {departmentScope.data?.canSelect && <select aria-label="Chọn khoa/phòng" value={departmentId ?? ''} onChange={(e) => { setSelectedDepartmentUserId(userId); setSelectedDepartmentId(Number(e.target.value)); }} className="h-9 max-w-64 rounded-lg border bg-white px-3 text-sm font-medium shadow-sm"><option value="" disabled>Chọn khoa/phòng</option>{departmentScope.data.items.map((dept) => <option key={dept.id} value={dept.id}>{dept.shortName || dept.name}{dept.code ? ` (${dept.code})` : ''}</option>)}</select>}
       {canExport && <><Button variant="outline" size="sm" onClick={() => doExport('xlsx')}><FileSpreadsheet className="h-4 w-4" /> <span className="hidden sm:inline">Excel</span></Button><Button variant="outline" size="sm" onClick={() => doExport('docx')}><FileText className="h-4 w-4" /> <span className="hidden sm:inline">Word</span></Button><Button variant="outline" size="sm" onClick={() => doExport('pdf')}><Download className="h-4 w-4" /> PDF</Button></>}
       {canCatalog && <Link href="/cham-cong-truc/danh-muc"><Button variant="outline" size="sm"><Settings2 className="h-4 w-4" /> <span className="hidden sm:inline">Ký hiệu & ngày nghỉ</span></Button></Link>}
