@@ -8,30 +8,74 @@ import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, EmptyState, Skeleton } from '@/components/ui/card';
-import { Select } from '@/components/ui/input';
 import { useAuth } from '@/lib/auth';
 import { downloadFile } from '@/lib/api';
 import { attendanceKeys, dutyAttendanceApi, type AttendanceDate, type AttendanceMonth, type AttendanceStaff } from '@/lib/duty-attendance';
 
-const currentMonth = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit' }).format(new Date());
+const bangkokYmd = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+};
+const currentMonth = () => bangkokYmd().slice(0, 7);
 const previousMonth = (month: string, delta: number) => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 const cellKey = (userId: number, date: string) => `${userId}:${date}`;
-const MONTH_LABELS_VI = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+const WEEKDAYS_VI = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+const monthDays = (year: number, month: number) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+const ymd = (year: number, month: number, day: number) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+const dateLabel = (value: string) => { const [year, month, day] = value.split('-'); return `${day}/${month}/${year}`; };
 
-/** Native month controls inherit the browser language. Use explicit Vietnamese controls instead. */
+/** A Vietnamese calendar keeps selection clear instead of inheriting the browser's English native month picker. */
 function VietnameseMonthPicker({ value, onChange }: { value: string; onChange: (month: string) => void }) {
-  const [year, month] = value.split('-').map(Number);
-  const firstYear = Math.min(2000, year - 10);
-  const lastYear = Math.max(2100, year + 10);
-  const setMonth = (nextYear: number, nextMonth: number) => onChange(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
+  const today = bangkokYmd();
+  const [open, setOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(() => value === currentMonth() ? today : `${value}-01`);
+  const [viewMonth, setViewMonth] = useState(value);
+
+  useEffect(() => {
+    const preferredDay = Number(selectedDate.slice(8, 10)) || 1;
+    const [year, month] = value.split('-').map(Number);
+    const nextDate = ymd(year, month, Math.min(preferredDay, monthDays(year, month)));
+    setSelectedDate(nextDate);
+    setViewMonth(value);
+  }, [value]);
+
+  const [year, month] = viewMonth.split('-').map(Number);
+  const leadingDays = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
+  const selectDate = (nextDate: string) => {
+    setSelectedDate(nextDate);
+    onChange(nextDate.slice(0, 7));
+    setOpen(false);
+  };
+  const pickToday = () => selectDate(today);
+
   return (
-    <div className="flex h-9 items-center border-x bg-transparent">
-      <Select aria-label="Chọn tháng" value={String(month)} onChange={(event) => setMonth(year, Number(event.target.value))} className="h-9 w-32 rounded-none border-0 border-r bg-transparent px-2 font-semibold shadow-none focus-visible:ring-0">
-        {MONTH_LABELS_VI.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
-      </Select>
-      <Select aria-label="Chọn năm" value={String(year)} onChange={(event) => setMonth(Number(event.target.value), month)} className="h-9 w-24 rounded-none border-0 bg-transparent px-2 font-semibold shadow-none focus-visible:ring-0">
-        {Array.from({ length: lastYear - firstYear + 1 }, (_, index) => firstYear + index).map((item) => <option key={item} value={item}>Năm {item}</option>)}
-      </Select>
+    <div className="relative border-x bg-transparent">
+      <button type="button" aria-label="Chọn ngày để xem bảng chấm công" aria-expanded={open} onClick={() => { setViewMonth(selectedDate.slice(0, 7)); setOpen((shown) => !shown); }} className="flex h-9 w-40 items-center gap-2 px-3 text-left text-sm font-semibold hover:bg-[var(--muted)]/60">
+        <CalendarDays className="size-4 shrink-0 text-[var(--primary)]" />
+        <span>{dateLabel(selectedDate)}</span>
+      </button>
+      {open ? <div role="dialog" aria-label="Lịch chọn tháng chấm công" className="absolute left-0 top-[calc(100%+0.4rem)] z-[60] w-80 rounded-xl border bg-[var(--card)] p-3 shadow-xl">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <button type="button" aria-label="Tháng trước" onClick={() => setViewMonth(previousMonth(viewMonth, -1))} className="rounded-lg p-1.5 hover:bg-[var(--muted)]"><ChevronLeft className="size-4" /></button>
+          <p className="text-sm font-semibold">Tháng {month} năm {year}</p>
+          <button type="button" aria-label="Tháng sau" onClick={() => setViewMonth(previousMonth(viewMonth, 1))} className="rounded-lg p-1.5 hover:bg-[var(--muted)]"><ChevronRight className="size-4" /></button>
+        </div>
+        <div className="grid grid-cols-7 gap-1 text-center text-xs">
+          {WEEKDAYS_VI.map((weekday) => <span key={weekday} className="py-1 font-semibold text-[var(--muted-foreground)]">{weekday}</span>)}
+          {Array.from({ length: leadingDays }, (_, index) => <span key={`blank-${index}`} />)}
+          {Array.from({ length: monthDays(year, month) }, (_, index) => {
+            const day = index + 1;
+            const candidate = ymd(year, month, day);
+            const selected = candidate === selectedDate;
+            const isToday = candidate === today;
+            return <button key={candidate} type="button" onClick={() => selectDate(candidate)} className={`h-8 rounded-lg text-sm transition-colors ${selected ? 'bg-[var(--primary)] font-semibold text-[var(--primary-foreground)]' : isToday ? 'border border-[var(--primary)] font-semibold text-[var(--primary)] hover:bg-[var(--accent)]' : 'hover:bg-[var(--muted)]'}`}>{day}</button>;
+          })}
+        </div>
+        <div className="mt-3 flex justify-end border-t pt-2">
+          <button type="button" onClick={pickToday} className="text-xs font-medium text-[var(--primary)] hover:underline">Hôm nay · {dateLabel(today)}</button>
+        </div>
+      </div> : null}
     </div>
   );
 }
