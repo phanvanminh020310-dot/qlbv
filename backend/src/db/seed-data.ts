@@ -498,6 +498,17 @@ export const ROLES: RoleSeed[] = [
     permissions: ['duty-attendance.view', 'duty-attendance.update', 'duty-attendance.export'],
   },
   {
+    code: 'DIEU_PHOI_CHAM_CONG',
+    name: 'Điều phối chấm công (KHTH)',
+    description:
+      'Điều phối KHTH xem, nhập và xuất bảng chấm công trực/chấm công khác của mọi khoa/phòng. Không có quyền sửa danh mục ký hiệu hoặc ngày nghỉ/lễ.',
+    dataScope: 'ALL',
+    priority: 30,
+    color: '#7c3aed',
+    isSystem: true,
+    permissions: ['duty-attendance.view', 'duty-attendance.update', 'duty-attendance.export'],
+  },
+  {
     code: 'NHAN_VIEN_TRUC',
     name: 'Nhân viên trực khám',
     description:

@@ -21,9 +21,17 @@ export interface AttendanceExport { buffer: Buffer; fileName: string; mime: stri
 export class DutyAttendanceService {
   constructor(private readonly db: DbService) {}
 
-  /** SUPER_ADMIN có thể chọn khoa để hỗ trợ; mọi tài khoản khoa bị khóa cứng vào khoa công tác của mình. */
+  /**
+   * Vai trò có phạm vi TOÀN VIỆN (gồm Điều phối chấm công KHTH) được chọn khoa
+   * rõ ràng. Các vai trò phạm vi khoa vẫn bị khóa cứng vào khoa công tác, dù
+   * người dùng có thêm quyền xem/nhập/xuất bảng chấm công.
+   */
+  private canSelectAnyDepartment(user: AccessContext) {
+    return user.isSuperAdmin || user.dataScope === 'ALL';
+  }
+
   private async deptId(user: AccessContext, requestedDepartmentId?: number) {
-    if (!user.isSuperAdmin) {
+    if (!this.canSelectAnyDepartment(user)) {
       if (!user.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng; không thể nhập bảng chấm công');
       if (requestedDepartmentId !== undefined && requestedDepartmentId !== user.departmentId) {
         throw new ForbiddenException('Bạn chỉ được xem và chấm công cho khoa/phòng được gán');
@@ -38,7 +46,7 @@ export class DutyAttendanceService {
   }
 
   async availableDepartments(user: AccessContext) {
-    if (user.isSuperAdmin) {
+    if (this.canSelectAnyDepartment(user)) {
       const items = await this.db.db.select({ id: departments.id, name: departments.name, code: departments.code, shortName: departments.shortName })
         .from(departments).where(and(eq(departments.active, true), isNull(departments.deletedAt))).orderBy(asc(departments.name));
       return { canSelect: true, items };

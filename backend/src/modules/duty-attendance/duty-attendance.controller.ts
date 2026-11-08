@@ -12,11 +12,11 @@ export class DutyAttendanceController {
   constructor(private readonly service: DutyAttendanceService) {}
 
   @Get('departments') @RequirePermissions('duty-attendance.view')
-  @ApiOperation({ summary: 'Khoa/phòng được phép xem bảng chấm công; chỉ SUPER_ADMIN được chọn nhiều khoa' })
+  @ApiOperation({ summary: 'Khoa/phòng được phép xem bảng chấm công; vai trò phạm vi Toàn viện được chọn mọi khoa' })
   departments(@CurrentUser() user: AccessContext) { return this.service.availableDepartments(user); }
 
   @Get('month') @RequirePermissions('duty-attendance.view')
-  @ApiOperation({ summary: 'Bảng chấm công tháng của khoa được gán; SUPER_ADMIN có thể chọn khoa' })
+  @ApiOperation({ summary: 'Bảng chấm công tháng; vai trò phạm vi Toàn viện có thể chọn khoa' })
   month(@CurrentUser() user: AccessContext, @Query() q: AttendanceMonthQueryDto) { return this.service.month(user, q); }
 
   @Put('entries') @RequirePermissions('duty-attendance.update')
