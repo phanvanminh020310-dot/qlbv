@@ -39,3 +39,29 @@ class Parser {
 export function previewAttendanceExpression(expression: string, values: Record<string, string | number | undefined>): Value { return new Parser(lex(expression), values).parse(); }
 export function previewAttendanceNumber(expression: string, values: Record<string, string | number | undefined>) { const value = previewAttendanceExpression(expression, values); if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('Công thức số không hợp lệ'); return Math.round(value * 1_000_000) / 1_000_000; }
 export function previewAttendanceBoolean(expression: string, values: Record<string, string | number | undefined>) { const value = previewAttendanceExpression(expression, values); return typeof value === 'boolean' ? value : value !== 0; }
+
+/**
+ * Tìm nghiệm duy nhất cho một biến trong phép bằng ở cấp ngoài cùng, ví dụ
+ * [A] + [B] + [C] == [TONG]. Chỉ nhận biểu thức tuyến tính theo biến cần tìm;
+ * các biểu thức phức tạp/không có nghiệm duy nhất sẽ trả về null thay vì đoán.
+ */
+export function solveAttendanceEquality(expression: string, values: Record<string, string | number | undefined>, unknown: string) {
+  let depth = 0; let split = -1;
+  for (let index = 0; index < expression.length - 1; index++) {
+    const character = expression[index];
+    if (character === '(') depth++;
+    if (character === ')') depth--;
+    if (depth === 0 && expression.slice(index, index + 2) === '==') { if (split >= 0) return null; split = index; index++; }
+  }
+  if (split < 0) return null;
+  const left = expression.slice(0, split).trim(); const right = expression.slice(split + 2).trim();
+  if (!left || !right) return null;
+  try {
+    const difference = (candidate: number) => previewAttendanceNumber(left, { ...values, [unknown]: candidate }) - previewAttendanceNumber(right, { ...values, [unknown]: candidate });
+    const atZero = difference(0); const atOne = difference(1); const atTwo = difference(2); const slope = atOne - atZero;
+    if (!Number.isFinite(atZero) || !Number.isFinite(slope) || Math.abs(slope) < 0.000001 || Math.abs((atTwo - atOne) - slope) > 0.00001) return null;
+    const answer = Math.round((-atZero / slope) * 1_000_000) / 1_000_000;
+    if (!Number.isFinite(answer) || !previewAttendanceBoolean(expression, { ...values, [unknown]: answer })) return null;
+    return answer;
+  } catch { return null; }
+}

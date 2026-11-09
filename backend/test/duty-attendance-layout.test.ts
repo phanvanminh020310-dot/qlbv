@@ -50,6 +50,15 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(board.rowValues['1']?.T, 6, 'ký hiệu dùng giá trị đếm đã khai báo');
   assert.equal(board.rowValues['1']?.CONG_HANH_CHINH, 6, 'công thức được tính từ cột ký hiệu');
   assert.equal(board.manualValues['1:' + a.id], '1', 'chỉ cột tự nhập được lưu');
+  // Tự lưu từng ô khi đang nhập: dòng chưa đủ A/B/C chưa bị hiểu là các ô trống bằng 0.
+  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '' }, { userId: 1, columnId: b.id, value: '' }, { userId: 1, columnId: c.id, value: '' }] });
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '1' }] })).saved, 1);
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: b.id, value: '2' }] })).saved, 1);
+  await assert.rejects(
+    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '4' }] }),
+    /Tổng ba cột công phải bằng công hành chính/,
+  );
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '3' }] })).saved, 1);
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }),
     /Tổng ba cột công phải bằng công hành chính/,

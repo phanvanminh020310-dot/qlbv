@@ -253,9 +253,15 @@ export class DutyAttendanceService {
       overrides.set(`${item.userId}:${item.columnId}`, value || null);
     }
     const board = await this.buildBoard(departmentId, dto.month, overrides);
+    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase()));
     for (const rule of board.validations) {
+      const references = expressionReferences(rule.expression);
       for (const person of board.staff) {
-        if (!booleanExpression(rule.expression, board.rowValues[String(person.id)])) {
+        const values = board.rowValues[String(person.id)];
+        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
+        // Nhờ vậy nhập A rồi rời ô không bị coi nhầm là A + 0 + 0, còn dữ liệu đầy đủ vẫn bị chặn nghiêm ngặt.
+        if (references.some((reference) => manualKeys.has(reference) && !String(values?.[reference] ?? '').trim())) continue;
+        if (!booleanExpression(rule.expression, values)) {
           throw new BadRequestException(rule.message || `Ràng buộc “${rule.name}” chưa đúng cho nhân viên ${person.fullName}`);
         }
       }
