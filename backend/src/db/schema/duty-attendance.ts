@@ -1,7 +1,11 @@
 import { sql } from 'drizzle-orm';
-import { boolean, date, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, date, index, integer, numeric, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { departments } from './org';
 import { users } from './system';
+
+export type DutyAttendanceSectionKind = 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM';
+export type DutyAttendanceColumnType = 'FORMULA' | 'MANUAL';
+export type DutyAttendanceDataType = 'NUMBER' | 'TEXT';
 
 /** Danh mục ký hiệu chấm công – cấu hình được, không hard-code ở giao diện. */
 export const dutyAttendanceCodes = pgTable('duty_attendance_codes', {
@@ -10,8 +14,12 @@ export const dutyAttendanceCodes = pgTable('duty_attendance_codes', {
   name: text('name').notNull(),
   group: text('group').notNull(), // DUTY | LEAVE | BUSINESS | STUDY | SICK | OVERTIME | OTHER
   color: text('color').default('#0f766e').notNull(),
+  /** Thuộc tính cũ, được giữ để không làm sai cấu hình/dữ liệu lịch sử. */
   countsAsDuty: boolean('counts_as_duty').default(false).notNull(),
+  /** Thuộc tính cũ, được giữ để không làm sai cấu hình/dữ liệu lịch sử. */
   showSummary: boolean('show_summary').default(true).notNull(),
+  /** Giá trị mỗi lần xuất hiện khi tổng hợp cột ký hiệu, ví dụ 0.5 hoặc 2. */
+  countValue: numeric('count_value', { precision: 12, scale: 2 }).default('1').notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
   active: boolean('active').default(true).notNull(),
   note: text('note').default('').notNull(),
@@ -19,7 +27,64 @@ export const dutyAttendanceCodes = pgTable('duty_attendance_codes', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [uniqueIndex('duty_attendance_codes_code_uq').on(t.code), index('duty_attendance_codes_active_idx').on(t.active, t.sortOrder)]);
 
-/** Ngày nghỉ lễ/đặc biệt ngoài thứ bảy, chủ nhật để tính NN. */
+/** Phần/băng cột của bảng: hành chính, ngày tháng, tổng ký hiệu, báo cáo hoặc phần do người dùng thêm. */
+export const dutyAttendanceSections = pgTable('duty_attendance_sections', {
+  id: serial('id').primaryKey(),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  kind: text('kind').$type<DutyAttendanceSectionKind>().notNull(),
+  color: text('color').default('#0f766e').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex('duty_attendance_sections_code_uq').on(t.code), index('duty_attendance_sections_order_idx').on(t.active, t.sortOrder)]);
+
+/** Cột do người quản trị khai báo. Giá trị công thức luôn tính lại, chỉ giá trị MANUAL mới lưu CSDL. */
+export const dutyAttendanceColumns = pgTable('duty_attendance_columns', {
+  id: serial('id').primaryKey(),
+  sectionId: integer('section_id').notNull().references(() => dutyAttendanceSections.id, { onDelete: 'restrict' }),
+  key: text('key').notNull(),
+  name: text('name').notNull(),
+  columnType: text('column_type').$type<DutyAttendanceColumnType>().notNull(),
+  dataType: text('data_type').$type<DutyAttendanceDataType>().default('NUMBER').notNull(),
+  formula: text('formula').default('').notNull(),
+  placeholder: text('placeholder').default('Tự nhập').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex('duty_attendance_columns_key_uq').on(t.key), index('duty_attendance_columns_section_order_idx').on(t.sectionId, t.active, t.sortOrder)]);
+
+/** Quy tắc kiểm tra số liệu tự nhập, dùng biểu thức tham chiếu an toàn [MA_COT]. */
+export const dutyAttendanceValidations = pgTable('duty_attendance_validations', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  expression: text('expression').notNull(),
+  message: text('message').default('').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('duty_attendance_validations_order_idx').on(t.active, t.sortOrder)]);
+
+/** Giá trị nhập theo nhân viên/tháng/cột; lịch sử ký hiệu ngày vẫn tiếp tục nằm tại dutyAttendanceEntries. */
+export const dutyAttendanceManualValues = pgTable('duty_attendance_manual_values', {
+  id: serial('id').primaryKey(),
+  departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  month: text('month').notNull(),
+  columnId: integer('column_id').notNull().references(() => dutyAttendanceColumns.id, { onDelete: 'restrict' }),
+  value: text('value').default('').notNull(),
+  updatedBy: integer('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('duty_attendance_manual_values_uq').on(t.departmentId, t.userId, t.month, t.columnId),
+  index('duty_attendance_manual_values_month_idx').on(t.departmentId, t.month, t.userId),
+]);
+
+/** Ngày nghỉ lễ/đặc biệt ngoài thứ bảy, chủ nhật. */
 export const dutyAttendanceHolidays = pgTable('duty_attendance_holidays', {
   id: serial('id').primaryKey(),
   holidayDate: date('holiday_date').notNull(),
