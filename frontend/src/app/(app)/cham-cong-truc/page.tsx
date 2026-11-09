@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, FileSpreadsheet, Loader2, LockKeyhole, Printer, RefreshCw, Save, Settings2, Users } from 'lucide-react';
+import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, FileSpreadsheet, Loader2, LockKeyhole, Printer, RefreshCw, Save, Settings2, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, EmptyState, Skeleton } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth';
 import { downloadFile } from '@/lib/api';
+import { previewAttendanceBoolean, previewAttendanceNumber, attendanceReferences } from '@/lib/attendance-expression';
 import { attendanceKeys, dutyAttendanceApi, type AttendanceColumn, type AttendanceDate, type AttendanceMonth, type AttendanceSection, type AttendanceStaff } from '@/lib/duty-attendance';
 
 const bangkokMonth = (date = new Date()) => {
@@ -52,6 +53,8 @@ function CodeSelect({ data, person, date, value, disabled, onSave }: { data: Att
 
 type TableColumn = { key: string; name: string; kind: 'ADMIN' | 'DAY' | 'SYMBOL' | 'FORMULA' | 'MANUAL'; section: AttendanceSection; day?: AttendanceDate; column?: AttendanceColumn };
 type ColumnGroup = { section: AttendanceSection; columns: TableColumn[] };
+type ManualIssue = { key?: string; userId?: number; message: string };
+const NUMERIC_INPUT = /^-?\d+(?:[.,]\d+)?$/;
 
 function tableGroups(data: AttendanceMonth, hiddenSections = new Set<string>()): ColumnGroup[] {
   return data.sections.filter((section) => !hiddenSections.has(section.code)).map((section) => {
@@ -66,9 +69,9 @@ function tableGroups(data: AttendanceMonth, hiddenSections = new Set<string>()):
 
 function adminValue(person: AttendanceStaff, key: string) { if (key === 'STT') return person.stt; if (key === 'FULL_NAME') return person.fullName; if (key === 'TITLE') return person.title || ''; return person.username; }
 
-function ManualInput({ person, column, data, value, disabled, onChange }: { person: AttendanceStaff; column: AttendanceColumn; data: AttendanceMonth; value: string; disabled: boolean; onChange: (value: string) => void }) {
+function ManualInput({ person, column, data, value, disabled, invalid, warning, onChange }: { person: AttendanceStaff; column: AttendanceColumn; data: AttendanceMonth; value: string; disabled: boolean; invalid?: boolean; warning?: string; onChange: (value: string) => void }) {
   const locked = data.month < data.today.slice(0, 7);
-  return <input aria-label={`${column.name} của ${person.fullName}`} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : column.placeholder || 'Tự nhập'} type={column.dataType === 'NUMBER' ? 'text' : 'text'} inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => onChange(event.target.value)} className="h-8 min-w-20 rounded-md border border-violet-200 bg-violet-50/40 px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:cursor-not-allowed disabled:opacity-70" />;
+  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => onChange(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
 }
 
 function pinnedAdminClass(column: TableColumn) {
@@ -79,7 +82,7 @@ function pinnedAdminClass(column: TableColumn) {
   return 'sticky left-[426px] z-50 w-[176px] min-w-[176px]';
 }
 
-function DesktopAttendanceGrid({ data, canUpdate, saving, manualDrafts, hiddenSections, onCodeSave, onManualChange }: { data: AttendanceMonth; canUpdate: boolean; saving: boolean; manualDrafts: Record<string, string>; hiddenSections: Set<string>; onCodeSave: (entry: { userId: number; workDate: string; code: string }) => void; onManualChange: (key: string, value: string) => void }) {
+function DesktopAttendanceGrid({ data, canUpdate, saving, manualDrafts, manualIssuesByKey, hiddenSections, onCodeSave, onManualChange }: { data: AttendanceMonth; canUpdate: boolean; saving: boolean; manualDrafts: Record<string, string>; manualIssuesByKey: Record<string, string>; hiddenSections: Set<string>; onCodeSave: (entry: { userId: number; workDate: string; code: string }) => void; onManualChange: (key: string, value: string) => void }) {
   const groups = useMemo(() => tableGroups(data, hiddenSections), [data, hiddenSections]); const columns = useMemo(() => groups.flatMap((group) => group.columns), [groups]);
   const dayTone = (day: AttendanceDate) => day.isWeekend ? 'border-rose-200 bg-rose-50 text-rose-800' : day.isRest ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white text-slate-700';
   return <Card className="hidden overflow-hidden border-slate-200 bg-white shadow-sm md:block print:block">
@@ -95,7 +98,7 @@ function DesktopAttendanceGrid({ data, canUpdate, saving, manualDrafts, hiddenSe
         <tbody>{data.staff.map((person, index) => <tr key={person.id} className={`group hover:bg-sky-50/70 ${index % 2 ? 'bg-slate-50' : 'bg-white'}`}>{columns.map((column) => {
           if (column.kind === 'ADMIN') return <td key={column.key + column.section.id} className={`border-b border-r border-slate-200 px-3 py-2 ${pinnedAdminClass(column)} ${index % 2 ? 'bg-slate-50' : 'bg-white'} ${column.key === 'FULL_NAME' ? 'font-semibold' : 'text-center'} ${column.key === 'USERNAME' ? 'font-mono text-xs text-slate-600' : ''}`}>{adminValue(person, column.key)}</td>;
           if (column.kind === 'DAY') { const day = column.day!; return <td key={column.key} className={`border-b border-r px-1.5 py-1 text-center ${dayTone(day)}`}><CodeSelect data={data} person={person} date={day} value={data.entries[cellKey(person.id, day.date)]?.code ?? ''} disabled={!canUpdate || saving || day.isPast} onSave={(code) => onCodeSave({ userId: person.id, workDate: day.date, code })} /></td>; }
-          if (column.kind === 'MANUAL') { const key = manualCellKey(person.id, column.column!.id); const value = manualDrafts[key] ?? data.manualValues[key] ?? ''; return <td key={column.key} className="border-b border-r border-violet-100 bg-violet-50/20 px-1.5 py-1 text-center"><ManualInput person={person} column={column.column!} data={data} value={value} disabled={!canUpdate || saving} onChange={(value) => onManualChange(key, value)} /></td>; }
+          if (column.kind === 'MANUAL') { const key = manualCellKey(person.id, column.column!.id); const value = manualDrafts[key] ?? data.manualValues[key] ?? ''; return <td key={column.key} className="border-b border-r border-violet-100 bg-violet-50/20 px-1.5 py-1 text-center"><ManualInput person={person} column={column.column!} data={data} value={value} disabled={!canUpdate || saving} invalid={!!manualIssuesByKey[key]} warning={manualIssuesByKey[key]} onChange={(value) => onManualChange(key, value)} /></td>; }
           const value = data.rowValues[String(person.id)]?.[column.key]; return <td key={column.key} className={`border-b border-r px-2 py-2 text-center font-medium ${column.kind === 'FORMULA' ? 'border-indigo-100 bg-indigo-50/30 text-indigo-900' : 'border-emerald-100 bg-emerald-50/35 text-emerald-900'}`}>{typeof value === 'number' && value === 0 ? '' : value === undefined ? '' : numberLabel(value)}</td>;
         })}</tr>)}</tbody>
       </table>
@@ -119,8 +122,33 @@ export default function ChamCongTrucPage() {
   const refreshBoard = async () => { await Promise.all([departmentScope.refetch(), query.refetch()]); toast.success('Đã làm mới bảng chấm công'); };
   const selected = useMemo(() => data?.dates.find((date) => date.date === activeDate), [data, activeDate]);
   const manualColumns = useMemo(() => data?.columns.filter((column) => column.columnType === 'MANUAL') ?? [], [data]); const formulaColumns = useMemo(() => data?.columns.filter((column) => column.columnType === 'FORMULA') ?? [], [data]); const hiddenSections = useMemo(() => new Set(hiddenSectionCodes), [hiddenSectionCodes]);
+  const manualPreview = useMemo(() => {
+    const issues: ManualIssue[] = []; const byKey: Record<string, string> = {}; const userIssues: Record<number, string> = {};
+    if (!data) return { issues, byKey, userIssues };
+    const columnsById = new Map(manualColumns.map((column) => [column.id, column])); const invalidUsers = new Set<number>();
+    for (const [key, value] of Object.entries(manualDrafts)) {
+      const [userIdText, columnIdText] = key.split(':'); const userId = Number(userIdText); const column = columnsById.get(Number(columnIdText));
+      if (column?.dataType === 'NUMBER' && value.trim() && !NUMERIC_INPUT.test(value.trim())) { const message = `${column.name}: chỉ được nhập số`; byKey[key] = message; userIssues[userId] = message; invalidUsers.add(userId); issues.push({ key, userId, message }); }
+    }
+    for (const person of data.staff) {
+      const values: Record<string, string | number | undefined> = { ...data.rowValues[String(person.id)] }; let hasManualValue = false;
+      for (const column of manualColumns) { const key = manualCellKey(person.id, column.id); const value = manualDrafts[key] ?? data.manualValues[key] ?? ''; values[column.key.toUpperCase()] = value; if (value.trim()) hasManualValue = true; }
+      const formulas = new Map(formulaColumns.map((column) => [column.key.toUpperCase(), column])); const cache = new Map<string, number>(); const visiting = new Set<string>();
+      const formula = (key: string): number => { if (cache.has(key)) return cache.get(key)!; if (visiting.has(key)) throw new Error('Công thức vòng lặp'); const column = formulas.get(key); if (!column) return Number(values[key] ?? 0) || 0; visiting.add(key); const next = { ...values }; for (const reference of attendanceReferences(column.formula)) if (formulas.has(reference)) next[reference] = formula(reference); const result = previewAttendanceNumber(column.formula, next); visiting.delete(key); cache.set(key, result); values[key] = result; return result; };
+      try { for (const column of formulaColumns) formula(column.key.toUpperCase()); } catch { /* Máy chủ vẫn là nguồn kiểm tra cuối cùng nếu cấu hình công thức đang được chỉnh sửa. */ }
+      if (!hasManualValue || invalidUsers.has(person.id)) continue;
+      for (const rule of data.validations) {
+        try {
+          if (previewAttendanceBoolean(rule.expression, values)) continue;
+          const message = rule.message || `Ràng buộc “${rule.name}” chưa đúng cho ${person.fullName}`; userIssues[person.id] = message; issues.push({ userId: person.id, message });
+          for (const column of manualColumns) byKey[manualCellKey(person.id, column.id)] ??= message;
+        } catch { const message = `Không thể xem trước ràng buộc “${rule.name}”; hãy kiểm tra lại biểu thức`; userIssues[person.id] = message; issues.push({ userId: person.id, message }); }
+      }
+    }
+    return { issues, byKey, userIssues };
+  }, [data, formulaColumns, manualColumns, manualDrafts]);
   const toggleSection = (code: string) => setHiddenSectionCodes((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code]);
-  const saveAllManual = () => { if (!data || !Object.keys(manualDrafts).length) return; const values = Object.entries(manualDrafts).map(([key, value]) => { const [userIdText, columnIdText] = key.split(':'); return { userId: Number(userIdText), columnId: Number(columnIdText), value }; }); saveManual.mutate(values); };
+  const saveAllManual = () => { if (!data || !Object.keys(manualDrafts).length) return; if (manualPreview.issues.length) { toast.error(`Chưa thể lưu: ${manualPreview.issues[0].message}`); return; } const values = Object.entries(manualDrafts).map(([key, value]) => { const [userIdText, columnIdText] = key.split(':'); return { userId: Number(userIdText), columnId: Number(columnIdText), value }; }); saveManual.mutate(values); };
 
   if (!canView) return <EmptyState title="Bạn chưa có quyền xem bảng chấm công" description="Vai trò Nhập chấm công trực khoa được cấp riêng cho Hành chính trưởng hoặc Chủ nhiệm khoa." />;
   if (departmentScope.isLoading || query.isLoading) return <div className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-[32rem] w-full" /></div>;
@@ -141,15 +169,16 @@ export default function ChamCongTrucPage() {
     <Card className="mb-4 border-sky-100 bg-gradient-to-br from-sky-50 via-white to-white shadow-sm"><CardBody className="space-y-3 py-3.5"><div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm"><span className="flex items-center gap-2 font-semibold text-slate-700"><Users className="h-4 w-4 text-sky-700" /> {data.staff.length} nhân viên</span><span><b className="text-violet-700">Tự nhập</b> = lưu theo nhân viên/tháng; <b className="text-indigo-700">Công thức</b> = hệ thống tự tính</span><span className="text-slate-500">Ngày đã qua khóa sửa. Số liệu tự nhập của tháng đã qua cũng được khóa để bảo toàn lịch sử.</span></div><div className="border-t border-sky-100 pt-3"><div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><span className="h-2 w-2 rounded-full bg-sky-600" /> Ký hiệu và giá trị đếm đang khai báo</div><div className="flex flex-wrap gap-2">{data.codes.map((code) => <span key={code.id} title={code.note || code.name} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: code.color }} /><b className="font-mono text-slate-900">{code.code}</b><span className="text-slate-600">{code.name} = {code.countValue}</span></span>)}</div></div></CardBody></Card>
 
     <Card className="mb-4 hidden border-slate-200 bg-white shadow-sm md:block print:hidden"><CardBody className="flex flex-wrap items-center gap-2 py-2.5"><span className="mr-1 text-sm font-semibold text-slate-700">Hiển thị phần:</span>{data.sections.map((section) => { const pinned = section.kind === 'ADMIN'; const visible = pinned || !hiddenSections.has(section.code); return <button key={section.id} type="button" disabled={pinned} onClick={() => toggleSection(section.code)} title={pinned ? 'Thông tin hành chính luôn được cố định để nhận biết nhân viên khi cuộn ngang' : visible ? `Ẩn phần ${section.name}` : `Hiện phần ${section.name}`} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${visible ? 'border-slate-300 bg-slate-50 text-slate-800' : 'border-slate-200 bg-white text-slate-400 line-through'} ${pinned ? 'cursor-default' : 'hover:border-sky-400 hover:bg-sky-50'}`}><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: section.color }} />{visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}{section.name}{pinned ? ' · cố định' : ''}</button>; })}</CardBody></Card>
+    {manualPreview.issues.length ? <Card className="mb-4 border-rose-200 bg-rose-50 shadow-sm"><CardBody className="flex gap-3 py-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div className="min-w-0"><p className="font-semibold text-rose-900">Có {manualPreview.issues.length} dữ liệu tự nhập cần điều chỉnh trước khi lưu</p><ul className="mt-1 list-disc space-y-0.5 pl-4 text-sm text-rose-800">{[...new Set(manualPreview.issues.map((issue) => issue.message))].slice(0, 3).map((message) => <li key={message}>{message}</li>)}</ul><p className="mt-1 text-xs text-rose-700">Ô có vấn đề được viền đỏ. Hệ thống sẽ không lưu khi kiểu số hoặc ràng buộc công thức chưa hợp lệ.</p></div></CardBody></Card> : null}
 
     <div className="space-y-3 md:hidden"><div className="flex snap-x gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">{data.dates.map((date) => <button key={date.date} onClick={() => setMobileDate(date.date)} className={`min-w-13 snap-start rounded-xl border px-2 py-2 text-center text-xs shadow-sm ${activeDate === date.date ? 'border-sky-600 bg-sky-600 text-white' : date.isWeekend ? 'border-rose-300 bg-rose-50 text-rose-800' : date.isRest ? 'border-amber-300 bg-amber-50 text-amber-900' : 'bg-white'} ${date.isPast ? 'opacity-70' : ''}`}><b className="block text-base leading-4">{date.day}</b><span>{date.weekday}</span></button>)}</div>
       {selected ? <Card className={selected.isWeekend ? 'border-rose-300' : selected.isRest ? 'border-amber-300' : ''}><CardBody className="py-3"><p className="font-semibold">Ngày {selected.day} · {selected.weekday} {selected.holidayName ? `— ${selected.holidayName}` : ''}</p><p className="mt-0.5 text-xs text-slate-500">{selected.isPast ? 'Ngày đã qua: chỉ xem, không được sửa.' : 'Chọn ký hiệu cho từng nhân viên bên dưới.'}</p></CardBody></Card> : null}
       <div className="space-y-2">{data.staff.map((person) => <Card key={person.id}><CardBody className="space-y-3 py-3"><div className="flex items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate font-semibold">{person.stt}. {person.fullName}</p><p className="truncate text-xs text-slate-500">{person.title || 'Chưa khai báo chức danh'} · MANV: {person.username}</p></div>{selected ? <CodeSelect data={data} person={person} date={selected} value={data.entries[cellKey(person.id, selected.date)]?.code ?? ''} disabled={!canUpdate || save.isPending || selected.isPast} onSave={(code) => save.mutate({ userId: person.id, workDate: selected.date, code })} /> : null}</div>
-        {(formulaColumns.length || manualColumns.length) ? <div className="grid grid-cols-2 gap-2 border-t pt-2">{formulaColumns.map((column) => <div key={column.id} className="rounded-lg bg-indigo-50 p-2"><p className="text-[11px] font-medium text-indigo-700">{column.name}</p><p className="font-semibold text-indigo-950">{numberLabel(data.rowValues[String(person.id)]?.[column.key] ?? 0)}</p></div>)}{manualColumns.map((column) => { const key = manualCellKey(person.id, column.id); return <label key={column.id} className="grid gap-1 text-[11px] font-medium text-violet-700">{column.name}<ManualInput person={person} column={column} data={data} value={manualDrafts[key] ?? data.manualValues[key] ?? ''} disabled={!canUpdate || saveManual.isPending} onChange={(value) => setManualDrafts((current) => ({ ...current, [key]: value }))} /></label>; })}</div> : null}
+        {(formulaColumns.length || manualColumns.length) ? <div className="grid grid-cols-2 gap-2 border-t pt-2">{formulaColumns.map((column) => <div key={column.id} className="rounded-lg bg-indigo-50 p-2"><p className="text-[11px] font-medium text-indigo-700">{column.name}</p><p className="font-semibold text-indigo-950">{numberLabel(data.rowValues[String(person.id)]?.[column.key] ?? 0)}</p></div>)}{manualColumns.map((column) => { const key = manualCellKey(person.id, column.id); return <label key={column.id} className="grid gap-1 text-[11px] font-medium text-violet-700">{column.name}<ManualInput person={person} column={column} data={data} value={manualDrafts[key] ?? data.manualValues[key] ?? ''} disabled={!canUpdate || saveManual.isPending} invalid={!!manualPreview.byKey[key]} warning={manualPreview.byKey[key]} onChange={(value) => setManualDrafts((current) => ({ ...current, [key]: value }))} /></label>; })}</div> : null}
       </CardBody></Card>)}</div>
     </div>
 
-    <DesktopAttendanceGrid data={data} canUpdate={canUpdate} saving={save.isPending || saveManual.isPending} manualDrafts={manualDrafts} hiddenSections={hiddenSections} onCodeSave={save.mutate} onManualChange={(key, value) => setManualDrafts((current) => ({ ...current, [key]: value }))} />
+    <DesktopAttendanceGrid data={data} canUpdate={canUpdate} saving={save.isPending || saveManual.isPending} manualDrafts={manualDrafts} manualIssuesByKey={manualPreview.byKey} hiddenSections={hiddenSections} onCodeSave={save.mutate} onManualChange={(key, value) => setManualDrafts((current) => ({ ...current, [key]: value }))} />
     {(save.isPending || saveManual.isPending) ? <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg"><Loader2 className="h-4 w-4 animate-spin" /> Đang lưu…</div> : null}
   </>;
 }

@@ -55,6 +55,10 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
     /Tổng ba cột công phải bằng công hành chính/,
   );
   await assert.rejects(
+    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: 'không phải số' }] }),
+    /chỉ nhận số/,
+  );
+  await assert.rejects(
     service.createColumn({ sectionId: report.id, key: 'SAI', name: 'Sai', columnType: 'FORMULA', dataType: 'NUMBER', formula: '[KHONG_CO]', sortOrder: 50, active: true }),
     /chưa được khai báo/,
   );
