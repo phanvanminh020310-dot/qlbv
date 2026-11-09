@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, FileSpreadsheet, Loader2, LockKeyhole, Printer, RefreshCw, Save, Settings2, Users } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -153,7 +153,7 @@ function adminValue(person: AttendanceStaff, key: string) { if (key === 'STT') r
 
 function ManualInput({ person, column, data, value, disabled, invalid, warning, onChange, onCommit }: { person: AttendanceStaff; column: AttendanceColumn; data: AttendanceMonth; value: string; disabled: boolean; invalid?: boolean; warning?: string; onChange: (value: string) => void; onCommit: (value: string) => void }) {
   const locked = data.month < data.today.slice(0, 7);
-  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => { const next = event.target.value; if (column.dataType === 'NUMBER' && !NUMBER_WHILE_TYPING.test(next) && !(value.startsWith('-') && next === '-')) return; onChange(next); }} onBlur={(event) => onCommit(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
+  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => { const next = event.target.value; if (column.dataType === 'NUMBER' && !NUMBER_WHILE_TYPING.test(next) && !(value.startsWith('-') && /^-\d*(?:[.,]\d*)?$/.test(next))) return; onChange(next); }} onBlur={(event) => onCommit(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
 }
 
 function pinnedAdminClass(column: TableColumn) {
@@ -190,10 +190,10 @@ function DesktopAttendanceGrid({ data, canUpdate, saving, manualDrafts, manualIs
 
 export default function ChamCongTrucPage() {
   const can = useAuth((state) => state.can); const currentUser = useAuth((state) => state.user); const client = useQueryClient();
-  const [month, setMonth] = useState(currentMonth); const [selectedDepartmentId, setSelectedDepartmentId] = useState<number>(); const [selectedDepartmentUserId, setSelectedDepartmentUserId] = useState<number>(); const [mobileDate, setMobileDate] = useState(''); const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({}); const [hiddenSectionCodes, setHiddenSectionCodes] = useState<string[]>([]);
+  const [month, setMonth] = useState(currentMonth); const [selectedDepartmentId, setSelectedDepartmentId] = useState<number>(); const [selectedDepartmentUserId, setSelectedDepartmentUserId] = useState<number>(); const [mobileDate, setMobileDate] = useState(''); const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({}); const [hiddenSectionCodes, setHiddenSectionCodes] = useState<string[]>([]); const manualNotice = useRef<Record<string, string>>({});
   const canView = can('duty-attendance.view'); const canUpdate = can('duty-attendance.update'); const canExport = can('duty-attendance.export'); const canCatalog = can('duty-attendance.catalog.manage'); const userId = currentUser?.id;
   const departmentScope = useQuery({ queryKey: attendanceKeys.departments(userId), queryFn: dutyAttendanceApi.departments, enabled: canView && !!userId, refetchOnMount: 'always' });
-  useEffect(() => { setMobileDate(''); setManualDrafts({}); }, [userId, month, selectedDepartmentId]);
+  useEffect(() => { setMobileDate(''); setManualDrafts({}); manualNotice.current = {}; }, [userId, month, selectedDepartmentId]);
   useEffect(() => { if (!userId || !departmentScope.data?.items.length || (selectedDepartmentUserId === userId && selectedDepartmentId)) return; setSelectedDepartmentUserId(userId); setSelectedDepartmentId(departmentScope.data.items[0].id); }, [departmentScope.data, selectedDepartmentId, selectedDepartmentUserId, userId]);
   const departmentId = selectedDepartmentUserId === userId ? selectedDepartmentId : undefined;
   const query = useQuery({ queryKey: attendanceKeys.month(userId, month, departmentId), queryFn: () => dutyAttendanceApi.month(month, departmentId), enabled: canView && !!userId && !!departmentId, refetchOnMount: 'always', refetchOnWindowFocus: true });
@@ -221,14 +221,25 @@ export default function ChamCongTrucPage() {
   const manualPreview = useMemo(() => previewManualValues(data, manualColumns, formulaColumns, manualDrafts), [data, formulaColumns, manualColumns, manualDrafts]);
   const toggleSection = (code: string) => setHiddenSectionCodes((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code]);
   const saveAllManual = () => { if (!data || !Object.keys(manualDrafts).length) return; if (manualPreview.issues.length) { toast.error(`Chưa thể lưu: ${manualPreview.issues[0].message}`); return; } const values = Object.entries(manualDrafts).map(([key, value]) => { const [userIdText, columnIdText] = key.split(':'); return { userId: Number(userIdText), columnId: Number(columnIdText), value }; }); saveManual.mutate({ values }); };
+  const changeManualValue = (key: string, value: string) => {
+    if (!data) { setManualDrafts((current) => ({ ...current, [key]: value })); return; }
+    const next = { ...manualDrafts, [key]: value }; const preview = previewManualValues(data, manualColumns, formulaColumns, next); const message = preview.byKey[key];
+    setManualDrafts(next);
+    if (message && manualNotice.current[key] !== message) { manualNotice.current[key] = message; toast.error(message); }
+    if (!message) delete manualNotice.current[key];
+  };
   const commitManualValue = (key: string, value: string) => {
     if (!data || saveManual.isPending) return;
-    const [userIdText] = key.split(':'); const person = data.staff.find((item) => item.id === Number(userIdText)); if (!person) return;
-    const entered = { ...manualDrafts, [key]: value }; const completed = completeOneManualValue(data, person, manualColumns, formulaColumns, entered); const preview = previewManualValues(data, manualColumns, formulaColumns, completed);
-    setManualDrafts(completed);
-    const issue = preview.issues.find((item) => item.userId === person.id || item.key === key);
-    if (issue) { toast.error(`Chưa thể tự lưu: ${issue.message}`); return; }
-    const values = Object.entries(completed).flatMap(([draftKey, draftValue]) => { const [draftUserId, columnId] = draftKey.split(':'); return Number(draftUserId) === person.id ? [{ userId: person.id, columnId: Number(columnId), value: draftValue }] : []; });
+    const [userIdText, columnIdText] = key.split(':'); const userIdValue = Number(userIdText); const columnId = Number(columnIdText); const person = data.staff.find((item) => item.id === userIdValue); if (!person) return;
+    const entered = { ...manualDrafts, [key]: value }; const completed = completeOneManualValue(data, person, manualColumns, formulaColumns, entered); const preview = previewManualValues(data, manualColumns, formulaColumns, completed); const message = preview.byKey[key];
+    if (message) {
+      const previous = data.manualValues[key] ?? ''; const isLegacyNegative = NUMERIC_INPUT.test(previous) && Number(previous.replace(',', '.')) < 0;
+      if (isLegacyNegative) { setManualDrafts((current) => ({ ...current, [key]: '' })); saveManual.mutate({ values: [{ userId: userIdValue, columnId, value: '' }], quiet: true }); toast.error(`${message}. Đã xóa số âm cũ khi rời ô.`); }
+      else { setManualDrafts((current) => { const next = { ...current }; delete next[key]; return next; }); toast.error(`${message}. Giá trị vừa nhập đã được bỏ.`); }
+      delete manualNotice.current[key]; return;
+    }
+    setManualDrafts(completed); delete manualNotice.current[key];
+    const values = Object.entries(completed).flatMap(([draftKey, draftValue]) => { const [draftUserId, draftColumnId] = draftKey.split(':'); return Number(draftUserId) === person.id ? [{ userId: person.id, columnId: Number(draftColumnId), value: draftValue }] : []; });
     const changed = values.filter((item) => item.value !== (data.manualValues[manualCellKey(item.userId, item.columnId)] ?? ''));
     if (changed.length) saveManual.mutate({ values: changed, quiet: true });
     else setManualDrafts((current) => { const next = { ...current }; for (const item of values) delete next[manualCellKey(item.userId, item.columnId)]; return next; });
@@ -258,11 +269,11 @@ export default function ChamCongTrucPage() {
     <div className="space-y-3 md:hidden"><div className="flex snap-x gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">{data.dates.map((date) => <button key={date.date} onClick={() => setMobileDate(date.date)} className={`min-w-13 snap-start rounded-xl border px-2 py-2 text-center text-xs shadow-sm ${activeDate === date.date ? 'border-sky-600 bg-sky-600 text-white' : date.isWeekend ? 'border-rose-300 bg-rose-50 text-rose-800' : date.isRest ? 'border-amber-300 bg-amber-50 text-amber-900' : 'bg-white'} ${date.isPast ? 'opacity-70' : ''}`}><b className="block text-base leading-4">{date.day}</b><span>{date.weekday}</span></button>)}</div>
       {selected ? <Card className={selected.isWeekend ? 'border-rose-300' : selected.isRest ? 'border-amber-300' : ''}><CardBody className="py-3"><p className="font-semibold">Ngày {selected.day} · {selected.weekday} {selected.holidayName ? `— ${selected.holidayName}` : ''}</p><p className="mt-0.5 text-xs text-slate-500">{selected.isPast ? 'Ngày đã qua: chỉ xem, không được sửa.' : 'Chọn ký hiệu cho từng nhân viên bên dưới.'}</p></CardBody></Card> : null}
       <div className="space-y-2">{data.staff.map((person) => <Card key={person.id}><CardBody className="space-y-3 py-3"><div className="flex items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate font-semibold">{person.stt}. {person.fullName}</p><p className="truncate text-xs text-slate-500">{person.title || 'Chưa khai báo chức danh'} · MANV: {person.username}</p></div>{selected ? <CodeSelect data={data} person={person} date={selected} value={data.entries[cellKey(person.id, selected.date)]?.code ?? ''} disabled={!canUpdate || save.isPending || selected.isPast} onSave={(code) => save.mutate({ userId: person.id, workDate: selected.date, code })} /> : null}</div>
-        {(formulaColumns.length || manualColumns.length) ? <div className="grid grid-cols-2 gap-2 border-t pt-2">{formulaColumns.map((column) => <div key={column.id} className="rounded-lg bg-indigo-50 p-2"><p className="text-[11px] font-medium text-indigo-700">{column.name}</p><p className="font-semibold text-indigo-950">{numberLabel(data.rowValues[String(person.id)]?.[column.key] ?? 0)}</p></div>)}{manualColumns.map((column) => { const key = manualCellKey(person.id, column.id); return <label key={column.id} className="grid gap-1 text-[11px] font-medium text-violet-700">{column.name}<ManualInput person={person} column={column} data={data} value={manualDrafts[key] ?? data.manualValues[key] ?? ''} disabled={!canUpdate || saveManual.isPending} invalid={!!manualPreview.byKey[key]} warning={manualPreview.byKey[key]} onChange={(value) => setManualDrafts((current) => ({ ...current, [key]: value }))} onCommit={(value) => commitManualValue(key, value)} /></label>; })}</div> : null}
+        {(formulaColumns.length || manualColumns.length) ? <div className="grid grid-cols-2 gap-2 border-t pt-2">{formulaColumns.map((column) => <div key={column.id} className="rounded-lg bg-indigo-50 p-2"><p className="text-[11px] font-medium text-indigo-700">{column.name}</p><p className="font-semibold text-indigo-950">{numberLabel(data.rowValues[String(person.id)]?.[column.key] ?? 0)}</p></div>)}{manualColumns.map((column) => { const key = manualCellKey(person.id, column.id); return <label key={column.id} className="grid gap-1 text-[11px] font-medium text-violet-700">{column.name}<ManualInput person={person} column={column} data={data} value={manualDrafts[key] ?? data.manualValues[key] ?? ''} disabled={!canUpdate || saveManual.isPending} invalid={!!manualPreview.byKey[key]} warning={manualPreview.byKey[key]} onChange={(value) => changeManualValue(key, value)} onCommit={(value) => commitManualValue(key, value)} /></label>; })}</div> : null}
       </CardBody></Card>)}</div>
     </div>
 
-    <DesktopAttendanceGrid data={data} canUpdate={canUpdate} saving={save.isPending || saveManual.isPending} manualDrafts={manualDrafts} manualIssuesByKey={manualPreview.byKey} hiddenSections={hiddenSections} onCodeSave={save.mutate} onManualChange={(key, value) => setManualDrafts((current) => ({ ...current, [key]: value }))} onManualCommit={commitManualValue} />
+    <DesktopAttendanceGrid data={data} canUpdate={canUpdate} saving={save.isPending || saveManual.isPending} manualDrafts={manualDrafts} manualIssuesByKey={manualPreview.byKey} hiddenSections={hiddenSections} onCodeSave={save.mutate} onManualChange={changeManualValue} onManualCommit={commitManualValue} />
     {(save.isPending || saveManual.isPending) ? <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg"><Loader2 className="h-4 w-4 animate-spin" /> Đang lưu…</div> : null}
   </>;
 }
