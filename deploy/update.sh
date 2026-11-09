@@ -389,8 +389,14 @@ grep -qE '^(docker-compose\.yml|\.env\.example)$' <<<"$CHANGED" && COMPOSE_CHANG
 cleanup_update_artifacts() {
   local keep=${QLBS_UPDATE_BACKUP_KEEP:-7} index=0 removed=0 line snapshot
   [[ "$keep" =~ ^[1-9][0-9]*$ ]] || keep=7
-  docker image prune -f >/dev/null 2>&1 || true
-  docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || true
+  # Docker daemon/buildkit đôi khi giữ lock rất lâu khi dọn cache. Đây chỉ là dọn rác sau
+  # khi dịch vụ đã khỏe, tuyệt đối không được làm lệnh cập nhật treo vô hạn.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s 30s docker image prune -f >/dev/null 2>&1 || warn 'Bỏ qua dọn image Docker do quá thời gian; dịch vụ đã cập nhật xong.'
+    timeout --kill-after=5s 45s docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || warn 'Bỏ qua dọn build cache Docker do quá thời gian; không ảnh hưởng dịch vụ/dữ liệu.'
+  else
+    warn 'Không có lệnh timeout nên bỏ qua dọn Docker cache để update.sh không bị treo.'
+  fi
   [[ -d data/upgrade-backups ]] || return 0
   while IFS= read -r line; do
     snapshot=${line#* }
