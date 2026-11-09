@@ -169,7 +169,7 @@ export class DutyAttendanceService {
     if (typeof evaluateExpression(expression, Object.fromEntries([...codes.map((item) => [item.code, 0]), ...columns.map((item) => [item.key, 0])])) !== 'boolean') throw new BadRequestException('Ràng buộc phải là phép so sánh, ví dụ: [A] + [B] == [TONG]');
   }
 
-  private async buildBoard(departmentId: number, month: string, overrides = new Map<string, string | null>()) {
+  private async buildBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
     this.assertMonth(month);
     const { from, to } = monthBounds(month);
     const layout = await this.activeLayout();
@@ -189,7 +189,9 @@ export class DutyAttendanceService {
       const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6;
       return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((holiday) => holiday.holidayDate === date)?.name ?? '' };
     });
-    const entries = Object.fromEntries(records.map((record) => [`${record.userId}:${record.workDate}`, { code: record.code, note: record.note }]));
+    const entryByCell = new Map(records.map((record) => [`${record.userId}:${record.workDate}`, { code: record.code, note: record.note }]));
+    for (const [cell, entry] of entryOverrides) { if (!entry.code) entryByCell.delete(cell); else entryByCell.set(cell, { code: entry.code, note: entry.note ?? '' }); }
+    const entries = Object.fromEntries(entryByCell);
     const manualColumns = layout.columns.filter((column) => column.columnType === 'MANUAL');
     const formulaColumns = layout.columns.filter((column) => column.columnType === 'FORMULA');
     const manualByCell = new Map(manualRows.map((row) => [`${row.userId}:${row.columnId}`, row.value]));
@@ -225,6 +227,51 @@ export class DutyAttendanceService {
     return { month, today, department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital }, dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations, staff: staff.map((person, index) => ({ stt: index + 1, ...person })), entries, manualValues, rowValues, holidays };
   }
 
+  /** Một thay đổi ký hiệu hoặc số tự nhập không được làm lưu lại dòng công thức/ràng buộc sai. */
+  private assertBoardManualRules(board: Board, changedPeople: Set<number>) {
+    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase()));
+    for (const rule of board.validations) {
+      const references = expressionReferences(rule.expression);
+      for (const person of board.staff) {
+        const values = board.rowValues[String(person.id)];
+        // Với dạng A + B + C == Công thường, chặn ngay từng công vượt tổng hoặc tổng nhập vượt tổng,
+        // kể cả khi còn ô trống; nhờ đó không thể tự tính ra số âm.
+        if (changedPeople.has(person.id)) {
+          const limit = manualSumLimit(rule.expression, manualKeys, values);
+          if (limit) {
+            const entered = limit.references.map((reference) => numberValue(values?.[reference])); const exceedsEach = entered.some((value) => value > limit.maximum + 0.000001); const exceedsTotal = entered.reduce((total, value) => total + value, 0) > limit.maximum + 0.000001;
+            if (limit.maximum < 0 || exceedsEach) throw new BadRequestException(`Ràng buộc “${rule.name}”: một loại công không được lớn hơn công thường`);
+            if (exceedsTotal) throw new BadRequestException(`Ràng buộc “${rule.name}”: tổng công không được vượt công thường để tránh số âm`);
+          }
+        }
+        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá phép bằng đầy đủ khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
+        if (references.some((reference) => manualKeys.has(reference) && !String(values?.[reference] ?? '').trim())) continue;
+        if (!booleanExpression(rule.expression, values)) throw new BadRequestException(rule.message || `Ràng buộc “${rule.name}” chưa đúng cho nhân viên ${person.fullName}`);
+      }
+    }
+  }
+
+  /** Khi đổi ký hiệu làm cột Công thường thay đổi, tự cân phần công cuối cùng nếu phép tính có một nghiệm không âm rõ ràng. */
+  private manualOverridesForEntryChanges(board: Board, changedPeople: Set<number>) {
+    const manualByKey = new Map(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => [column.key.toUpperCase(), column])); const manualKeys = new Set(manualByKey.keys()); const overrides = new Map<string, string>();
+    for (const rule of board.validations) {
+      for (const person of board.staff) {
+        if (!changedPeople.has(person.id)) continue;
+        const values = board.rowValues[String(person.id)]; const limit = manualSumLimit(rule.expression, manualKeys, values); if (!limit) continue;
+        const columns = limit.references.map((reference) => manualByKey.get(reference)).filter((column): column is Board['columns'][number] => !!column);
+        if (columns.length !== limit.references.length || columns.some((column) => column.dataType !== 'NUMBER')) continue;
+        const target = [...columns].sort((a, b) => b.sortOrder - a.sortOrder || b.id - a.id)[0]; if (!target) continue;
+        const others = limit.references.filter((reference) => reference !== target.key.toUpperCase());
+        if (others.some((reference) => !String(values?.[reference] ?? '').trim())) continue;
+        const required = Math.round((limit.maximum - others.reduce((sum, reference) => sum + numberValue(values?.[reference]), 0)) * 1_000_000) / 1_000_000;
+        if (required < -0.000001) continue;
+        const cell = `${person.id}:${target.id}`; const current = values?.[target.key.toUpperCase()];
+        if (!String(current ?? '').trim() || Math.abs(numberValue(current) - required) >= 0.000001) overrides.set(cell, String(Math.max(0, required)));
+      }
+    }
+    return overrides;
+  }
+
   async month(user: AccessContext, q: AttendanceMonthQueryDto) { this.assertMonth(q.month); return this.buildBoard(await this.deptId(user, q.departmentId), q.month); }
 
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
@@ -239,6 +286,21 @@ export class DutyAttendanceService {
     ]);
     if (staff.length !== personIds.length) throw new ForbiddenException('Chỉ được chấm công cho nhân viên đang hoạt động thuộc khoa của bạn');
     const byCode = new Map(activeCodes.map((code) => [code.code.toUpperCase(), code.id]));
+    // Xem trước toàn bộ thay đổi ký hiệu theo từng tháng trước khi ghi. Nếu Công thường đổi,
+    // phần công cuối cùng được cân lại khi có nghiệm không âm rõ ràng; không thì từ chối nguyên thao tác.
+    const overridesByMonth = new Map<string, Map<string, { code: string | null; note?: string }>>(); const changedPeopleByMonth = new Map<string, Set<number>>();
+    for (const entry of dto.entries) {
+      const month = entry.workDate.slice(0, 7); const code = entry.code?.trim().toUpperCase() || null;
+      if (code && !byCode.has(code)) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
+      const overrides = overridesByMonth.get(month) ?? new Map<string, { code: string | null; note?: string }>(); overrides.set(`${entry.userId}:${entry.workDate}`, { code, note: entry.note?.trim() ?? '' }); overridesByMonth.set(month, overrides);
+      const changedPeople = changedPeopleByMonth.get(month) ?? new Set<number>(); changedPeople.add(entry.userId); changedPeopleByMonth.set(month, changedPeople);
+    }
+    const automaticManualOverrides = new Map<string, Map<string, string>>();
+    for (const [month, overrides] of overridesByMonth) {
+      const changedPeople = changedPeopleByMonth.get(month)!; const preview = await this.buildBoard(departmentId, month, new Map(), overrides); const manualOverrides = this.manualOverridesForEntryChanges(preview, changedPeople);
+      const finalBoard = manualOverrides.size ? await this.buildBoard(departmentId, month, manualOverrides, overrides) : preview;
+      this.assertBoardManualRules(finalBoard, changedPeople); if (manualOverrides.size) automaticManualOverrides.set(month, manualOverrides);
+    }
     await this.db.transaction(async (tx) => {
       for (const entry of dto.entries) {
         const code = entry.code?.trim().toUpperCase();
@@ -246,8 +308,12 @@ export class DutyAttendanceService {
         const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
         await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceEntries.userId, dutyAttendanceEntries.workDate], set: { departmentId, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id, updatedAt: new Date() } });
       }
+      for (const [month, overrides] of automaticManualOverrides) for (const [cell, value] of overrides) {
+        const [manualUserId, columnId] = cell.split(':').map(Number);
+        await tx.insert(dutyAttendanceManualValues).values({ departmentId, userId: manualUserId, month, columnId, value, updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceManualValues.departmentId, dutyAttendanceManualValues.userId, dutyAttendanceManualValues.month, dutyAttendanceManualValues.columnId], set: { value, updatedBy: user.id, updatedAt: new Date() } });
+      }
     });
-    return { saved: dto.entries.length };
+    return { saved: dto.entries.length, adjustedManualValues: [...automaticManualOverrides.values()].reduce((total, values) => total + values.size, 0) };
   }
 
   async saveManualValues(user: AccessContext, dto: SaveAttendanceManualValuesDto) {
@@ -269,28 +335,7 @@ export class DutyAttendanceService {
       overrides.set(`${item.userId}:${item.columnId}`, value || null);
     }
     const board = await this.buildBoard(departmentId, dto.month, overrides);
-    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase())); const changedPeople = new Set(personIds);
-    for (const rule of board.validations) {
-      const references = expressionReferences(rule.expression);
-      for (const person of board.staff) {
-        const values = board.rowValues[String(person.id)];
-        // Với dạng A + B + C == Công thường, chặn ngay từng công vượt tổng hoặc tổng nhập vượt tổng,
-        // kể cả khi còn ô trống; nhờ đó không thể tự tính ra số âm.
-        if (changedPeople.has(person.id)) {
-          const limit = manualSumLimit(rule.expression, manualKeys, values);
-          if (limit) {
-            const entered = limit.references.map((reference) => numberValue(values?.[reference])); const exceedsEach = entered.some((value) => value > limit.maximum + 0.000001); const exceedsTotal = entered.reduce((total, value) => total + value, 0) > limit.maximum + 0.000001;
-            if (limit.maximum < 0 || exceedsEach) throw new BadRequestException(`Ràng buộc “${rule.name}”: một loại công không được lớn hơn công thường`);
-            if (exceedsTotal) throw new BadRequestException(`Ràng buộc “${rule.name}”: tổng công không được vượt công thường để tránh số âm`);
-          }
-        }
-        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá phép bằng đầy đủ khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
-        if (references.some((reference) => manualKeys.has(reference) && !String(values?.[reference] ?? '').trim())) continue;
-        if (!booleanExpression(rule.expression, values)) {
-          throw new BadRequestException(rule.message || `Ràng buộc “${rule.name}” chưa đúng cho nhân viên ${person.fullName}`);
-        }
-      }
-    }
+    this.assertBoardManualRules(board, new Set(personIds));
     await this.db.transaction(async (tx) => {
       for (const item of dto.values) {
         const value = overrides.get(`${item.userId}:${item.columnId}`) ?? null;

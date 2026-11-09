@@ -94,6 +94,7 @@ class UpdateSafetyTests(unittest.TestCase):
         self.assertLess(calls.index('pg_dump'), calls.index('compose build api'))
         self.assertIn('pg_restore --list', calls)
         self.assertIn('compose build web', calls)
+        self.assertIn('builder prune -f --filter until=168h', calls, 'dọn cache build không dùng phải chạy nhưng không chạm dữ liệu/volume')
         self.assertIn('http://127.0.0.1:4000/health', calls, 'old .env without API_PORT must use default, not terminate under pipefail')
         self.assertIn('http://127.0.0.1:3000/login', calls)
         snapshots = list(self.root.glob('data/upgrade-backups/pre-update-*'))

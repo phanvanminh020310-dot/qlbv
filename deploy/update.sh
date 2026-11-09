@@ -12,7 +12,7 @@
 #         chỉ docs/, *.md                 → không cần dựng lại gì
 #         docker-compose.yml, .env        → khởi động lại theo cấu hình mới
 #    3. Chỉ build service cần thiết (có cache npm + cache Next.js), rồi up -d.
-#    4. Chờ /health và trang đăng nhập phản hồi, dọn ảnh cũ treo (dangling).
+#    4. Chờ /health và trang đăng nhập phản hồi, dọn ảnh dangling/cache build không dùng và snapshot nâng cấp quá mức giữ.
 #    5. Nếu lần đầu cấu hình HTTPS hostname, hỏi tương tác hostname/email/token
 #       Cloudflare (ẩn), cấp Let's Encrypt DNS-01 và giữ song song HTTPS IP cũ.
 #
@@ -384,9 +384,26 @@ if [[ $TLS_CHANGED -eq 1 ]]; then RECREATE+=(api); fi
 COMPOSE_CHANGED=0
 grep -qE '^(docker-compose\.yml|\.env\.example)$' <<<"$CHANGED" && COMPOSE_CHANGED=1
 
+# Chỉ dọn cache build Docker không còn dùng quá 7 ngày và snapshot upgrade cũ ngoài mức giữ.
+# Không đụng volume PostgreSQL, uploads, data/backups hay image/container đang dùng.
+cleanup_update_artifacts() {
+  local keep=${QLBS_UPDATE_BACKUP_KEEP:-7} index=0 removed=0 line snapshot
+  [[ "$keep" =~ ^[1-9][0-9]*$ ]] || keep=7
+  docker image prune -f >/dev/null 2>&1 || true
+  docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || true
+  [[ -d data/upgrade-backups ]] || return 0
+  while IFS= read -r line; do
+    snapshot=${line#* }
+    ((++index))
+    if (( index > keep )); then rm -rf -- "$snapshot"; ((++removed)); fi
+  done < <(find data/upgrade-backups -mindepth 1 -maxdepth 1 -type d -name 'pre-update-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr)
+  (( removed == 0 )) || ok "Đã xoá $removed snapshot nâng cấp cũ, giữ $keep snapshot mới nhất"
+}
+
 if [[ ${#BUILD[@]} -eq 0 && ${#RECREATE[@]} -eq 0 && $COMPOSE_CHANGED -eq 0 ]]; then
   step "Không có thay đổi cần dựng lại"
   ok "Chỉ đổi tài liệu hoặc không có gì mới — hệ thống giữ nguyên"
+  cleanup_update_artifacts
   "${DC[@]}" ps
   exit 0
 fi
@@ -447,7 +464,7 @@ if [[ -n "$TLS_DOMAIN" ]]; then
   fi
 fi
 
-docker image prune -f >/dev/null 2>&1 || true
+cleanup_update_artifacts
 "${DC[@]}" ps
 
 ELAPSED=$(( $(date +%s) - START ))

@@ -39,7 +39,7 @@ const remove = <T,>(path: string) => apiFetch<T>(path, { method: 'DELETE' });
 export const dutyAttendanceApi = {
   departments: () => get<AttendanceDepartmentScope>('/duty-attendance/departments'),
   month: (month: string, departmentId?: number) => get<AttendanceMonth>(`/duty-attendance/month?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`),
-  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
+  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number; adjustedManualValues?: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
   saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, ...(departmentId ? { departmentId } : {}) }),
   exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentId?: number) => `/duty-attendance/export/${format}?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`,
   codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),

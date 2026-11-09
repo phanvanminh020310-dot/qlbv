@@ -72,6 +72,12 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
     /tổng công không được vượt công thường/,
   );
   assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '3' }] })).saved, 1);
+  // Đổi ký hiệu làm Công thường thay đổi không được để lại A/B/C cũ thành dòng sai.
+  await assert.rejects(
+    service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: '' }] }),
+    /một loại công không được lớn hơn công thường/,
+  );
+  assert.equal((await service.month(user, { departmentId: 10, month })).entries[`1:${today}`]?.code, 'T', 'ký hiệu cũ được giữ nguyên khi thay đổi làm sai ràng buộc');
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }),
     /tổng công không được vượt công thường/,
@@ -80,6 +86,11 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: 'không phải số' }] }),
     /chỉ nhận số/,
   );
+  // Đổi ký hiệu làm Công thường tăng: Công C (cột tự nhập cuối trong tổng A/B/C) được cân lại atomically.
+  await service.updateCode(tCode.id, { countValue: '7' });
+  const codeSave = await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
+  assert.equal(codeSave.adjustedManualValues, 1);
+  assert.equal((await service.month(user, { departmentId: 10, month })).manualValues[`1:${c.id}`], '4');
   await assert.rejects(
     service.createColumn({ sectionId: report.id, key: 'SAI', name: 'Sai', columnType: 'FORMULA', dataType: 'NUMBER', formula: '[KHONG_CO]', sortOrder: 50, active: true }),
     /chưa được khai báo/,
