@@ -47,15 +47,16 @@ function VietnameseMonthPicker({ value, onChange }: { value: string; onChange: (
 
 function CodeSelect({ data, person, date, value, disabled, onSave }: { data: AttendanceMonth; person: AttendanceStaff; date: AttendanceDate; value: string; disabled: boolean; onSave: (code: string) => void }) {
   const tone = date.isWeekend ? 'border-rose-200 bg-rose-50 text-rose-800' : date.isRest ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white';
-  const title = date.isPast ? 'Ngày đã qua được khóa, không thể sửa' : value ? `Ký hiệu: ${value}` : 'Chưa nhập ký hiệu';
-  return <select aria-label={`Chấm công ${person.fullName}, ngày ${date.day}`} title={title} value={value} disabled={disabled} onChange={(event) => onSave(event.target.value)} className={`h-9 min-w-12 rounded-lg border px-1 text-center text-sm font-bold shadow-sm outline-none transition focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-70 ${tone} ${date.isPast ? 'saturate-50' : ''}`}><option value="" aria-label="Chưa nhập ký hiệu"></option>{data.codes.map((code) => <option value={code.code} key={code.id}>{code.code}</option>)}</select>;
+  const selected = data.codes.find((code) => code.code === value); const title = date.isPast ? 'Ngày đã qua được khóa, không thể sửa' : selected ? `${selected.code} — ${selected.name}${selected.note ? `: ${selected.note}` : ''}` : 'Chưa nhập ký hiệu';
+  return <select aria-label={`Chấm công ${person.fullName}, ngày ${date.day}`} title={title} value={value} disabled={disabled} onChange={(event) => onSave(event.target.value)} className={`h-9 w-12 max-w-12 rounded-lg border px-1 text-center text-sm font-bold shadow-sm outline-none transition focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-70 ${tone} ${date.isPast ? 'saturate-50' : ''}`}><option value="" aria-label="Chưa nhập ký hiệu"></option>{data.codes.map((code) => <option value={code.code} key={code.id} title={`${code.name}${code.note ? ` — ${code.note}` : ''}`}>{code.code} — {code.name}</option>)}</select>;
 }
 
 type TableColumn = { key: string; name: string; kind: 'ADMIN' | 'DAY' | 'SYMBOL' | 'FORMULA' | 'MANUAL'; section: AttendanceSection; day?: AttendanceDate; column?: AttendanceColumn };
 type ColumnGroup = { section: AttendanceSection; columns: TableColumn[] };
 type ManualIssue = { key?: string; userId?: number; message: string };
 type ManualPreview = { issues: ManualIssue[]; byKey: Record<string, string>; userIssues: Record<number, string> };
-const NUMERIC_INPUT = /^-?\d+(?:[.,]\d+)?$/;
+const NUMERIC_INPUT = /^\d+(?:[.,]\d+)?$/;
+const NUMBER_WHILE_TYPING = /^\d*(?:[.,]\d*)?$/;
 
 function isEmptyManualValue(value: string | number | undefined) { return String(value ?? '').trim() === ''; }
 
@@ -75,18 +76,37 @@ function manualRuleIncomplete(expression: string, manualColumns: AttendanceColum
   return attendanceReferences(expression).some((reference) => manualKeys.has(reference) && isEmptyManualValue(values[reference]));
 }
 
+/** Nhận dạng dạng an toàn [A] + [B] + [C] == [TONG] để không cho từng công/tổng công vượt công thường. */
+function manualSumLimit(expression: string, manualColumns: AttendanceColumn[], values: Record<string, string | number | undefined>) {
+  let depth = 0; let split = -1;
+  for (let index = 0; index < expression.length - 1; index++) { const character = expression[index]; if (character === '(') depth++; if (character === ')') depth--; if (depth === 0 && expression.slice(index, index + 2) === '==') { if (split >= 0) return null; split = index; index++; } }
+  if (split < 0) return null;
+  const left = expression.slice(0, split).trim(); const right = expression.slice(split + 2).trim(); const manualKeys = new Set(manualColumns.map((column) => column.key.toUpperCase()));
+  const sumReferences = (side: string) => { const references = attendanceReferences(side); return references.length && references.every((reference) => manualKeys.has(reference)) && side.replace(/\[[^\]]+\]/g, '').replace(/[+\s]/g, '') === '' ? references : []; };
+  for (const [sum, total] of [[left, right], [right, left]] as const) {
+    const references = sumReferences(sum); if (!references.length || attendanceReferences(total).some((reference) => manualKeys.has(reference))) continue;
+    try { return { references, maximum: previewAttendanceNumber(total, values) }; } catch { return null; }
+  }
+  return null;
+}
+
 function previewManualValues(data: AttendanceMonth | undefined, manualColumns: AttendanceColumn[], formulaColumns: AttendanceColumn[], manualDrafts: Record<string, string>): ManualPreview {
   const issues: ManualIssue[] = []; const byKey: Record<string, string> = {}; const userIssues: Record<number, string> = {};
   if (!data) return { issues, byKey, userIssues };
-  const columnsById = new Map(manualColumns.map((column) => [column.id, column])); const invalidUsers = new Set<number>();
-  for (const [key, value] of Object.entries(manualDrafts)) {
-    const [userIdText, columnIdText] = key.split(':'); const userId = Number(userIdText); const column = columnsById.get(Number(columnIdText));
-    if (column?.dataType === 'NUMBER' && value.trim() && !NUMERIC_INPUT.test(value.trim())) { const message = `${column.name}: chỉ được nhập số`; byKey[key] = message; userIssues[userId] = message; invalidUsers.add(userId); issues.push({ key, userId, message }); }
-  }
+  const invalidUsers = new Set<number>();
   for (const person of data.staff) {
     const values = previewManualRowValues(data, person, manualColumns, formulaColumns, manualDrafts); const hasManualValue = manualColumns.some((column) => !isEmptyManualValue(values[column.key.toUpperCase()]));
+    for (const column of manualColumns) {
+      const key = manualCellKey(person.id, column.id); const value = String(values[column.key.toUpperCase()] ?? '').trim();
+      if (column.dataType === 'NUMBER' && value && (!NUMERIC_INPUT.test(value) || Number(value.replace(',', '.')) < 0)) { const message = !NUMERIC_INPUT.test(value) ? `${column.name}: chỉ được nhập số` : `${column.name}: không được nhập số âm`; byKey[key] = message; userIssues[person.id] = message; invalidUsers.add(person.id); issues.push({ key, userId: person.id, message }); }
+    }
     if (!hasManualValue || invalidUsers.has(person.id)) continue;
     for (const rule of data.validations) {
+      const limit = manualSumLimit(rule.expression, manualColumns, values);
+      if (limit) {
+        const entered = limit.references.map((reference) => Number(String(values[reference] ?? '').replace(',', '.')) || 0); const exceedsEach = entered.some((item) => item > limit.maximum + 0.000001); const exceedsTotal = entered.reduce((total, item) => total + item, 0) > limit.maximum + 0.000001;
+        if (limit.maximum < 0 || exceedsEach || exceedsTotal) { const message = exceedsEach ? `${rule.name}: một loại công không được lớn hơn công thường` : `${rule.name}: tổng công không được vượt công thường để tránh số âm`; userIssues[person.id] = message; issues.push({ userId: person.id, message }); for (const column of manualColumns) if (limit.references.includes(column.key.toUpperCase())) byKey[manualCellKey(person.id, column.id)] ??= message; continue; }
+      }
       if (manualRuleIncomplete(rule.expression, manualColumns, values)) continue;
       try {
         if (previewAttendanceBoolean(rule.expression, values)) continue;
@@ -110,7 +130,7 @@ function completeOneManualValue(data: AttendanceMonth, person: AttendanceStaff, 
       const missing = related.filter((column) => isEmptyManualValue(values[column.key.toUpperCase()]));
       if (missing.length !== 1 || missing[0].dataType !== 'NUMBER') continue;
       const column = missing[0]; const answer = solveAttendanceEquality(rule.expression, values, column.key.toUpperCase());
-      if (answer === null) continue;
+      if (answer === null || answer < 0) continue;
       next[manualCellKey(person.id, column.id)] = String(answer); filled = true; break;
     }
     if (!filled) break;
@@ -133,7 +153,7 @@ function adminValue(person: AttendanceStaff, key: string) { if (key === 'STT') r
 
 function ManualInput({ person, column, data, value, disabled, invalid, warning, onChange, onCommit }: { person: AttendanceStaff; column: AttendanceColumn; data: AttendanceMonth; value: string; disabled: boolean; invalid?: boolean; warning?: string; onChange: (value: string) => void; onCommit: (value: string) => void }) {
   const locked = data.month < data.today.slice(0, 7);
-  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => onChange(event.target.value)} onBlur={(event) => onCommit(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
+  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => { const next = event.target.value; if (column.dataType === 'NUMBER' && !NUMBER_WHILE_TYPING.test(next) && !(value.startsWith('-') && next === '-')) return; onChange(next); }} onBlur={(event) => onCommit(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
 }
 
 function pinnedAdminClass(column: TableColumn) {

@@ -46,6 +46,21 @@ const numberValue = (value: string | number | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const codeCount = (value: string | number | undefined) => Math.round(numberValue(value) * 1_000_000) / 1_000_000;
+
+/** Nhận dạng duy nhất dạng [A] + [B] + [C] == [TONG] để áp dụng giới hạn công không âm/an toàn. */
+const manualSumLimit = (expression: string, manualKeys: Set<string>, values: Record<string, string | number | undefined>) => {
+  let depth = 0; let split = -1;
+  for (let index = 0; index < expression.length - 1; index++) { const character = expression[index]; if (character === '(') depth++; if (character === ')') depth--; if (depth === 0 && expression.slice(index, index + 2) === '==') { if (split >= 0) return null; split = index; index++; } }
+  if (split < 0) return null;
+  const left = expression.slice(0, split).trim(); const right = expression.slice(split + 2).trim();
+  const sumReferences = (side: string) => { const references = expressionReferences(side); return references.length && references.every((reference) => manualKeys.has(reference)) && side.replace(/\[[^\]]+\]/g, '').replace(/[+\s]/g, '') === '' ? references : []; };
+  for (const [sum, total] of [[left, right], [right, left]] as const) {
+    const references = sumReferences(sum); if (!references.length || expressionReferences(total).some((reference) => manualKeys.has(reference))) continue;
+    return { references, maximum: numericExpression(total, values) };
+  }
+  return null;
+};
+
 const hexToArgb = (value: string) => `FF${value.replace('#', '').toUpperCase()}`;
 
 type ActiveLayout = {
@@ -250,16 +265,26 @@ export class DutyAttendanceService {
     for (const item of dto.values) {
       const column = byColumn.get(item.columnId)!; const value = item.value?.trim().replace(',', '.') ?? '';
       if (column.dataType === 'NUMBER' && value && !NUMBER.test(value)) throw new BadRequestException(`Cột “${column.name}” chỉ nhận số`);
+      if (column.dataType === 'NUMBER' && value && numberValue(value) < 0) throw new BadRequestException(`Cột “${column.name}” không được nhập số âm`);
       overrides.set(`${item.userId}:${item.columnId}`, value || null);
     }
     const board = await this.buildBoard(departmentId, dto.month, overrides);
-    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase()));
+    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase())); const changedPeople = new Set(personIds);
     for (const rule of board.validations) {
       const references = expressionReferences(rule.expression);
       for (const person of board.staff) {
         const values = board.rowValues[String(person.id)];
-        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
-        // Nhờ vậy nhập A rồi rời ô không bị coi nhầm là A + 0 + 0, còn dữ liệu đầy đủ vẫn bị chặn nghiêm ngặt.
+        // Với dạng A + B + C == Công thường, chặn ngay từng công vượt tổng hoặc tổng nhập vượt tổng,
+        // kể cả khi còn ô trống; nhờ đó không thể tự tính ra số âm.
+        if (changedPeople.has(person.id)) {
+          const limit = manualSumLimit(rule.expression, manualKeys, values);
+          if (limit) {
+            const entered = limit.references.map((reference) => numberValue(values?.[reference])); const exceedsEach = entered.some((value) => value > limit.maximum + 0.000001); const exceedsTotal = entered.reduce((total, value) => total + value, 0) > limit.maximum + 0.000001;
+            if (limit.maximum < 0 || exceedsEach) throw new BadRequestException(`Ràng buộc “${rule.name}”: một loại công không được lớn hơn công thường`);
+            if (exceedsTotal) throw new BadRequestException(`Ràng buộc “${rule.name}”: tổng công không được vượt công thường để tránh số âm`);
+          }
+        }
+        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá phép bằng đầy đủ khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
         if (references.some((reference) => manualKeys.has(reference) && !String(values?.[reference] ?? '').trim())) continue;
         if (!booleanExpression(rule.expression, values)) {
           throw new BadRequestException(rule.message || `Ràng buộc “${rule.name}” chưa đúng cho nhân viên ${person.fullName}`);

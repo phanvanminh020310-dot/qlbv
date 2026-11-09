@@ -52,16 +52,29 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(board.manualValues['1:' + a.id], '1', 'chỉ cột tự nhập được lưu');
   // Tự lưu từng ô khi đang nhập: dòng chưa đủ A/B/C chưa bị hiểu là các ô trống bằng 0.
   await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '' }, { userId: 1, columnId: b.id, value: '' }, { userId: 1, columnId: c.id, value: '' }] });
+  await assert.rejects(
+    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '-1' }] }),
+    /không được nhập số âm/,
+  );
+  await assert.rejects(
+    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '7' }] }),
+    /một loại công không được lớn hơn công thường/,
+  );
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '4' }] })).saved, 1);
+  await assert.rejects(
+    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: b.id, value: '3' }] }),
+    /tổng công không được vượt công thường/,
+  );
   assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '1' }] })).saved, 1);
   assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: b.id, value: '2' }] })).saved, 1);
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '4' }] }),
-    /Tổng ba cột công phải bằng công hành chính/,
+    /tổng công không được vượt công thường/,
   );
   assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '3' }] })).saved, 1);
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }),
-    /Tổng ba cột công phải bằng công hành chính/,
+    /tổng công không được vượt công thường/,
   );
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: 'không phải số' }] }),
