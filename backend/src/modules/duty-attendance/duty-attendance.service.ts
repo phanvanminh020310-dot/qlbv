@@ -334,7 +334,7 @@ export class DutyAttendanceService {
     const columns: DisplayColumn[] = [];
     for (const section of data.sections) {
       if (section.kind === 'ADMIN') columns.push(...[
-        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section },
+        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh', source: 'ADMIN', section },
       ] as DisplayColumn[]);
       if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
       if (section.kind === 'SYMBOLS') columns.push(...data.codes.map((code) => ({ key: code.code.toUpperCase(), name: code.name, source: 'VALUE' as const, section })));
