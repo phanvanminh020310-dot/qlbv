@@ -329,7 +329,7 @@ export class DutyAttendanceService {
     if (columns.length !== columnIds.length || columns.some((column) => column.columnType !== 'MANUAL')) throw new BadRequestException('Chỉ cột tự nhập đang hoạt động mới được ghi số liệu');
     const byColumn = new Map(columns.map((column) => [column.id, column])); const overrides = new Map<string, string | null>();
     for (const item of dto.values) {
-      const column = byColumn.get(item.columnId)!; const value = item.value?.trim().replace(',', '.') ?? '';
+      const column = byColumn.get(item.columnId)!; const submitted = item.value ?? ''; const value = column.dataType === 'NUMBER' ? submitted.trim().replace(',', '.') : submitted;
       if (column.dataType === 'NUMBER' && value && !NUMBER.test(value)) throw new BadRequestException(`Cột “${column.name}” chỉ nhận số`);
       if (column.dataType === 'NUMBER' && value && numberValue(value) < 0) throw new BadRequestException(`Cột “${column.name}” không được nhập số âm`);
       overrides.set(`${item.userId}:${item.columnId}`, value || null);

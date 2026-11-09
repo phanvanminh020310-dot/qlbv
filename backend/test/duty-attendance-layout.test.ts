@@ -51,7 +51,11 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(board.rowValues['1']?.T, 6, 'ký hiệu dùng giá trị đếm đã khai báo');
   assert.equal(board.rowValues['1']?.CONG_HANH_CHINH, 6, 'công thức được tính từ cột ký hiệu');
   assert.equal(board.manualValues['1:' + a.id], '1', 'chỉ cột tự nhập được lưu');
-  // Tự lưu từng ô khi đang nhập: dòng chưa đủ A/B/C chưa bị hiểu là các ô trống bằng 0.
+  // Khi thay cả A/B/C, một request nguyên tử phải kiểm tra đúng bộ số cuối cùng thay vì chặn ô đầu tiên.
+  await assert.rejects(service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }), /tổng công không được vượt công thường/);
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }, { userId: 1, columnId: b.id, value: '2' }, { userId: 1, columnId: c.id, value: '2' }] })).saved, 3);
+  const afterAtomicManualSave = await service.month(user, { departmentId: 10, month }); assert.equal(afterAtomicManualSave.manualValues[`1:${a.id}`], '2'); assert.equal(afterAtomicManualSave.manualValues[`1:${b.id}`], '2'); assert.equal(afterAtomicManualSave.manualValues[`1:${c.id}`], '2');
+  // Dòng chưa đủ A/B/C vẫn không bị hiểu là các ô trống bằng 0.
   await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '' }, { userId: 1, columnId: b.id, value: '' }, { userId: 1, columnId: c.id, value: '' }] });
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '-1' }] }),
@@ -93,12 +97,12 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(codeSave.adjustedManualValues, 1);
   assert.equal((await service.month(user, { departmentId: 10, month })).manualValues[`1:${c.id}`], '4');
   const ghiChu = await service.createColumn({ sectionId: report.id, key: 'GHI_CHU', name: 'Ghi chú trực', columnType: 'MANUAL', dataType: 'TEXT', placeholder: 'Nhập ghi chú', sortOrder: 45, active: true });
-  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: ghiChu.id, value: 'Dòng một\nDòng hai' }] });
+  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: ghiChu.id, value: 'Dòng một,\n  Dòng hai ' }] });
   const exported = await service.exportExcel(user, month, 10); const workbook = new ExcelJS.Workbook(); const workbookBytes = exported.buffer.buffer.slice(exported.buffer.byteOffset, exported.buffer.byteOffset + exported.buffer.byteLength) as ArrayBuffer; await workbook.xlsx.load(workbookBytes); const sheet = workbook.getWorksheet('Cham cong'); assert.ok(sheet);
   const header = sheet.getRow(5); const columnByTitle = (title: string) => { let index = 0; header.eachCell((cell, cellIndex) => { if (cell.value === title) index = cellIndex; }); return index; }; const numericIndex = columnByTitle('Công A'); const textIndex = columnByTitle('Ghi chú trực'); assert.ok(numericIndex > 0); assert.ok(textIndex > 0);
   assert.equal(typeof sheet.getRow(7).getCell(numericIndex).value, 'number', 'cột NUMBER tự nhập phải là số thực trong Excel');
   assert.equal(sheet.getRow(7).getCell(numericIndex).value, 1);
-  assert.equal(sheet.getRow(7).getCell(textIndex).value, 'Dòng một\nDòng hai', 'cột TEXT tự nhập giữ nguyên xuống dòng');
+  assert.equal(sheet.getRow(7).getCell(textIndex).value, 'Dòng một,\n  Dòng hai ', 'cột TEXT tự nhập giữ nguyên dấu phẩy, khoảng trắng và xuống dòng');
   await assert.rejects(
     service.createColumn({ sectionId: report.id, key: 'SAI', name: 'Sai', columnType: 'FORMULA', dataType: 'NUMBER', formula: '[KHONG_CO]', sortOrder: 50, active: true }),
     /chưa được khai báo/,
