@@ -7,6 +7,17 @@ export type DutyAttendanceSectionKind = 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' 
 export type DutyAttendanceColumnType = 'FORMULA' | 'MANUAL';
 export type DutyAttendanceDataType = 'NUMBER' | 'TEXT';
 
+/** Danh mục nhóm ký hiệu, mã ổn định và tên tiếng Việt để chọn tại form ký hiệu. */
+export const dutyAttendanceCodeGroups = pgTable('duty_attendance_code_groups', {
+  id: serial('id').primaryKey(),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex('duty_attendance_code_groups_code_uq').on(t.code), index('duty_attendance_code_groups_active_idx').on(t.active, t.sortOrder)]);
+
 /** Danh mục ký hiệu chấm công – cấu hình được, không hard-code ở giao diện. */
 export const dutyAttendanceCodes = pgTable('duty_attendance_codes', {
   id: serial('id').primaryKey(),

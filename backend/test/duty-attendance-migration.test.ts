@@ -14,6 +14,9 @@ test('migration bảng chấm công tạo danh mục ký hiệu cấu hình đư
   const layoutMigration = readFileSync(resolve(__dirname, '..', 'drizzle', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql'), 'utf8');
   await pg.exec(layoutMigration);
   await pg.exec(layoutMigration);
+  const codeGroupMigration = readFileSync(resolve(__dirname, '..', 'drizzle', '0030_nhom_ky_hieu_cham_cong.sql'), 'utf8');
+  await pg.exec(codeGroupMigration);
+  await pg.exec(codeGroupMigration);
   const codes = await pg.query<{ code: string; counts_as_duty: boolean; show_summary: boolean }>(`
     SELECT code, counts_as_duty, show_summary FROM duty_attendance_codes ORDER BY sort_order
   `);
@@ -30,6 +33,8 @@ test('migration bảng chấm công tạo danh mục ký hiệu cấu hình đư
   assert.deepEqual(sections.rows, [
     { code: 'ADMIN', kind: 'ADMIN' }, { code: 'DAYS', kind: 'DAYS' }, { code: 'SYMBOLS', kind: 'SYMBOLS' }, { code: 'REPORT', kind: 'REPORT' },
   ]);
+  const groups = await pg.query<{ code: string; name: string }>("SELECT code, name FROM duty_attendance_code_groups WHERE code IN ('DUTY', 'OTHER') ORDER BY code");
+  assert.deepEqual(groups.rows, [{ code: 'DUTY', name: 'Trực' }, { code: 'OTHER', name: 'Khác' }]);
   const counted = await pg.query<{ count_value: string }>("SELECT count_value::text FROM duty_attendance_codes WHERE code = 'T'");
   assert.equal(counted.rows[0]?.count_value, '1.00', 'ký hiệu cũ nhận giá trị đếm 1 mà không sửa dữ liệu ngày');
   await assert.rejects(

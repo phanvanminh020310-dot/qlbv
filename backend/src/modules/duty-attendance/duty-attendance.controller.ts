@@ -4,6 +4,7 @@ import { Audit, CurrentUser, RequirePermissions } from '../../common/decorators'
 import type { AccessContext } from '../../common/types/access-context';
 import {
   AttendanceCodeDto,
+  AttendanceCodeGroupDto,
   AttendanceColumnDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
@@ -43,6 +44,13 @@ export class DutyAttendanceController {
     if (!result) throw new Error('Định dạng xuất không hỗ trợ');
     return new StreamableFile(result.buffer, { type: result.mime, disposition: `attachment; filename="${encodeURIComponent(result.fileName)}"`, length: result.buffer.length });
   }
+
+  @Get('code-groups') @RequirePermissions('duty-attendance.catalog.manage') codeGroups() { return this.service.codeGroups(); }
+  @Post('code-groups') @RequirePermissions('duty-attendance.catalog.manage') createCodeGroup(@Body() dto: AttendanceCodeGroupDto) { return this.service.createCodeGroup(dto); }
+  @Put('code-groups/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_code_groups', description: 'Sửa nhóm ký hiệu chấm công' })
+  updateCodeGroup(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceCodeGroupDto) { return this.service.updateCodeGroup(id, dto); }
+  @Delete('code-groups/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_code_groups', description: 'Xóa nhóm ký hiệu chưa được sử dụng' })
+  deleteCodeGroup(@Param('id', ParseIntPipe) id: number) { return this.service.deleteCodeGroup(id); }
 
   @Get('codes') @RequirePermissions('duty-attendance.view') codes() { return this.service.codes(); }
   @Post('codes') @RequirePermissions('duty-attendance.catalog.manage') createCode(@Body() dto: AttendanceCodeDto) { return this.service.createCode(dto); }

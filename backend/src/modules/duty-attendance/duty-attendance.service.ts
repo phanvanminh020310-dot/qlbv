@@ -5,6 +5,7 @@ import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, Width
 import { DbService } from '../../db/db.service';
 import {
   departments,
+  dutyAttendanceCodeGroups,
   dutyAttendanceCodes,
   dutyAttendanceColumns,
   dutyAttendanceEntries,
@@ -21,6 +22,7 @@ import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
 import type {
   AttendanceCodeDto,
+  AttendanceCodeGroupDto,
   AttendanceColumnDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
@@ -268,14 +270,45 @@ export class DutyAttendanceService {
     return { saved: dto.values.length };
   }
 
+  async codeGroups() { return this.db.db.select().from(dutyAttendanceCodeGroups).orderBy(asc(dutyAttendanceCodeGroups.sortOrder), asc(dutyAttendanceCodeGroups.code)); }
+  private async assertActiveCodeGroup(code: string) {
+    const normalized = code.trim().toUpperCase();
+    const [group] = await this.db.db.select({ code: dutyAttendanceCodeGroups.code, name: dutyAttendanceCodeGroups.name }).from(dutyAttendanceCodeGroups).where(and(eq(dutyAttendanceCodeGroups.code, normalized), eq(dutyAttendanceCodeGroups.active, true)));
+    if (!group) throw new BadRequestException(`Nhóm ký hiệu “${normalized}” không tồn tại hoặc đã ngừng sử dụng`);
+    return normalized;
+  }
+  async createCodeGroup(dto: AttendanceCodeGroupDto) {
+    const [item] = await this.db.db.insert(dutyAttendanceCodeGroups).values({ code: dto.code.trim().toUpperCase(), name: dto.name.trim(), sortOrder: dto.sortOrder ?? 100, active: dto.active ?? true }).returning(); return item;
+  }
+  async updateCodeGroup(id: number, dto: Partial<AttendanceCodeGroupDto>) {
+    const [current] = await this.db.db.select().from(dutyAttendanceCodeGroups).where(eq(dutyAttendanceCodeGroups.id, id)); if (!current) throw new NotFoundException('Không tìm thấy nhóm ký hiệu');
+    const nextCode = dto.code?.trim().toUpperCase() ?? current.code;
+    if (nextCode !== current.code) {
+      const [{ total }] = await this.db.db.select({ total: sql<number>`count(*)::int` }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.group, current.code));
+      if (Number(total)) throw new ConflictException(`Nhóm “${current.code}” đang được ${total} ký hiệu sử dụng. Không thể đổi mã; hãy giữ mã và chỉ đổi tên tiếng Việt.`);
+    }
+    const [item] = await this.db.db.update(dutyAttendanceCodeGroups).set({ ...(dto.code !== undefined ? { code: nextCode } : {}), ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}), ...(dto.active !== undefined ? { active: dto.active } : {}), updatedAt: new Date() }).where(eq(dutyAttendanceCodeGroups.id, id)).returning(); return item;
+  }
+  async deleteCodeGroup(id: number) {
+    const [group] = await this.db.db.select().from(dutyAttendanceCodeGroups).where(eq(dutyAttendanceCodeGroups.id, id)); if (!group) throw new NotFoundException('Không tìm thấy nhóm ký hiệu');
+    const [{ total }] = await this.db.db.select({ total: sql<number>`count(*)::int` }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.group, group.code));
+    if (Number(total)) throw new ConflictException(`Nhóm “${group.name}” đang được sử dụng. Hãy ngừng dùng nhóm thay vì xóa để bảo toàn dữ liệu.`);
+    await this.db.db.delete(dutyAttendanceCodeGroups).where(eq(dutyAttendanceCodeGroups.id, id)); return { deleted: true };
+  }
+
   async codes() { return this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)); }
   private countValue(value?: string) { const count = numberValue(value); if (count < 0 || !Number.isFinite(count)) throw new BadRequestException('Giá trị đếm phải là số không âm'); return String(count); }
   async createCode(dto: AttendanceCodeDto) {
-    const [item] = await this.db.db.insert(dutyAttendanceCodes).values({ code: dto.code.trim().toUpperCase(), name: dto.name.trim(), group: dto.group.trim().toUpperCase(), color: dto.color ?? '#0f766e', countsAsDuty: dto.countsAsDuty ?? false, showSummary: dto.showSummary ?? true, countValue: this.countValue(dto.countValue), sortOrder: dto.sortOrder ?? 0, active: dto.active ?? true, note: dto.note?.trim() ?? '' }).returning(); return item;
+    const group = await this.assertActiveCodeGroup(dto.group);
+    const [item] = await this.db.db.insert(dutyAttendanceCodes).values({ code: dto.code.trim().toUpperCase(), name: dto.name.trim(), group, color: dto.color ?? '#0f766e', countsAsDuty: dto.countsAsDuty ?? false, showSummary: dto.showSummary ?? true, countValue: this.countValue(dto.countValue), sortOrder: dto.sortOrder ?? 0, active: dto.active ?? true, note: dto.note?.trim() ?? '' }).returning(); return item;
   }
   async updateCode(id: number, dto: Partial<AttendanceCodeDto>) {
-    const values = { ...(dto.code !== undefined ? { code: dto.code.trim().toUpperCase() } : {}), ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(dto.group !== undefined ? { group: dto.group.trim().toUpperCase() } : {}), ...(dto.color !== undefined ? { color: dto.color } : {}), ...(dto.countsAsDuty !== undefined ? { countsAsDuty: dto.countsAsDuty } : {}), ...(dto.showSummary !== undefined ? { showSummary: dto.showSummary } : {}), ...(dto.countValue !== undefined ? { countValue: this.countValue(dto.countValue) } : {}), ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}), ...(dto.active !== undefined ? { active: dto.active } : {}), ...(dto.note !== undefined ? { note: dto.note.trim() } : {}), updatedAt: new Date() };
-    const [item] = await this.db.db.update(dutyAttendanceCodes).set(values).where(eq(dutyAttendanceCodes.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ký hiệu'); return item;
+    const [current] = await this.db.db.select({ group: dutyAttendanceCodes.group }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.id, id));
+    if (!current) throw new NotFoundException('Không tìm thấy ký hiệu');
+    const requestedGroup = dto.group?.trim().toUpperCase();
+    const group = requestedGroup === undefined ? undefined : requestedGroup === current.group ? current.group : await this.assertActiveCodeGroup(requestedGroup);
+    const values = { ...(dto.code !== undefined ? { code: dto.code.trim().toUpperCase() } : {}), ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(group !== undefined ? { group } : {}), ...(dto.color !== undefined ? { color: dto.color } : {}), ...(dto.countsAsDuty !== undefined ? { countsAsDuty: dto.countsAsDuty } : {}), ...(dto.showSummary !== undefined ? { showSummary: dto.showSummary } : {}), ...(dto.countValue !== undefined ? { countValue: this.countValue(dto.countValue) } : {}), ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}), ...(dto.active !== undefined ? { active: dto.active } : {}), ...(dto.note !== undefined ? { note: dto.note.trim() } : {}), updatedAt: new Date() };
+    const [item] = await this.db.db.update(dutyAttendanceCodes).set(values).where(eq(dutyAttendanceCodes.id, id)).returning(); return item;
   }
   async deleteCode(id: number) {
     const [code] = await this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.id, id)); if (!code) throw new NotFoundException('Không tìm thấy ký hiệu');

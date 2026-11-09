@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 
+export interface AttendanceCodeGroup { id: number; code: string; name: string; sortOrder: number; active: boolean }
 export interface AttendanceCode { id: number; code: string; name: string; group: string; color: string; countsAsDuty: boolean; showSummary: boolean; countValue: string; sortOrder: number; active: boolean; note: string }
 export interface AttendanceSection { id: number; code: string; name: string; kind: 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM'; color: string; sortOrder: number; active: boolean }
 export interface AttendanceColumn { id: number; sectionId: number; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
@@ -26,6 +27,7 @@ export interface AttendanceMonth {
   rowValues: Record<string, Record<string, string | number>>;
   holidays: Array<{ id: number; holidayDate: string; name: string; note: string }>;
 }
+type CodeGroupPayload = Omit<AttendanceCodeGroup, 'id'>;
 type CodePayload = Omit<AttendanceCode, 'id'>;
 type SectionPayload = Omit<AttendanceSection, 'id' | 'kind'> & { kind?: AttendanceSection['kind'] };
 type ColumnPayload = Omit<AttendanceColumn, 'id'>;
@@ -40,6 +42,10 @@ export const dutyAttendanceApi = {
   save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
   saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, ...(departmentId ? { departmentId } : {}) }),
   exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentId?: number) => `/duty-attendance/export/${format}?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`,
+  codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),
+  createCodeGroup: (body: CodeGroupPayload) => post<AttendanceCodeGroup>('/duty-attendance/code-groups', body),
+  updateCodeGroup: (id: number, body: CodeGroupPayload) => put<AttendanceCodeGroup>(`/duty-attendance/code-groups/${id}`, body),
+  deleteCodeGroup: (id: number) => remove<{ deleted: true }>(`/duty-attendance/code-groups/${id}`),
   codes: () => get<AttendanceCode[]>('/duty-attendance/codes'),
   createCode: (body: CodePayload) => post<AttendanceCode>('/duty-attendance/codes', body),
   updateCode: (id: number, body: CodePayload) => put<AttendanceCode>(`/duty-attendance/codes/${id}`, body),
@@ -63,4 +69,5 @@ export const attendanceKeys = {
   departments: (userId?: number) => ['duty-attendance', 'departments', userId ?? 0] as const,
   month: (userId: number | undefined, month: string, departmentId?: number) => ['duty-attendance', 'month', userId ?? 0, month, departmentId ?? 0] as const,
   layout: ['duty-attendance', 'layout'] as const,
+  codeGroups: ['duty-attendance', 'code-groups'] as const,
 };

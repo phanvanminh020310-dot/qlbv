@@ -37,6 +37,12 @@ export class SaveAttendanceManualValuesDto {
   @IsArray() @ArrayMaxSize(5000) @ValidateNested({ each: true }) @Type(() => AttendanceManualValueDto)
   values!: AttendanceManualValueDto[];
 }
+export class AttendanceCodeGroupDto {
+  @IsString() @IsNotEmpty() @MaxLength(32) @Matches(COLUMN_KEY) code!: string;
+  @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
 export class AttendanceCodeDto {
   @IsString() @IsNotEmpty() @MaxLength(16) @Matches(/^[A-Za-z0-9_.-]+$/) code!: string;
   @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
