@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
+import * as ExcelJS from 'exceljs';
 import type { AccessContext } from '../src/common/types/access-context';
 import { DbService } from '../src/db/db.service';
 import * as schema from '../src/db/schema';
@@ -91,6 +92,13 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   const codeSave = await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
   assert.equal(codeSave.adjustedManualValues, 1);
   assert.equal((await service.month(user, { departmentId: 10, month })).manualValues[`1:${c.id}`], '4');
+  const ghiChu = await service.createColumn({ sectionId: report.id, key: 'GHI_CHU', name: 'Ghi chú trực', columnType: 'MANUAL', dataType: 'TEXT', placeholder: 'Nhập ghi chú', sortOrder: 45, active: true });
+  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: ghiChu.id, value: 'Dòng một\nDòng hai' }] });
+  const exported = await service.exportExcel(user, month, 10); const workbook = new ExcelJS.Workbook(); const workbookBytes = exported.buffer.buffer.slice(exported.buffer.byteOffset, exported.buffer.byteOffset + exported.buffer.byteLength) as ArrayBuffer; await workbook.xlsx.load(workbookBytes); const sheet = workbook.getWorksheet('Cham cong'); assert.ok(sheet);
+  const header = sheet.getRow(5); const columnByTitle = (title: string) => { let index = 0; header.eachCell((cell, cellIndex) => { if (cell.value === title) index = cellIndex; }); return index; }; const numericIndex = columnByTitle('Công A'); const textIndex = columnByTitle('Ghi chú trực'); assert.ok(numericIndex > 0); assert.ok(textIndex > 0);
+  assert.equal(typeof sheet.getRow(7).getCell(numericIndex).value, 'number', 'cột NUMBER tự nhập phải là số thực trong Excel');
+  assert.equal(sheet.getRow(7).getCell(numericIndex).value, 1);
+  assert.equal(sheet.getRow(7).getCell(textIndex).value, 'Dòng một\nDòng hai', 'cột TEXT tự nhập giữ nguyên xuống dòng');
   await assert.rejects(
     service.createColumn({ sectionId: report.id, key: 'SAI', name: 'Sai', columnType: 'FORMULA', dataType: 'NUMBER', formula: '[KHONG_CO]', sortOrder: 50, active: true }),
     /chưa được khai báo/,

@@ -69,7 +69,7 @@ type ActiveLayout = {
   validations: Awaited<ReturnType<DutyAttendanceService['layout']>>['validations'];
 };
 type Board = Awaited<ReturnType<DutyAttendanceService['month']>>;
-type DisplayColumn = { key: string; name: string; source: 'ADMIN' | 'DAY' | 'VALUE'; section: Board['sections'][number]; day?: Board['dates'][number] };
+type DisplayColumn = { key: string; name: string; source: 'ADMIN' | 'DAY' | 'VALUE'; section: Board['sections'][number]; day?: Board['dates'][number]; column?: Board['columns'][number] };
 
 export interface AttendanceExport { buffer: Buffer; fileName: string; mime: string; }
 
@@ -447,7 +447,7 @@ export class DutyAttendanceService {
       ] as DisplayColumn[]);
       if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
       if (section.kind === 'SYMBOLS') columns.push(...data.codes.map((code) => ({ key: code.code.toUpperCase(), name: code.name, source: 'VALUE' as const, section })));
-      if (section.kind === 'REPORT' || section.kind === 'CUSTOM') columns.push(...data.columns.filter((column) => column.sectionId === section.id).map((column) => ({ key: column.key.toUpperCase(), name: column.name, source: 'VALUE' as const, section })));
+      if (section.kind === 'REPORT' || section.kind === 'CUSTOM') columns.push(...data.columns.filter((column) => column.sectionId === section.id).map((column) => ({ key: column.key.toUpperCase(), name: column.name, source: 'VALUE' as const, section, column })));
     }
     return columns;
   }
@@ -467,7 +467,16 @@ export class DutyAttendanceService {
     sheet.mergeCells(3, 1, 3, total); sheet.getCell('A3').value = `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`; sheet.getCell('A3').alignment = { horizontal: 'center' };
     let start = 1; for (const group of groups) { const end = start + group.columns.length - 1; if (start !== end) sheet.mergeCells(4, start, 4, end); const cell = sheet.getCell(4, start); cell.value = group.section.name; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(group.section.color) } }; cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.alignment = { horizontal: 'center' }; start = end + 1; }
     sheet.addRow(columns.map((column) => column.name)); sheet.addRow(columns.map((column) => column.source === 'DAY' ? column.day!.weekday : ''));
-    for (const row of this.matrix(data)) sheet.addRow(row);
+    for (const person of data.staff) {
+      const row = sheet.addRow(columns.map((column) => this.cellValue(person, column, data)));
+      // ExcelJS receives all persisted manual values as strings. Configured manual NUMBER values
+      // must remain actual Excel numbers so report users can sum/filter them correctly; TEXT stays untouched.
+      columns.forEach((column, index) => {
+        if (column.source !== 'VALUE' || column.column?.columnType !== 'MANUAL' || column.column.dataType !== 'NUMBER') return;
+        const raw = String(this.cellValue(person, column, data) ?? '').trim(); if (!raw) return;
+        const numeric = Number(raw.replace(',', '.')); if (Number.isFinite(numeric)) row.getCell(index + 1).value = numeric;
+      });
+    }
     sheet.views = [{ state: 'frozen', xSplit: Math.min(4, total), ySplit: 6 }];
     columns.forEach((column, index) => { sheet.getColumn(index + 1).width = column.key === 'FULL_NAME' ? 28 : column.key === 'TITLE' ? 20 : column.key === 'USERNAME' ? 16 : column.source === 'DAY' ? 5 : 13; });
     [4, 5, 6].forEach((row) => sheet.getRow(row).eachCell((cell) => { cell.font = { ...(cell.font ?? {}), bold: true, name: 'Times New Roman', size: 9 }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }; if (row !== 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EAF2F8' } }; }));

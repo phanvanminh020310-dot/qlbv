@@ -90,6 +90,14 @@ function manualSumLimit(expression: string, manualColumns: AttendanceColumn[], v
   return null;
 }
 
+/** Nếu tổng A/B/C sai khi rời ô thì trả đúng nhóm ô cần xóa; không động tới cột tự nhập không liên quan. */
+function invalidManualResetColumns(data: AttendanceMonth, person: AttendanceStaff, manualColumns: AttendanceColumn[], formulaColumns: AttendanceColumn[], manualDrafts: Record<string, string>, currentColumnId: number) {
+  const current = manualColumns.find((column) => column.id === currentColumnId); if (!current) return [];
+  const values = previewManualRowValues(data, person, manualColumns, formulaColumns, manualDrafts); const currentKey = current.key.toUpperCase();
+  for (const rule of data.validations) { const limit = manualSumLimit(rule.expression, manualColumns, values); if (limit?.references.includes(currentKey)) return manualColumns.filter((column) => limit.references.includes(column.key.toUpperCase())); }
+  return [current];
+}
+
 function previewManualValues(data: AttendanceMonth | undefined, manualColumns: AttendanceColumn[], formulaColumns: AttendanceColumn[], manualDrafts: Record<string, string>): ManualPreview {
   const issues: ManualIssue[] = []; const byKey: Record<string, string> = {}; const userIssues: Record<number, string> = {};
   if (!data) return { issues, byKey, userIssues };
@@ -151,9 +159,13 @@ function tableGroups(data: AttendanceMonth, hiddenSections = new Set<string>()):
 
 function adminValue(person: AttendanceStaff, key: string) { if (key === 'STT') return person.stt; if (key === 'FULL_NAME') return person.fullName; if (key === 'TITLE') return person.title || ''; return person.username; }
 
+/** Chỉ chốt/đặt lại sau khi rời cả hàng, để có thể sửa lần lượt A, B, C trong cùng một dòng. */
+function leavesAttendanceRow(element: HTMLElement, relatedTarget: EventTarget | null) { return !(relatedTarget instanceof Node && element.closest('tr')?.contains(relatedTarget)); }
+
 function ManualInput({ person, column, data, value, disabled, invalid, warning, onChange, onCommit }: { person: AttendanceStaff; column: AttendanceColumn; data: AttendanceMonth; value: string; disabled: boolean; invalid?: boolean; warning?: string; onChange: (value: string) => void; onCommit: (value: string) => void }) {
-  const locked = data.month < data.today.slice(0, 7);
-  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'} type="text" inputMode={column.dataType === 'NUMBER' ? 'decimal' : 'text'} placeholder={column.placeholder || 'Tự nhập'} value={value} disabled={disabled || locked} onChange={(event) => { const next = event.target.value; if (column.dataType === 'NUMBER' && !NUMBER_WHILE_TYPING.test(next) && !(value.startsWith('-') && /^-\d*(?:[.,]\d*)?$/.test(next))) return; onChange(next); }} onBlur={(event) => onCommit(event.target.value)} className={`h-8 min-w-20 rounded-md border px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
+  const locked = data.month < data.today.slice(0, 7); const title = locked ? 'Tháng đã qua được khóa để bảo toàn lịch sử' : warning || column.placeholder || 'Tự nhập'; const unavailable = disabled || locked;
+  if (column.dataType === 'TEXT') return <textarea aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={title} placeholder={column.placeholder || 'Nhập nội dung'} value={value} disabled={unavailable} rows={2} onChange={(event) => onChange(event.target.value)} onBlur={(event) => { if (leavesAttendanceRow(event.currentTarget, event.relatedTarget)) onCommit(event.target.value); }} className={`min-h-14 min-w-32 resize-y rounded-md border px-2 py-1 text-left text-sm leading-5 outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'border-rose-500 bg-rose-50 text-rose-900 focus:border-rose-600 focus:ring-rose-100' : 'border-violet-200 bg-violet-50/40 focus:border-violet-500 focus:ring-violet-100'}`} />;
+  return <input aria-label={`${column.name} của ${person.fullName}`} aria-invalid={invalid || undefined} title={title} type="number" min="0" step="any" inputMode="decimal" placeholder={column.placeholder || '0'} value={value} disabled={unavailable} onChange={(event) => { const next = event.target.value; if (!NUMBER_WHILE_TYPING.test(next) && !(value.startsWith('-') && /^-\d*(?:[.,]\d*)?$/.test(next))) return; onChange(next); }} onBlur={(event) => { if (leavesAttendanceRow(event.currentTarget, event.relatedTarget)) onCommit(event.target.value); }} className={`h-8 min-w-20 w-full border-0 bg-transparent px-2 text-center text-sm outline-none placeholder:text-violet-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${invalid ? 'bg-rose-50 text-rose-900 focus:ring-rose-100' : 'focus:bg-violet-50/40 focus:ring-violet-100'}`} />;
 }
 
 function pinnedAdminClass(column: TableColumn) {
@@ -233,13 +245,11 @@ export default function ChamCongTrucPage() {
     const [userIdText, columnIdText] = key.split(':'); const userIdValue = Number(userIdText); const columnId = Number(columnIdText); const person = data.staff.find((item) => item.id === userIdValue); if (!person) return;
     const entered = { ...manualDrafts, [key]: value }; const completed = completeOneManualValue(data, person, manualColumns, formulaColumns, entered); const preview = previewManualValues(data, manualColumns, formulaColumns, completed); const message = preview.byKey[key];
     if (message) {
-      const previous = data.manualValues[key] ?? ''; const isLegacyNegative = NUMERIC_INPUT.test(previous) && Number(previous.replace(',', '.')) < 0;
-      if (isLegacyNegative) { setManualDrafts((current) => ({ ...current, [key]: '' })); saveManual.mutate({ values: [{ userId: userIdValue, columnId, value: '' }], quiet: true }); toast.error(`${message}. Đã xóa số âm cũ khi rời ô.`); delete manualNotice.current[key]; return; }
-      // Một dòng đã có số liệu cần được phép sửa lần lượt nhiều ô: giữ bản nháp đỏ tại trình duyệt,
-      // không tự lưu cho đến khi tổng hợp lệ trở lại. Dòng hoàn toàn mới/đang trống vẫn bỏ giá trị sai khi rời ô.
-      const hasSavedManualValue = manualColumns.some((column) => !isEmptyManualValue(data.manualValues[manualCellKey(person.id, column.id)]));
-      if (hasSavedManualValue) { setManualDrafts(completed); toast.warning(`${message}. Chưa lưu; hãy sửa các ô công liên quan rồi rời ô cuối cùng để lưu đồng thời.`); return; }
-      setManualDrafts((current) => { const next = { ...current }; delete next[key]; return next; }); toast.error(`${message}. Giá trị vừa nhập đã được bỏ.`);
+      // Không lưu một dòng đỏ: khi ràng buộc A/B/C sai và người dùng rời ô, xóa cả nhóm A/B/C
+      // về rỗng để bắt đầu lại rõ ràng; các cột tự nhập không thuộc ràng buộc không bị đụng tới.
+      const resetColumns = invalidManualResetColumns(data, person, manualColumns, formulaColumns, completed, columnId); const resetValues = resetColumns.map((column) => ({ userId: userIdValue, columnId: column.id, value: '' }));
+      setManualDrafts((current) => ({ ...current, ...Object.fromEntries(resetColumns.map((column) => [manualCellKey(person.id, column.id), ''])) }));
+      saveManual.mutate({ values: resetValues, quiet: true }); toast.error(`${message}. Đã xóa các ô nhập của dòng này vì ràng buộc chưa đúng.`);
       delete manualNotice.current[key]; return;
     }
     setManualDrafts(completed); delete manualNotice.current[key];
