@@ -392,8 +392,9 @@ cleanup_update_artifacts() {
   # Docker daemon/buildkit đôi khi giữ lock rất lâu khi dọn cache. Đây chỉ là dọn rác sau
   # khi dịch vụ đã khỏe, tuyệt đối không được làm lệnh cập nhật treo vô hạn.
   if command -v timeout >/dev/null 2>&1; then
-    timeout --kill-after=5s 30s docker image prune -f >/dev/null 2>&1 || warn 'Bỏ qua dọn image Docker do quá thời gian; dịch vụ đã cập nhật xong.'
-    timeout --kill-after=5s 45s docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || warn 'Bỏ qua dọn build cache Docker do quá thời gian; không ảnh hưởng dịch vụ/dữ liệu.'
+    step 'Dọn cache Docker không dùng (tối đa 15 giây, không ảnh hưởng dịch vụ)'
+    timeout --kill-after=3s 8s docker image prune -f >/dev/null 2>&1 || warn 'Bỏ qua dọn image Docker do quá thời gian; dịch vụ đã cập nhật xong.'
+    timeout --kill-after=3s 15s docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || warn 'Bỏ qua dọn build cache Docker do quá thời gian; không ảnh hưởng dịch vụ/dữ liệu.'
   else
     warn 'Không có lệnh timeout nên bỏ qua dọn Docker cache để update.sh không bị treo.'
   fi
