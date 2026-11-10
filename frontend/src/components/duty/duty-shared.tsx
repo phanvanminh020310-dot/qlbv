@@ -114,11 +114,12 @@ export function StaffSelect({
   id?: string;
   disabled?: boolean;
 }) {
-  const { data = [] } = useQuery({
+  const staff = useQuery({
     queryKey: DUTY_KEYS.staff,
     queryFn: () => dutyApi.staff(),
     staleTime: 60_000,
   });
+  const data = staff.data ?? [];
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selected = data.find((person) => person.id === value) ?? null;
@@ -167,7 +168,9 @@ export function StaffSelect({
             />
           </div>
           <div className="max-h-[min(52vh,28rem)] divide-y overflow-y-auto rounded-xl border">
-            {people.map((person) => {
+            {staff.isLoading ? <div className="space-y-2 p-3"><div className="h-9 animate-pulse rounded bg-[var(--muted)]" /><div className="h-9 animate-pulse rounded bg-[var(--muted)]" /></div> : null}
+            {staff.isError ? <div className="px-4 py-10 text-center text-sm text-rose-700">Không tải được danh sách bác sĩ: {errorText(staff.error)}</div> : null}
+            {!staff.isLoading && !staff.isError ? people.map((person) => {
               const active = selected?.id === person.id;
               return (
                 <button
@@ -190,8 +193,8 @@ export function StaffSelect({
                   </span>
                 </button>
               );
-            })}
-            {!people.length ? <div className="px-4 py-10 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy bác sĩ phù hợp.</div> : null}
+            }) : null}
+            {!staff.isLoading && !staff.isError && !people.length ? <div className="px-4 py-10 text-center text-sm text-[var(--muted-foreground)]">Không tìm thấy bác sĩ phù hợp.</div> : null}
           </div>
           {selected ? <Button variant="ghost" size="sm" onClick={() => { onChange(null); setOpen(false); }}>Bỏ chọn</Button> : null}
         </div>

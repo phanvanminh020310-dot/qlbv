@@ -1744,8 +1744,21 @@ export class DutyService {
   }
 
   /** Danh bạ nhân viên đang hoạt động (chỉ tên, chức danh, khoa) — để chọn người nhận khi nhường/đổi ca */
-  async staff(q?: string) {
+  async staff(user: AccessContext, q?: string) {
     const conds: SQL[] = [eq(users.active, true), isNull(users.deletedAt)];
+    // Điều phối KHTH (manage-all) và luồng đổi trực/ngoại lệ toàn viện giữ
+    // nguyên danh bạ đầy đủ. Người xếp lịch/duyệt thuộc khoa chỉ nhận danh bạ
+    // trong khoa được giao, tránh mở rộng thông tin nhân sự ngoài phạm vi.
+    const hasFullDirectory =
+      user.isSuperAdmin ||
+      this.core.isAll(user) ||
+      this.core.hasPerm(user, 'duty.register') ||
+      this.core.hasPerm(user, 'duty.exception.resolve');
+    if (!hasFullDirectory) {
+      const departmentIds = this.core.scopeDeptIds(user);
+      if (!departmentIds.length) throw new ForbiddenException('Chưa được gán phạm vi khoa để chọn nhân sự');
+      conds.push(inArray(users.departmentId, departmentIds));
+    }
     if (q?.trim()) {
       const like = `%${q.trim()}%`;
       conds.push(or(ilike(users.fullName, like), ilike(users.username, like)) as SQL);

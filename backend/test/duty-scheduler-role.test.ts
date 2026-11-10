@@ -4,9 +4,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
 import type { AccessContext } from "../src/common/types/access-context";
+import * as schema from "../src/db/schema";
+import { PERMISSIONS_KEY, PERMISSIONS_MODE_KEY } from "../src/common/decorators";
 import { ROLES } from "../src/db/seed-data";
+import { DutyController } from "../src/modules/duty/duty.controller";
 import { DutyCoreService } from "../src/modules/duty/duty-core.service";
+import { DutyService } from "../src/modules/duty/duty.service";
 
 function context(permissions: string[], departmentIds: number[]): AccessContext {
   return {
@@ -38,6 +43,45 @@ test("vai trò Người xếp lịch trực khoa chỉ được cấp quyền đ
   const chief = ROLES.find((item) => item.code === "TRUONG_KHOA");
   assert.ok(chief);
   assert.ok(chief.permissions !== "*" && !chief.permissions.includes("duty.manage"), "trưởng khoa cần được gán riêng vai trò xếp lịch");
+});
+
+test("Điều phối lịch trực KHTH được đọc danh bạ đầy đủ để đổi bác sĩ trực tiếp", () => {
+  const role = ROLES.find((item) => item.code === "DIEU_PHOI_TRUC");
+  assert.ok(role && role.permissions !== "*" && role.permissions.includes("duty.manage-all"));
+  const permissions = Reflect.getMetadata(PERMISSIONS_KEY, DutyController.prototype.staff) as string[];
+  const mode = Reflect.getMetadata(PERMISSIONS_MODE_KEY, DutyController.prototype.staff);
+  assert.equal(mode, "any");
+  assert.ok(permissions.includes("duty.manage-all"), "KHTH không có duty.register nhưng phải mở được danh bạ bác sĩ");
+  assert.ok(permissions.includes("duty.exception.resolve"), "KHTH xử lý ngoại lệ phải mở được danh bạ thay bác sĩ");
+});
+
+test("danh bạ KHTH trả đủ nhân sự còn hoạt động toàn viện, không lẫn tài khoản ngừng/xóa", async (t) => {
+  const pg = await PGlite.create();
+  t.after(() => pg.close());
+  await pg.exec(readFileSync(resolve(__dirname, "..", "drizzle", "0000_init_khoi_tao.sql"), "utf8"));
+  await pg.exec(`
+    INSERT INTO departments (id, code, name) VALUES (1, 'K1', 'Khoa Một'), (2, 'K2', 'Khoa Hai');
+    INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES
+      (1, 'doctor_one', 'fixture', 'Bác sĩ Một', 1, true),
+      (2, 'doctor_two', 'fixture', 'Bác sĩ Hai', 2, true),
+      (3, 'inactive_doctor', 'fixture', 'Bác sĩ Ngừng', 1, false),
+      (4, 'deleted_doctor', 'fixture', 'Bác sĩ Đã xóa', 2, true);
+    UPDATE users SET deleted_at = now() WHERE id = 4;
+  `);
+  const database = { db: drizzle(pg, { schema }) };
+  const core = new DutyCoreService(database as any, {} as any, {} as any);
+  const service = new DutyService(database as any, core, {} as any);
+  const coordinator: AccessContext = {
+    id: 99, username: "khth", fullName: "Điều phối KHTH", title: "KHTH", departmentId: null, departmentName: "",
+    roles: ["DIEU_PHOI_TRUC"], permissions: ["duty.manage-all", "duty.exception.resolve"], departmentIds: [], dataScope: "ALL", isSuperAdmin: false, sessionId: "test",
+  };
+
+  const directory = await service.staff(coordinator);
+  assert.deepEqual(directory.map((person) => person.fullName), ["Bác sĩ Hai", "Bác sĩ Một"]);
+
+  const departmentScheduler = context(["duty.manage"], [1]);
+  const scopedDirectory = await service.staff(departmentScheduler);
+  assert.deepEqual(scopedDirectory.map((person) => person.fullName), ["Bác sĩ Một"], "vai trò khoa không được thấy danh bạ ngoài khoa được giao");
 });
 
 test("người xếp lịch khoa thao tác mọi phòng nhưng chỉ quản lý nhân viên khoa được gán", () => {

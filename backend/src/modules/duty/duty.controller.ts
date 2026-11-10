@@ -24,6 +24,15 @@ import {
 import { DutyService } from './duty.service';
 
 const MANAGE_ANY = ['duty.manage', 'duty.manage-all'];
+// Danh bạ dùng trong các hộp đổi/thay bác sĩ: KHTH không cần quyền tự đăng ký ca
+// nhưng phải thấy đầy đủ nhân sự đang hoạt động để điều phối trực tiếp.
+const STAFF_PICK_ANY = [
+  'duty.register',
+  'duty.manage',
+  'duty.manage-all',
+  'duty.swap.approve',
+  'duty.exception.resolve',
+];
 
 @ApiTags('Lịch bác sĩ khám bệnh')
 @ApiBearerAuth()
@@ -41,10 +50,10 @@ export class DutyController {
   }
 
   @Get('staff')
-  @RequirePermissions('duty.register')
-  @ApiOperation({ summary: 'Danh bạ nhân viên để chọn người nhận ca (tên, chức danh, khoa)' })
-  staff(@Query() q: CandidateQueryDto) {
-    return this.service.staff(q.q);
+  @RequirePermissions(STAFF_PICK_ANY, 'any')
+  @ApiOperation({ summary: 'Danh bạ nhân viên để chọn người nhận ca/thay trực (tên, chức danh, khoa)' })
+  staff(@CurrentUser() user: AccessContext, @Query() q: CandidateQueryDto) {
+    return this.service.staff(user, q.q);
   }
 
   @Get('live-monitor')
