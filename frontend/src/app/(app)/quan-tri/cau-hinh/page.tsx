@@ -36,6 +36,7 @@ const GROUP_LABEL: Record<string, string> = {
   print: "Bản in",
   export: "Kết xuất tệp",
   notification: "Thông báo",
+  attendance: "Chấm công",
   kiosk: "Kiosk & Điểm danh",
   backup: "Sao lưu & lưu trữ",
   system: "Hệ thống",
@@ -48,6 +49,7 @@ const GROUP_ICON: Record<string, string> = {
   print: "🖨️",
   export: "📤",
   notification: "🔔",
+  attendance: "🗓️",
   kiosk: "🖥️",
   backup: "💾",
   system: "⚙️",
@@ -132,6 +134,22 @@ export default function SettingsPage() {
         : typeof item.value === "number"
           ? "number"
           : "text");
+    if (type === "attendance-lock-policy") {
+      return (
+        <select
+          aria-label={item.label ?? item.key}
+          disabled={!can("setting.update")}
+          value={String(value ?? "DAILY")}
+          onChange={(event) => setDraft((s) => ({ ...s, [item.key]: event.target.value }))}
+          className="h-9 w-full rounded-md border bg-background px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <option value="DAILY">Qua ngày — khóa ngày trước đó</option>
+          <option value="WEEKLY">Khóa theo tuần</option>
+          <option value="MONTHLY">Khóa theo tháng</option>
+          <option value="YEARLY">Khóa theo năm</option>
+        </select>
+      );
+    }
     if (type === "boolean") {
       const checked = isTruthy(value);
       return (

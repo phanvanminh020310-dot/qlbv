@@ -10,13 +10,14 @@ import { DbService } from '../src/db/db.service';
 import * as schema from '../src/db/schema';
 import { DutyAttendanceService } from '../src/modules/duty-attendance/duty-attendance.service';
 import { bangkokToday } from '../src/modules/duty/duty-rules';
+import { defaultSettings } from '../src/modules/settings/settings.service';
 
 const actor = (): AccessContext => ({
   id: 99, username: 'manager', fullName: 'Quản lý', title: '', departmentId: 10, departmentName: 'Khoa A', roles: ['NHAP_CHAM_CONG_TRUC_KHOA'],
   permissions: ['duty-attendance.view', 'duty-attendance.update', 'duty-attendance.catalog.manage'], dataScope: 'DEPT', departmentIds: [10], isSuperAdmin: false, sessionId: 'test',
 });
 
-async function setup() {
+async function setup(lockPolicy?: string) {
   const pg = await PGlite.create();
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0000_init_khoi_tao.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0025_bang_cham_cong_truc.sql'), 'utf8'));
@@ -29,8 +30,22 @@ async function setup() {
       (99, 'manager', 'hash', 'Quản lý', 'Trưởng khoa', 10, true);
   `);
   const db = drizzle(pg, { schema });
-  return { pg, service: new DutyAttendanceService({ db, transaction: db.transaction.bind(db) } as unknown as DbService) };
+  const dbService = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
+  const settings = lockPolicy ? { get: async () => lockPolicy } : undefined;
+  return { pg, dbService, service: new DutyAttendanceService(dbService, settings as any) };
 }
+
+test('cấu hình mặc định có chế độ khóa bảng chấm công an toàn', () => {
+  const lockPolicy = defaultSettings().find((item) => item.key === 'dutyAttendance.lockPolicy');
+  assert.deepEqual(lockPolicy, {
+    key: 'dutyAttendance.lockPolicy',
+    value: 'DAILY',
+    group: 'attendance',
+    label: 'Chế độ khóa bảng chấm công',
+    description: 'Chọn thời điểm dữ liệu chấm công không còn được sửa: qua ngày, hết tuần, hết tháng hoặc hết năm. Số liệu tự nhập theo tháng được khóa khi tháng/kỳ năm đã qua.',
+    valueType: 'attendance-lock-policy',
+  });
+});
 
 test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệu, công thức và tự nhập theo tháng', async (t) => {
   const { pg, service } = await setup(); t.after(() => pg.close()); const user = actor(); const today = bangkokToday(); const month = today.slice(0, 7);
@@ -51,51 +66,56 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(board.rowValues['1']?.T, 6, 'ký hiệu dùng giá trị đếm đã khai báo');
   assert.equal(board.rowValues['1']?.CONG_HANH_CHINH, 6, 'công thức được tính từ cột ký hiệu');
   assert.equal(board.manualValues['1:' + a.id], '1', 'chỉ cột tự nhập được lưu');
-  // Khi thay cả A/B/C, một request nguyên tử phải kiểm tra đúng bộ số cuối cùng thay vì chặn ô đầu tiên.
-  await assert.rejects(service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }), /tổng công không được vượt công thường/);
+  // Giá trị NUMBER hợp lệ được lưu từng ô, kể cả khi ràng buộc giữa các cột chưa đúng.
+  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] })).saved, 1);
+  const invalidAfterSingleSave = await service.month(user, { departmentId: 10, month });
+  assert.equal(invalidAfterSingleSave.manualValues[`1:${a.id}`], '2');
+  assert.ok(invalidAfterSingleSave.manualViolations[`1:${a.id}`]?.[0]?.includes('Tổng ba cột công'));
+  assert.ok(invalidAfterSingleSave.manualViolations[`1:${b.id}`]?.[0]?.includes('Tổng ba cột công'));
+  assert.ok(invalidAfterSingleSave.manualViolations[`1:${c.id}`]?.[0]?.includes('Tổng ba cột công'));
+
   assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }, { userId: 1, columnId: b.id, value: '2' }, { userId: 1, columnId: c.id, value: '2' }] })).saved, 3);
-  const afterAtomicManualSave = await service.month(user, { departmentId: 10, month }); assert.equal(afterAtomicManualSave.manualValues[`1:${a.id}`], '2'); assert.equal(afterAtomicManualSave.manualValues[`1:${b.id}`], '2'); assert.equal(afterAtomicManualSave.manualValues[`1:${c.id}`], '2');
-  // Dòng chưa đủ A/B/C vẫn không bị hiểu là các ô trống bằng 0.
+  const afterValidSave = await service.month(user, { departmentId: 10, month });
+  assert.equal(afterValidSave.manualValues[`1:${a.id}`], '2'); assert.equal(afterValidSave.manualValues[`1:${b.id}`], '2'); assert.equal(afterValidSave.manualValues[`1:${c.id}`], '2');
+  assert.deepEqual(afterValidSave.manualViolations, {}, 'khi đủ tổng, các ô trở về màu bình thường');
+
   await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '' }, { userId: 1, columnId: b.id, value: '' }, { userId: 1, columnId: c.id, value: '' }] });
   await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '-1' }] }),
     /không được nhập số âm/,
   );
   await assert.rejects(
-    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '7' }] }),
-    /một loại công không được lớn hơn công thường/,
-  );
-  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '4' }] })).saved, 1);
-  await assert.rejects(
-    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: b.id, value: '3' }] }),
-    /tổng công không được vượt công thường/,
-  );
-  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '1' }] })).saved, 1);
-  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: b.id, value: '2' }] })).saved, 1);
-  await assert.rejects(
-    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '4' }] }),
-    /tổng công không được vượt công thường/,
-  );
-  assert.equal((await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: c.id, value: '3' }] })).saved, 1);
-  // Đổi ký hiệu làm Công thường thay đổi không được để lại A/B/C cũ thành dòng sai.
-  await assert.rejects(
-    service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: '' }] }),
-    /một loại công không được lớn hơn công thường/,
-  );
-  assert.equal((await service.month(user, { departmentId: 10, month })).entries[`1:${today}`]?.code, 'T', 'ký hiệu cũ được giữ nguyên khi thay đổi làm sai ràng buộc');
-  await assert.rejects(
-    service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '2' }] }),
-    /tổng công không được vượt công thường/,
-  );
-  await assert.rejects(
     service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: 'không phải số' }] }),
     /chỉ nhận số/,
   );
-  // Đổi ký hiệu làm Công thường tăng: Công C (cột tự nhập cuối trong tổng A/B/C) được cân lại atomically.
+
+  // Ràng buộc chỉ cảnh báo: A=7 được lưu, sau đó cả ba ô liên quan được đánh dấu vi phạm.
+  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '7' }] });
+  const invalidAfterManualSave = await service.month(user, { departmentId: 10, month });
+  assert.equal(invalidAfterManualSave.manualValues[`1:${a.id}`], '7');
+  assert.ok(invalidAfterManualSave.manualViolations[`1:${a.id}`]?.length);
+  assert.ok(invalidAfterManualSave.manualViolations[`1:${b.id}`]?.length);
+  assert.ok(invalidAfterManualSave.manualViolations[`1:${c.id}`]?.length);
+
+  // Khi sửa đủ bộ số hợp lệ, đánh dấu vi phạm biến mất; dữ liệu phải sống qua lần đọc lại.
+  await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '1' }, { userId: 1, columnId: b.id, value: '2' }, { userId: 1, columnId: c.id, value: '3' }] });
+  assert.deepEqual((await service.month(user, { departmentId: 10, month })).manualViolations, {});
+
+  // Đổi ký hiệu không tự cân, không xóa và không từ chối số liệu tự nhập cũ; chỉ báo đỏ để người dùng tự sửa.
+  await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: '' }] });
+  const invalidAfterCodeSave = await service.month(user, { departmentId: 10, month });
+  assert.equal(invalidAfterCodeSave.entries[`1:${today}`], undefined);
+  assert.equal(invalidAfterCodeSave.manualValues[`1:${c.id}`], '3');
+  assert.ok(invalidAfterCodeSave.manualViolations[`1:${a.id}`]?.length);
+  await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
   await service.updateCode(tCode.id, { countValue: '7' });
-  const codeSave = await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
-  assert.equal(codeSave.adjustedManualValues, 1);
-  assert.equal((await service.month(user, { departmentId: 10, month })).manualValues[`1:${c.id}`], '4');
+  await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
+  const invalidAfterCountChange = await service.month(user, { departmentId: 10, month });
+  assert.equal(invalidAfterCountChange.manualValues[`1:${c.id}`], '3', 'hệ thống không tự thay số người dùng đã nhập');
+  assert.ok(invalidAfterCountChange.manualViolations[`1:${c.id}`]?.length);
+  await service.updateCode(tCode.id, { countValue: '6' });
+  await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: 'T' }] });
+
   const ghiChu = await service.createColumn({ sectionId: report.id, key: 'GHI_CHU', name: 'Ghi chú trực', columnType: 'MANUAL', dataType: 'TEXT', placeholder: 'Nhập ghi chú', sortOrder: 45, active: true });
   await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: ghiChu.id, value: 'Dòng một,\n  Dòng hai ' }] });
   const exported = await service.exportExcel(user, month, 10); const workbook = new ExcelJS.Workbook(); const workbookBytes = exported.buffer.buffer.slice(exported.buffer.byteOffset, exported.buffer.byteOffset + exported.buffer.byteLength) as ArrayBuffer; await workbook.xlsx.load(workbookBytes); const sheet = workbook.getWorksheet('Cham cong'); assert.ok(sheet);
@@ -108,4 +128,39 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
     /chưa được khai báo/,
   );
   assert.equal(formula.columnType, 'FORMULA');
+});
+
+test('chế độ khóa bảng chấm công áp dụng đúng cho ngày và số liệu tự nhập theo kỳ', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-15T04:00:00+07:00'));
+  const fixture = await setup(); t.after(() => fixture.pg.close()); const user = actor();
+  const withPolicy = (lockPolicy: string) => new DutyAttendanceService(fixture.dbService, { get: async () => lockPolicy } as any);
+
+  const daily = withPolicy('DAILY');
+  const dailyBoard = await daily.month(user, { departmentId: 10, month: '2026-10' });
+  assert.equal(dailyBoard.lockPolicy, 'DAILY');
+  assert.equal(dailyBoard.dates.find((date) => date.date === '2026-10-14')?.isLocked, true);
+  assert.equal(dailyBoard.dates.find((date) => date.date === '2026-10-15')?.isLocked, false);
+  await assert.rejects(daily.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: '2026-10-14', code: 'T' }] }), /chế độ khóa bảng/);
+
+  const weekly = withPolicy('WEEKLY');
+  const weeklyBoard = await weekly.month(user, { departmentId: 10, month: '2026-10' });
+  assert.equal(weeklyBoard.dates.find((date) => date.date === '2026-10-11')?.isLocked, true, 'tuần trước phải khóa');
+  assert.equal(weeklyBoard.dates.find((date) => date.date === '2026-10-14')?.isLocked, false, 'ngày trong tuần hiện tại còn mở');
+
+  const monthly = withPolicy('MONTHLY');
+  const monthlyBoard = await monthly.month(user, { departmentId: 10, month: '2026-10' });
+  assert.equal(monthlyBoard.dates.find((date) => date.date === '2026-10-01')?.isLocked, false, 'tháng hiện tại còn mở');
+  const previousMonthBoard = await monthly.month(user, { departmentId: 10, month: '2026-09' });
+  assert.equal(previousMonthBoard.dates.find((date) => date.date === '2026-09-30')?.isLocked, true);
+
+  const layout = await monthly.layout(); const report = layout.sections.find((section) => section.code === 'REPORT'); assert.ok(report);
+  const manual = await monthly.createColumn({ sectionId: report.id, key: 'GHI', name: 'Ghi', columnType: 'MANUAL', dataType: 'TEXT', active: true });
+  await assert.rejects(monthly.saveManualValues(user, { departmentId: 10, month: '2026-09', values: [{ userId: 1, columnId: manual.id, value: 'đã khóa' }] }), /chế độ khóa bảng/);
+
+  const yearly = withPolicy('YEARLY');
+  const yearlyBoard = await yearly.month(user, { departmentId: 10, month: '2026-10' });
+  assert.equal(yearlyBoard.dates.find((date) => date.date === '2026-10-01')?.isLocked, false);
+  const oldYearBoard = await yearly.month(user, { departmentId: 10, month: '2025-12' });
+  assert.equal(oldYearBoard.dates.find((date) => date.date === '2025-12-31')?.isLocked, true);
+  await yearly.saveManualValues(user, { departmentId: 10, month: '2026-01', values: [{ userId: 1, columnId: manual.id, value: 'vẫn mở trong năm' }] });
 });

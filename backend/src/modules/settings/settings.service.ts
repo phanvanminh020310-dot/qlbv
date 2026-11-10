@@ -167,6 +167,10 @@ export class SettingsService implements OnModuleInit {
       'backup.temporaryRetentionHours': { fallback: 24, min: 1, max: 24 * 30 },
       'backup.jobRunRetentionDays': { fallback: 90, min: 30, max: 3650 },
     };
+    if (key === 'dutyAttendance.lockPolicy') {
+      const policy = String(value ?? '').trim().toUpperCase();
+      return ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(policy) ? policy : 'DAILY';
+    }
     const policy = policies[key];
     if (!policy) return value;
     const numeric = Number(value);
@@ -262,6 +266,16 @@ export function defaultSettings(): SettingItem[] {
     { key: 'notify.channel.appUrl', value: '', group: 'notification', label: 'Địa chỉ web hệ thống (ghép vào liên kết trong tin nhắn)', description: 'Ví dụ: http://192.168.1.10:3000 — bỏ trống thì tin nhắn không kèm liên kết' },
     { key: 'telegram.enabled', value: false, group: 'notification', label: 'Gửi thông báo qua Telegram Bot', valueType: 'boolean' },
     { key: 'telegram.botToken', value: '', group: 'notification', label: 'Telegram Bot Token', valueType: 'password', description: 'Tạo miễn phí bằng /newbot tại @BotFather trên Telegram' },
+
+    // Chấm công
+    {
+      key: 'dutyAttendance.lockPolicy',
+      value: 'DAILY',
+      group: 'attendance',
+      label: 'Chế độ khóa bảng chấm công',
+      description: 'Chọn thời điểm dữ liệu chấm công không còn được sửa: qua ngày, hết tuần, hết tháng hoặc hết năm. Số liệu tự nhập theo tháng được khóa khi tháng/kỳ năm đã qua.',
+      valueType: 'attendance-lock-policy',
+    },
 
     // Kiosk phòng khám & Điểm danh
     {

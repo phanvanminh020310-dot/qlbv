@@ -18,6 +18,7 @@ import {
 } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
 import { renderPrintDocument } from '../../infra/rendering/pdf-renderer';
+import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
 import type {
@@ -36,30 +37,39 @@ const YMD = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const COLUMN_KEY = /^[A-Z][A-Z0-9_]{0,31}$/;
 const NUMBER = /^-?\d+(?:[.,]\d+)?$/;
+export const ATTENDANCE_LOCK_POLICIES = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const;
+export type AttendanceLockPolicy = (typeof ATTENDANCE_LOCK_POLICIES)[number];
 const SYSTEM_SECTION_CODES = new Set(['ADMIN', 'DAYS', 'SYMBOLS', 'REPORT']);
 const monthBounds = (month: string) => ({ from: `${month}-01`, to: `${month === '9999-12' ? '10000-01' : `${Number(month.slice(0, 4)) + (month.endsWith('-12') ? 1 : 0)}-${String((Number(month.slice(5)) % 12) + 1).padStart(2, '0')}`}-01` });
 const daysInMonth = (month: string) => new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate();
 const fmtDate = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; };
 const vnWeekday = (ymd: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${ymd}T00:00:00`).getDay()];
+const lockPolicyOf = (value: unknown): AttendanceLockPolicy => {
+  const candidate = String(value ?? '').trim().toUpperCase();
+  return (ATTENDANCE_LOCK_POLICIES as readonly string[]).includes(candidate) ? candidate as AttendanceLockPolicy : 'DAILY';
+};
+/** Thứ Hai của tuần chứa ngày, theo tuần ISO để tuần đã qua được khóa nhất quán. */
+const mondayOf = (ymd: string) => {
+  const date = new Date(`${ymd}T00:00:00Z`);
+  const weekday = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - weekday + 1);
+  return date.toISOString().slice(0, 10);
+};
+const isDateLocked = (date: string, today: string, policy: AttendanceLockPolicy) => {
+  if (date >= today) return false;
+  if (policy === 'DAILY') return true;
+  if (policy === 'WEEKLY') return mondayOf(date) < mondayOf(today);
+  if (policy === 'MONTHLY') return date.slice(0, 7) < today.slice(0, 7);
+  return date.slice(0, 4) < today.slice(0, 4);
+};
+/** Ô tự nhập là số liệu theo tháng, nên chỉ khóa khi cả tháng/kỳ năm đó đã qua. */
+const isManualMonthLocked = (month: string, today: string, policy: AttendanceLockPolicy) =>
+  policy === 'YEARLY' ? month.slice(0, 4) < today.slice(0, 4) : month < today.slice(0, 7);
 const numberValue = (value: string | number | undefined) => {
   const parsed = typeof value === 'number' ? value : Number(String(value ?? '').replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const codeCount = (value: string | number | undefined) => Math.round(numberValue(value) * 1_000_000) / 1_000_000;
-
-/** Nhận dạng duy nhất dạng [A] + [B] + [C] == [TONG] để áp dụng giới hạn công không âm/an toàn. */
-const manualSumLimit = (expression: string, manualKeys: Set<string>, values: Record<string, string | number | undefined>) => {
-  let depth = 0; let split = -1;
-  for (let index = 0; index < expression.length - 1; index++) { const character = expression[index]; if (character === '(') depth++; if (character === ')') depth--; if (depth === 0 && expression.slice(index, index + 2) === '==') { if (split >= 0) return null; split = index; index++; } }
-  if (split < 0) return null;
-  const left = expression.slice(0, split).trim(); const right = expression.slice(split + 2).trim();
-  const sumReferences = (side: string) => { const references = expressionReferences(side); return references.length && references.every((reference) => manualKeys.has(reference)) && side.replace(/\[[^\]]+\]/g, '').replace(/[+\s]/g, '') === '' ? references : []; };
-  for (const [sum, total] of [[left, right], [right, left]] as const) {
-    const references = sumReferences(sum); if (!references.length || expressionReferences(total).some((reference) => manualKeys.has(reference))) continue;
-    return { references, maximum: numericExpression(total, values) };
-  }
-  return null;
-};
 
 const hexToArgb = (value: string) => `FF${value.replace('#', '').toUpperCase()}`;
 
@@ -75,7 +85,14 @@ export interface AttendanceExport { buffer: Buffer; fileName: string; mime: stri
 
 @Injectable()
 export class DutyAttendanceService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly settings?: SettingsService,
+  ) {}
+
+  private async attendanceLockPolicy(): Promise<AttendanceLockPolicy> {
+    return lockPolicyOf(this.settings ? await this.settings.get<string>('dutyAttendance.lockPolicy', 'DAILY') : 'DAILY');
+  }
 
   /** Vai trò phạm vi TOÀN VIỆN (gồm Điều phối chấm công KHTH) được chọn khoa rõ ràng. */
   private canSelectAnyDepartment(user: AccessContext) { return user.isSuperAdmin || user.dataScope === 'ALL'; }
@@ -171,6 +188,7 @@ export class DutyAttendanceService {
 
   private async buildBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
     this.assertMonth(month);
+    const lockPolicy = await this.attendanceLockPolicy();
     const { from, to } = monthBounds(month);
     const layout = await this.activeLayout();
     const [department, staff, codes, holidays, records, manualRows] = await Promise.all([
@@ -187,7 +205,7 @@ export class DutyAttendanceService {
     const holidayDates = new Set(holidays.map((holiday) => holiday.holidayDate));
     const dates = Array.from({ length: daysInMonth(month) }, (_, index) => {
       const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6;
-      return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((holiday) => holiday.holidayDate === date)?.name ?? '' };
+      return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isLocked: isDateLocked(date, today, lockPolicy), isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((holiday) => holiday.holidayDate === date)?.name ?? '' };
     });
     const entryByCell = new Map(records.map((record) => [`${record.userId}:${record.workDate}`, { code: record.code, note: record.note }]));
     for (const [cell, entry] of entryOverrides) { if (!entry.code) entryByCell.delete(cell); else entryByCell.set(cell, { code: entry.code, note: entry.note ?? '' }); }
@@ -224,52 +242,43 @@ export class DutyAttendanceService {
       for (const column of formulaColumns) formula(column.key.toUpperCase());
       rowValues[String(person.id)] = values;
     }
-    return { month, today, department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital }, dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations, staff: staff.map((person, index) => ({ stt: index + 1, ...person })), entries, manualValues, rowValues, holidays };
-  }
-
-  /** Một thay đổi ký hiệu hoặc số tự nhập không được làm lưu lại dòng công thức/ràng buộc sai. */
-  private assertBoardManualRules(board: Board, changedPeople: Set<number>) {
-    const manualKeys = new Set(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => column.key.toUpperCase()));
-    for (const rule of board.validations) {
-      const references = expressionReferences(rule.expression);
-      for (const person of board.staff) {
-        const values = board.rowValues[String(person.id)];
-        // Với dạng A + B + C == Công thường, chặn ngay từng công vượt tổng hoặc tổng nhập vượt tổng,
-        // kể cả khi còn ô trống; nhờ đó không thể tự tính ra số âm.
-        if (changedPeople.has(person.id)) {
-          const limit = manualSumLimit(rule.expression, manualKeys, values);
-          if (limit) {
-            const entered = limit.references.map((reference) => numberValue(values?.[reference])); const exceedsEach = entered.some((value) => value > limit.maximum + 0.000001); const exceedsTotal = entered.reduce((total, value) => total + value, 0) > limit.maximum + 0.000001;
-            if (limit.maximum < 0 || exceedsEach) throw new BadRequestException(`Ràng buộc “${rule.name}”: một loại công không được lớn hơn công thường`);
-            if (exceedsTotal) throw new BadRequestException(`Ràng buộc “${rule.name}”: tổng công không được vượt công thường để tránh số âm`);
-          }
+    const manualViolations: Record<string, string[]> = {};
+    for (const rule of layout.validations) {
+      const referencedManualColumns = expressionReferences(rule.expression)
+        .map((reference) => manualColumns.find((column) => column.key.toUpperCase() === reference))
+        .filter((column): column is typeof manualColumns[number] => !!column);
+      if (!referencedManualColumns.length) continue;
+      for (const person of staff) {
+        const values = rowValues[String(person.id)];
+        // Để người dùng bắt đầu nhập một nhóm cột mà không báo đỏ khi toàn bộ còn trống,
+        // nhưng ngay khi có ít nhất một giá trị thì mọi ô liên quan phải báo rõ nếu chưa đạt.
+        if (!referencedManualColumns.some((column) => String(values?.[column.key.toUpperCase()] ?? '').trim())) continue;
+        if (booleanExpression(rule.expression, values)) continue;
+        const message = rule.message || `Ràng buộc “${rule.name}” chưa thỏa mãn`;
+        for (const column of referencedManualColumns) {
+          const cell = `${person.id}:${column.id}`;
+          manualViolations[cell] = [...(manualViolations[cell] ?? []), message];
         }
-        // Cho phép tự lưu từng ô khi dòng còn thiếu dữ liệu; chỉ đánh giá phép bằng đầy đủ khi mọi ô tự nhập mà quy tắc dùng đã có giá trị.
-        if (references.some((reference) => manualKeys.has(reference) && !String(values?.[reference] ?? '').trim())) continue;
-        if (!booleanExpression(rule.expression, values)) throw new BadRequestException(rule.message || `Ràng buộc “${rule.name}” chưa đúng cho nhân viên ${person.fullName}`);
       }
     }
-  }
-
-  /** Khi đổi ký hiệu làm cột Công thường thay đổi, tự cân phần công cuối cùng nếu phép tính có một nghiệm không âm rõ ràng. */
-  private manualOverridesForEntryChanges(board: Board, changedPeople: Set<number>) {
-    const manualByKey = new Map(board.columns.filter((column) => column.columnType === 'MANUAL').map((column) => [column.key.toUpperCase(), column])); const manualKeys = new Set(manualByKey.keys()); const overrides = new Map<string, string>();
-    for (const rule of board.validations) {
-      for (const person of board.staff) {
-        if (!changedPeople.has(person.id)) continue;
-        const values = board.rowValues[String(person.id)]; const limit = manualSumLimit(rule.expression, manualKeys, values); if (!limit) continue;
-        const columns = limit.references.map((reference) => manualByKey.get(reference)).filter((column): column is Board['columns'][number] => !!column);
-        if (columns.length !== limit.references.length || columns.some((column) => column.dataType !== 'NUMBER')) continue;
-        const target = [...columns].sort((a, b) => b.sortOrder - a.sortOrder || b.id - a.id)[0]; if (!target) continue;
-        const others = limit.references.filter((reference) => reference !== target.key.toUpperCase());
-        if (others.some((reference) => !String(values?.[reference] ?? '').trim())) continue;
-        const required = Math.round((limit.maximum - others.reduce((sum, reference) => sum + numberValue(values?.[reference]), 0)) * 1_000_000) / 1_000_000;
-        if (required < -0.000001) continue;
-        const cell = `${person.id}:${target.id}`; const current = values?.[target.key.toUpperCase()];
-        if (!String(current ?? '').trim() || Math.abs(numberValue(current) - required) >= 0.000001) overrides.set(cell, String(Math.max(0, required)));
-      }
-    }
-    return overrides;
+    return {
+      month,
+      today,
+      lockPolicy,
+      manualLocked: isManualMonthLocked(month, today, lockPolicy),
+      department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital },
+      dates,
+      codes,
+      sections: layout.sections,
+      columns: layout.columns,
+      validations: layout.validations,
+      staff: staff.map((person, index) => ({ stt: index + 1, ...person })),
+      entries,
+      manualValues,
+      manualViolations,
+      rowValues,
+      holidays,
+    };
   }
 
   async month(user: AccessContext, q: AttendanceMonthQueryDto) { this.assertMonth(q.month); return this.buildBoard(await this.deptId(user, q.departmentId), q.month); }
@@ -277,8 +286,13 @@ export class DutyAttendanceService {
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
     const departmentId = await this.deptId(user, dto.departmentId);
     if (!dto.entries.length) return { saved: 0 };
-    const dates = [...new Set(dto.entries.map((entry) => entry.workDate))]; const today = bangkokToday();
-    for (const date of dates) { if (!YMD.test(date)) throw new BadRequestException('Ngày chấm công không hợp lệ'); if (date < today) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} vì ngày này đã qua`); }
+    const dates = [...new Set(dto.entries.map((entry) => entry.workDate))];
+    const today = bangkokToday();
+    const lockPolicy = await this.attendanceLockPolicy();
+    for (const date of dates) {
+      if (!YMD.test(date)) throw new BadRequestException('Ngày chấm công không hợp lệ');
+      if (isDateLocked(date, today, lockPolicy)) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} theo chế độ khóa bảng hiện tại`);
+    }
     const personIds = [...new Set(dto.entries.map((entry) => entry.userId))];
     const [staff, activeCodes] = await Promise.all([
       this.db.db.select({ id: users.id }).from(users).where(and(inArray(users.id, personIds), eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))),
@@ -286,20 +300,11 @@ export class DutyAttendanceService {
     ]);
     if (staff.length !== personIds.length) throw new ForbiddenException('Chỉ được chấm công cho nhân viên đang hoạt động thuộc khoa của bạn');
     const byCode = new Map(activeCodes.map((code) => [code.code.toUpperCase(), code.id]));
-    // Xem trước toàn bộ thay đổi ký hiệu theo từng tháng trước khi ghi. Nếu Công thường đổi,
-    // phần công cuối cùng được cân lại khi có nghiệm không âm rõ ràng; không thì từ chối nguyên thao tác.
-    const overridesByMonth = new Map<string, Map<string, { code: string | null; note?: string }>>(); const changedPeopleByMonth = new Map<string, Set<number>>();
+    // Ràng buộc giữa các cột là tín hiệu trực quan trên bảng, không được phép
+    // làm mất hay từ chối số liệu hợp lệ người dùng vừa nhập.
     for (const entry of dto.entries) {
-      const month = entry.workDate.slice(0, 7); const code = entry.code?.trim().toUpperCase() || null;
+      const code = entry.code?.trim().toUpperCase() || null;
       if (code && !byCode.has(code)) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
-      const overrides = overridesByMonth.get(month) ?? new Map<string, { code: string | null; note?: string }>(); overrides.set(`${entry.userId}:${entry.workDate}`, { code, note: entry.note?.trim() ?? '' }); overridesByMonth.set(month, overrides);
-      const changedPeople = changedPeopleByMonth.get(month) ?? new Set<number>(); changedPeople.add(entry.userId); changedPeopleByMonth.set(month, changedPeople);
-    }
-    const automaticManualOverrides = new Map<string, Map<string, string>>();
-    for (const [month, overrides] of overridesByMonth) {
-      const changedPeople = changedPeopleByMonth.get(month)!; const preview = await this.buildBoard(departmentId, month, new Map(), overrides); const manualOverrides = this.manualOverridesForEntryChanges(preview, changedPeople);
-      const finalBoard = manualOverrides.size ? await this.buildBoard(departmentId, month, manualOverrides, overrides) : preview;
-      this.assertBoardManualRules(finalBoard, changedPeople); if (manualOverrides.size) automaticManualOverrides.set(month, manualOverrides);
     }
     await this.db.transaction(async (tx) => {
       for (const entry of dto.entries) {
@@ -308,18 +313,16 @@ export class DutyAttendanceService {
         const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
         await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceEntries.userId, dutyAttendanceEntries.workDate], set: { departmentId, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id, updatedAt: new Date() } });
       }
-      for (const [month, overrides] of automaticManualOverrides) for (const [cell, value] of overrides) {
-        const [manualUserId, columnId] = cell.split(':').map(Number);
-        await tx.insert(dutyAttendanceManualValues).values({ departmentId, userId: manualUserId, month, columnId, value, updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceManualValues.departmentId, dutyAttendanceManualValues.userId, dutyAttendanceManualValues.month, dutyAttendanceManualValues.columnId], set: { value, updatedBy: user.id, updatedAt: new Date() } });
-      }
     });
-    return { saved: dto.entries.length, adjustedManualValues: [...automaticManualOverrides.values()].reduce((total, values) => total + values.size, 0) };
+    return { saved: dto.entries.length };
   }
 
   async saveManualValues(user: AccessContext, dto: SaveAttendanceManualValuesDto) {
     const departmentId = await this.deptId(user, dto.departmentId); this.assertMonth(dto.month);
     if (!dto.values.length) return { saved: 0 };
-    if (dto.month < bangkokToday().slice(0, 7)) throw new ForbiddenException('Tháng đã qua được khóa; không thể sửa số liệu tự nhập để bảo toàn lịch sử');
+    const today = bangkokToday();
+    const lockPolicy = await this.attendanceLockPolicy();
+    if (isManualMonthLocked(dto.month, today, lockPolicy)) throw new ForbiddenException('Tháng/kỳ năm đã qua được khóa theo chế độ khóa bảng hiện tại');
     const columnIds = [...new Set(dto.values.map((value) => value.columnId))]; const personIds = [...new Set(dto.values.map((value) => value.userId))];
     const [columns, staff] = await Promise.all([
       this.db.db.select().from(dutyAttendanceColumns).where(and(inArray(dutyAttendanceColumns.id, columnIds), eq(dutyAttendanceColumns.active, true))),
@@ -334,8 +337,6 @@ export class DutyAttendanceService {
       if (column.dataType === 'NUMBER' && value && numberValue(value) < 0) throw new BadRequestException(`Cột “${column.name}” không được nhập số âm`);
       overrides.set(`${item.userId}:${item.columnId}`, value || null);
     }
-    const board = await this.buildBoard(departmentId, dto.month, overrides);
-    this.assertBoardManualRules(board, new Set(personIds));
     await this.db.transaction(async (tx) => {
       for (const item of dto.values) {
         const value = overrides.get(`${item.userId}:${item.columnId}`) ?? null;

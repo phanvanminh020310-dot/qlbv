@@ -6,13 +6,17 @@ export interface AttendanceSection { id: number; code: string; name: string; kin
 export interface AttendanceColumn { id: number; sectionId: number; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
 export interface AttendanceValidation { id: number; name: string; expression: string; message: string; sortOrder: number; active: boolean }
 export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[] }
-export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isRest: boolean; holidayName: string }
+export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string }
 export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; username: string }
 export interface AttendanceDepartment { id: number; name: string; code: string; shortName: string }
 export interface AttendanceDepartmentScope { canSelect: boolean; items: AttendanceDepartment[] }
 export interface AttendanceMonth {
   month: string;
   today: string;
+  lockPolicy: AttendanceLockPolicy;
+  /** Cột tự nhập đại diện cho cả tháng, nên có khóa riêng theo tháng/năm. */
+  manualLocked: boolean;
   department: { id: number; name: string; hospital: string };
   dates: AttendanceDate[];
   codes: AttendanceCode[];
@@ -23,6 +27,8 @@ export interface AttendanceMonth {
   entries: Record<string, { code: string; note: string }>;
   /** Giá trị cột tự nhập đang có, dùng khóa userId:columnId. */
   manualValues: Record<string, string>;
+  /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập userId:columnId. */
+  manualViolations: Record<string, string[]>;
   /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa userId. */
   rowValues: Record<string, Record<string, string | number>>;
   holidays: Array<{ id: number; holidayDate: string; name: string; note: string }>;
@@ -39,7 +45,7 @@ const remove = <T,>(path: string) => apiFetch<T>(path, { method: 'DELETE' });
 export const dutyAttendanceApi = {
   departments: () => get<AttendanceDepartmentScope>('/duty-attendance/departments'),
   month: (month: string, departmentId?: number) => get<AttendanceMonth>(`/duty-attendance/month?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`),
-  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number; adjustedManualValues?: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
+  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
   saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, ...(departmentId ? { departmentId } : {}) }),
   exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentId?: number) => `/duty-attendance/export/${format}?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`,
   codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),
