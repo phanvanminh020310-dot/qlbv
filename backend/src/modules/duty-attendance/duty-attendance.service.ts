@@ -21,6 +21,7 @@ import { renderPrintDocument } from '../../infra/rendering/pdf-renderer';
 import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
+import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, calculateAttendanceMetrics } from './attendance-metrics';
 import type {
   AttendanceCodeDto,
   AttendanceCodeGroupDto,
@@ -42,6 +43,7 @@ export type AttendanceLockPolicy = (typeof ATTENDANCE_LOCK_POLICIES)[number];
 const SYSTEM_SECTION_CODES = new Set(['ADMIN', 'DAYS', 'SYMBOLS', 'REPORT']);
 const monthBounds = (month: string) => ({ from: `${month}-01`, to: `${month === '9999-12' ? '10000-01' : `${Number(month.slice(0, 4)) + (month.endsWith('-12') ? 1 : 0)}-${String((Number(month.slice(5)) % 12) + 1).padStart(2, '0')}`}-01` });
 const daysInMonth = (month: string) => new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate();
+const addCalendarDays = (ymd: string, days: number) => { const date = new Date(`${ymd}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
 const fmtDate = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; };
 const vnWeekday = (ymd: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${ymd}T00:00:00`).getDay()];
 const lockPolicyOf = (value: unknown): AttendanceLockPolicy => {
@@ -94,6 +96,12 @@ export class DutyAttendanceService {
     return lockPolicyOf(this.settings ? await this.settings.get<string>('dutyAttendance.lockPolicy', 'DAILY') : 'DAILY');
   }
 
+  /** Chỉ dò một khoảng hợp lý để không ghép nhầm nghỉ bù với ca trực đã quá xa trong lịch sử. */
+  private async restPairLookbackDays(): Promise<number> {
+    const configured = Number(this.settings ? await this.settings.get<number>('dutyAttendance.restPairLookbackDays', 14) : 14);
+    return Number.isFinite(configured) ? Math.min(62, Math.max(1, Math.floor(configured))) : 14;
+  }
+
   /** Vai trò phạm vi TOÀN VIỆN (gồm Điều phối chấm công KHTH) được chọn khoa rõ ràng. */
   private canSelectAnyDepartment(user: AccessContext) { return user.isSuperAdmin || user.dataScope === 'ALL'; }
 
@@ -128,7 +136,7 @@ export class DutyAttendanceService {
       this.db.db.select().from(dutyAttendanceColumns).orderBy(asc(dutyAttendanceColumns.sortOrder), asc(dutyAttendanceColumns.id)),
       this.db.db.select().from(dutyAttendanceValidations).orderBy(asc(dutyAttendanceValidations.sortOrder), asc(dutyAttendanceValidations.id)),
     ]);
-    return { sections, columns, validations };
+    return { sections, columns, validations, systemMetrics: ATTENDANCE_SYSTEM_METRICS };
   }
 
   private async activeLayout(): Promise<ActiveLayout> {
@@ -141,7 +149,7 @@ export class DutyAttendanceService {
   }
 
   private validateReferences(expression: string, codes: Array<{ code: string }>, columns: Array<{ key: string }>) {
-    const allowed = new Set([...codes.map((x) => x.code.toUpperCase()), ...columns.map((x) => x.key.toUpperCase())]);
+    const allowed = new Set([...ATTENDANCE_SYSTEM_METRIC_KEYS, ...codes.map((x) => x.code.toUpperCase()), ...columns.map((x) => x.key.toUpperCase())]);
     for (const ref of expressionReferences(expression)) if (!allowed.has(ref)) throw new BadRequestException(`Biểu thức tham chiếu mã “${ref}” chưa được khai báo`);
   }
 
@@ -165,6 +173,7 @@ export class DutyAttendanceService {
     if (!['REPORT', 'CUSTOM'].includes(section.kind)) throw new BadRequestException('Chỉ phần Báo cáo hoặc phần tự khai báo mới được thêm cột');
     const key = input.key.trim().toUpperCase();
     if (!COLUMN_KEY.test(key)) throw new BadRequestException('Mã cột chỉ gồm chữ in hoa, số và dấu gạch dưới');
+    if (ATTENDANCE_SYSTEM_METRIC_KEYS.has(key)) throw new ConflictException(`Mã cột “${key}” được hệ thống dành cho công thức nghiệp vụ`);
     const [codes, current] = await Promise.all([this.db.db.select({ code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes), this.db.db.select().from(dutyAttendanceColumns)]);
     if (codes.some((code) => code.code.toUpperCase() === key)) throw new ConflictException(`Mã cột “${key}” trùng mã ký hiệu chấm công`);
     const formula = input.columnType === 'FORMULA' ? (input.formula ?? '').trim() : '';
@@ -174,7 +183,7 @@ export class DutyAttendanceService {
     }];
     if (formula) {
       this.validateReferences(formula, codes, virtualColumns);
-      numericExpression(formula, Object.fromEntries([...codes.map((item) => [item.code, 0]), ...virtualColumns.map((item) => [item.key, 0]) ]));
+      numericExpression(formula, Object.fromEntries([...ATTENDANCE_SYSTEM_METRICS.map((item) => [item.key, 0]), ...codes.map((item) => [item.code, 0]), ...virtualColumns.map((item) => [item.key, 0]) ]));
     }
     this.assertFormulaGraph(virtualColumns.map((column) => ({ key: column.key, columnType: column.columnType, formula: column.formula, active: column.active })));
     return { section, key, formula };
@@ -183,26 +192,31 @@ export class DutyAttendanceService {
   private async assertValidationConfig(expression: string) {
     const [codes, columns] = await Promise.all([this.db.db.select({ code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes), this.db.db.select({ key: dutyAttendanceColumns.key }).from(dutyAttendanceColumns)]);
     this.validateReferences(expression, codes, columns);
-    if (typeof evaluateExpression(expression, Object.fromEntries([...codes.map((item) => [item.code, 0]), ...columns.map((item) => [item.key, 0])])) !== 'boolean') throw new BadRequestException('Ràng buộc phải là phép so sánh, ví dụ: [A] + [B] == [TONG]');
+    if (typeof evaluateExpression(expression, Object.fromEntries([...ATTENDANCE_SYSTEM_METRICS.map((item) => [item.key, 0]), ...codes.map((item) => [item.code, 0]), ...columns.map((item) => [item.key, 0])])) !== 'boolean') throw new BadRequestException('Ràng buộc phải là phép so sánh, ví dụ: [A] + [B] == [TONG]');
   }
 
   private async buildBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
     this.assertMonth(month);
-    const lockPolicy = await this.attendanceLockPolicy();
+    const [lockPolicy, restPairLookbackDays] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays()]);
     const { from, to } = monthBounds(month);
+    const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
-    const [department, staff, codes, holidays, records, manualRows] = await Promise.all([
+    const [department, staff, allCodes, metricHolidayRows, records, previousRecords, manualRows] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
       this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, username: users.username }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))).orderBy(asc(users.fullName)),
-      this.db.db.select().from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.active, true)).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
-      this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, from), lt(dutyAttendanceHolidays.holidayDate, to))),
+      // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
+      // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
+      this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
+      this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, lookbackFrom), lt(dutyAttendanceHolidays.holidayDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
+      this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, lookbackFrom), lt(dutyAttendanceEntries.workDate, from))),
       this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId, value: dutyAttendanceManualValues.value }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, month))),
     ]);
     const currentDepartment = department[0];
     if (!currentDepartment) throw new NotFoundException('Không tìm thấy khoa/phòng được gán');
     const today = bangkokToday();
-    const holidayDates = new Set(holidays.map((holiday) => holiday.holidayDate));
+    const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
+    const holidayDates = new Set(metricHolidayRows.map((holiday) => holiday.holidayDate));
     const dates = Array.from({ length: daysInMonth(month) }, (_, index) => {
       const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6;
       return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isLocked: isDateLocked(date, today, lockPolicy), isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((holiday) => holiday.holidayDate === date)?.name ?? '' };
@@ -214,9 +228,11 @@ export class DutyAttendanceService {
     const formulaColumns = layout.columns.filter((column) => column.columnType === 'FORMULA');
     const manualByCell = new Map(manualRows.map((row) => [`${row.userId}:${row.columnId}`, row.value]));
     for (const [cell, value] of overrides) { if (value === null || value === '') manualByCell.delete(cell); else manualByCell.set(cell, value); }
+    const codes = allCodes.filter((code) => code.active);
     const activeCodeKeys = new Set(codes.map((code) => code.code.toUpperCase()));
     const rowValues: Record<string, Record<string, string | number>> = {};
     const manualValues: Record<string, string> = {};
+    const calculationWarnings: Record<string, string[]> = {};
     for (const person of staff) {
       const values: Record<string, string | number> = Object.fromEntries(codes.map((code) => [code.code.toUpperCase(), 0]));
       for (const date of dates) {
@@ -226,6 +242,21 @@ export class DutyAttendanceService {
           if (code) values[code.code.toUpperCase()] = codeCount(values[code.code.toUpperCase()]) + codeCount(code.countValue);
         }
       }
+      const metrics = calculateAttendanceMetrics({
+        monthDates: dates.map((date) => date.date),
+        holidayDates,
+        codes: allCodes,
+        entries: [
+          ...previousRecords.filter((entry) => entry.userId === person.id).map((entry) => ({ date: entry.workDate, code: entry.code })),
+          ...dates.flatMap((date) => {
+            const entry = entryByCell.get(`${person.id}:${date.date}`);
+            return entry ? [{ date: date.date, code: entry.code }] : [];
+          }),
+        ],
+        restPairLookbackDays,
+      });
+      Object.assign(values, metrics.values);
+      if (metrics.warnings.length) calculationWarnings[String(person.id)] = metrics.warnings;
       for (const column of manualColumns) {
         const cell = `${person.id}:${column.id}`; const value = manualByCell.get(cell) ?? '';
         values[column.key.toUpperCase()] = value; if (value) manualValues[cell] = value;
@@ -272,10 +303,13 @@ export class DutyAttendanceService {
       sections: layout.sections,
       columns: layout.columns,
       validations: layout.validations,
+      systemMetrics: ATTENDANCE_SYSTEM_METRICS,
+      restPairLookbackDays,
       staff: staff.map((person, index) => ({ stt: index + 1, ...person })),
       entries,
       manualValues,
       manualViolations,
+      calculationWarnings,
       rowValues,
       holidays,
     };
@@ -375,16 +409,19 @@ export class DutyAttendanceService {
 
   async codes() { return this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)); }
   private countValue(value?: string) { const count = numberValue(value); if (count < 0 || !Number.isFinite(count)) throw new BadRequestException('Giá trị đếm phải là số không âm'); return String(count); }
+  private assertNotSystemMetricCode(code: string) { if (ATTENDANCE_SYSTEM_METRIC_KEYS.has(code)) throw new ConflictException(`Mã ký hiệu “${code}” được hệ thống dành cho biến công thức nghiệp vụ`); }
   async createCode(dto: AttendanceCodeDto) {
+    const code = dto.code.trim().toUpperCase(); this.assertNotSystemMetricCode(code);
     const group = await this.assertActiveCodeGroup(dto.group);
-    const [item] = await this.db.db.insert(dutyAttendanceCodes).values({ code: dto.code.trim().toUpperCase(), name: dto.name.trim(), group, color: dto.color ?? '#0f766e', countsAsDuty: dto.countsAsDuty ?? false, showSummary: dto.showSummary ?? true, countValue: this.countValue(dto.countValue), sortOrder: dto.sortOrder ?? 0, active: dto.active ?? true, note: dto.note?.trim() ?? '' }).returning(); return item;
+    const [item] = await this.db.db.insert(dutyAttendanceCodes).values({ code, name: dto.name.trim(), group, color: dto.color ?? '#0f766e', countsAsDuty: dto.countsAsDuty ?? false, showSummary: dto.showSummary ?? true, countValue: this.countValue(dto.countValue), calculationRole: dto.calculationRole ?? 'NONE', deductsWorkday: dto.deductsWorkday ?? false, restSource: dto.restSource ?? 'ANY_DUTY', sortOrder: dto.sortOrder ?? 0, active: dto.active ?? true, note: dto.note?.trim() ?? '' }).returning(); return item;
   }
   async updateCode(id: number, dto: Partial<AttendanceCodeDto>) {
     const [current] = await this.db.db.select({ group: dutyAttendanceCodes.group }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.id, id));
     if (!current) throw new NotFoundException('Không tìm thấy ký hiệu');
+    const requestedCode = dto.code?.trim().toUpperCase(); if (requestedCode) this.assertNotSystemMetricCode(requestedCode);
     const requestedGroup = dto.group?.trim().toUpperCase();
     const group = requestedGroup === undefined ? undefined : requestedGroup === current.group ? current.group : await this.assertActiveCodeGroup(requestedGroup);
-    const values = { ...(dto.code !== undefined ? { code: dto.code.trim().toUpperCase() } : {}), ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(group !== undefined ? { group } : {}), ...(dto.color !== undefined ? { color: dto.color } : {}), ...(dto.countsAsDuty !== undefined ? { countsAsDuty: dto.countsAsDuty } : {}), ...(dto.showSummary !== undefined ? { showSummary: dto.showSummary } : {}), ...(dto.countValue !== undefined ? { countValue: this.countValue(dto.countValue) } : {}), ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}), ...(dto.active !== undefined ? { active: dto.active } : {}), ...(dto.note !== undefined ? { note: dto.note.trim() } : {}), updatedAt: new Date() };
+    const values = { ...(requestedCode !== undefined ? { code: requestedCode } : {}), ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(group !== undefined ? { group } : {}), ...(dto.color !== undefined ? { color: dto.color } : {}), ...(dto.countsAsDuty !== undefined ? { countsAsDuty: dto.countsAsDuty } : {}), ...(dto.showSummary !== undefined ? { showSummary: dto.showSummary } : {}), ...(dto.countValue !== undefined ? { countValue: this.countValue(dto.countValue) } : {}), ...(dto.calculationRole !== undefined ? { calculationRole: dto.calculationRole } : {}), ...(dto.deductsWorkday !== undefined ? { deductsWorkday: dto.deductsWorkday } : {}), ...(dto.restSource !== undefined ? { restSource: dto.restSource } : {}), ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}), ...(dto.active !== undefined ? { active: dto.active } : {}), ...(dto.note !== undefined ? { note: dto.note.trim() } : {}), updatedAt: new Date() };
     const [item] = await this.db.db.update(dutyAttendanceCodes).set(values).where(eq(dutyAttendanceCodes.id, id)).returning(); return item;
   }
   async deleteCode(id: number) {

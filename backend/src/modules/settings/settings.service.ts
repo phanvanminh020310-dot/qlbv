@@ -190,6 +190,7 @@ export class SettingsService implements OnModuleInit {
       'backup.exportRetentionDays': { fallback: 30, min: 1, max: 3650 },
       'backup.temporaryRetentionHours': { fallback: 24, min: 1, max: 24 * 30 },
       'backup.jobRunRetentionDays': { fallback: 90, min: 30, max: 3650 },
+      'dutyAttendance.restPairLookbackDays': { fallback: 14, min: 1, max: 62 },
     };
     if (key === 'dutyAttendance.lockPolicy') {
       const policy = String(value ?? '').trim().toUpperCase();
@@ -301,6 +302,14 @@ export function defaultSettings(): SettingItem[] {
       label: 'Chế độ khóa bảng chấm công',
       description: 'Chọn thời điểm dữ liệu chấm công không còn được sửa: qua ngày, hết tuần, hết tháng hoặc hết năm. Số liệu tự nhập theo tháng được khóa khi tháng/kỳ năm đã qua.',
       valueType: 'attendance-lock-policy',
+    },
+    {
+      key: 'dutyAttendance.restPairLookbackDays',
+      value: 14,
+      group: 'attendance',
+      label: 'Số ngày dò ca trước khi tính nghỉ bù',
+      description: 'Ký hiệu nghỉ bù sẽ ghép với ca Trực/Tăng cường phù hợp gần nhất trước đó trong số ngày này. Giới hạn giúp không ghép nhầm với một ca quá xa trong lịch sử.',
+      valueType: 'number',
     },
 
     // Kiosk phòng khám & Điểm danh

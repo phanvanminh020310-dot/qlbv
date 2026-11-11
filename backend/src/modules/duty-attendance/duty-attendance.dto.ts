@@ -53,6 +53,12 @@ export class AttendanceCodeDto {
   /** Thuộc tính cũ, giữ nhận API để tương thích dữ liệu đã có. */
   @IsOptional() @IsBoolean() showSummary?: boolean;
   @IsOptional() @IsString() @Matches(/^\d+(?:[.,]\d+)?$/, { message: 'Giá trị đếm phải là số không âm, ví dụ 1 hoặc 0.5' }) countValue?: string;
+  /** NONE | DUTY (trực) | REINFORCEMENT (tăng cường) | REST (nghỉ bù). */
+  @IsOptional() @IsIn(['NONE', 'DUTY', 'REINFORCEMENT', 'REST']) calculationRole?: 'NONE' | 'DUTY' | 'REINFORCEMENT' | 'REST';
+  /** Trừ countValue khỏi SYS_NGAY_CONG khi ký hiệu được nhập vào ngày làm việc. */
+  @IsOptional() @IsBoolean() deductsWorkday?: boolean;
+  /** Dành cho REST: dò ca Trực, Tăng cường hoặc bất kỳ ca nào gần nhất trước đó. */
+  @IsOptional() @IsIn(['ANY_DUTY', 'DUTY', 'REINFORCEMENT']) restSource?: 'ANY_DUTY' | 'DUTY' | 'REINFORCEMENT';
   @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsString() @MaxLength(500) note?: string;

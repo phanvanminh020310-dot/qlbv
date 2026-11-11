@@ -14,6 +14,7 @@ test('nhóm ký hiệu có mã/tên Việt, bảo toàn nhóm cũ và chỉ cho 
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0025_bang_cham_cong_truc.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0030_nhom_ky_hieu_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0031_cong_thuc_nghiep_vu_cham_cong.sql'), 'utf8'));
   const db = drizzle(pg, { schema }); const service = new DutyAttendanceService({ db, transaction: db.transaction.bind(db) } as unknown as DbService);
 
   const initial = await service.codeGroups();
@@ -24,4 +25,5 @@ test('nhóm ký hiệu có mã/tên Việt, bảo toàn nhóm cũ và chỉ cho 
   assert.equal(code.group, 'BO_SUNG');
   await assert.rejects(service.deleteCodeGroup(extra.id), /đang được sử dụng/);
   await assert.rejects(service.createCode({ code: 'SAI', name: 'Sai', group: 'KHONG_CO', countValue: '1', sortOrder: 90, active: true }), /không tồn tại/);
+  await assert.rejects(service.createCode({ code: 'SYS_NGAY_CONG', name: 'Trùng biến hệ thống', group: 'OTHER', countValue: '1', sortOrder: 90, active: true }), /dành cho biến công thức nghiệp vụ/);
 });

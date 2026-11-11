@@ -1,11 +1,14 @@
 import { apiFetch } from '@/lib/api';
 
 export interface AttendanceCodeGroup { id: number; code: string; name: string; sortOrder: number; active: boolean }
-export interface AttendanceCode { id: number; code: string; name: string; group: string; color: string; countsAsDuty: boolean; showSummary: boolean; countValue: string; sortOrder: number; active: boolean; note: string }
+export type AttendanceCalculationRole = 'NONE' | 'DUTY' | 'REINFORCEMENT' | 'REST';
+export type AttendanceRestSource = 'ANY_DUTY' | 'DUTY' | 'REINFORCEMENT';
+export interface AttendanceCode { id: number; code: string; name: string; group: string; color: string; countsAsDuty: boolean; showSummary: boolean; countValue: string; calculationRole: AttendanceCalculationRole; deductsWorkday: boolean; restSource: AttendanceRestSource; sortOrder: number; active: boolean; note: string }
+export interface AttendanceSystemMetric { key: string; label: string; description: string }
 export interface AttendanceSection { id: number; code: string; name: string; kind: 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM'; color: string; sortOrder: number; active: boolean }
 export interface AttendanceColumn { id: number; sectionId: number; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
 export interface AttendanceValidation { id: number; name: string; expression: string; message: string; sortOrder: number; active: boolean }
-export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[] }
+export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string }
 export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; username: string }
@@ -23,12 +26,17 @@ export interface AttendanceMonth {
   sections: AttendanceSection[];
   columns: AttendanceColumn[];
   validations: AttendanceValidation[];
+  systemMetrics: AttendanceSystemMetric[];
+  /** Khoảng truy ca trực trước đó để phân loại nghỉ bù. */
+  restPairLookbackDays: number;
   staff: AttendanceStaff[];
   entries: Record<string, { code: string; note: string }>;
   /** Giá trị cột tự nhập đang có, dùng khóa userId:columnId. */
   manualValues: Record<string, string>;
   /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập userId:columnId. */
   manualViolations: Record<string, string[]>;
+  /** Nghỉ bù chưa ghép được ca trực/tăng cường phù hợp, theo userId; không chặn nhập liệu. */
+  calculationWarnings: Record<string, string[]>;
   /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa userId. */
   rowValues: Record<string, Record<string, string | number>>;
   holidays: Array<{ id: number; holidayDate: string; name: string; note: string }>;

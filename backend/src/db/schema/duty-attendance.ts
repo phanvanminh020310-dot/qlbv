@@ -6,6 +6,12 @@ import { users } from './system';
 export type DutyAttendanceSectionKind = 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM';
 export type DutyAttendanceColumnType = 'FORMULA' | 'MANUAL';
 export type DutyAttendanceDataType = 'NUMBER' | 'TEXT';
+/** Vai trò nghiệp vụ của ký hiệu, dùng cho công thức chấm công theo ngày thay vì suy đoán từ mã T/N/TC. */
+export const DUTY_ATTENDANCE_CALCULATION_ROLES = ['NONE', 'DUTY', 'REINFORCEMENT', 'REST'] as const;
+export type DutyAttendanceCalculationRole = (typeof DUTY_ATTENDANCE_CALCULATION_ROLES)[number];
+/** Ký hiệu nghỉ bù có thể dò ca trực thường, tăng cường hoặc bất kỳ ca trực gần nhất. */
+export const DUTY_ATTENDANCE_REST_SOURCES = ['ANY_DUTY', 'DUTY', 'REINFORCEMENT'] as const;
+export type DutyAttendanceRestSource = (typeof DUTY_ATTENDANCE_REST_SOURCES)[number];
 
 /** Danh mục nhóm ký hiệu, mã ổn định và tên tiếng Việt để chọn tại form ký hiệu. */
 export const dutyAttendanceCodeGroups = pgTable('duty_attendance_code_groups', {
@@ -31,6 +37,12 @@ export const dutyAttendanceCodes = pgTable('duty_attendance_codes', {
   showSummary: boolean('show_summary').default(true).notNull(),
   /** Giá trị mỗi lần xuất hiện khi tổng hợp cột ký hiệu, ví dụ 0.5 hoặc 2. */
   countValue: numeric('count_value', { precision: 12, scale: 2 }).default('1').notNull(),
+  /** Vai trò nghiệp vụ phục vụ biến hệ thống: trực, tăng cường, nghỉ bù hoặc không tham gia phân loại. */
+  calculationRole: text('calculation_role').$type<DutyAttendanceCalculationRole>().default('NONE').notNull(),
+  /** Nếu ký hiệu nằm vào ngày làm việc, giá trị đếm được trừ khỏi biến SYS_NGAY_CONG. */
+  deductsWorkday: boolean('deducts_workday').default(false).notNull(),
+  /** Với ký hiệu nghỉ bù, chọn loại ca trực trước đó được dò để phân loại. */
+  restSource: text('rest_source').$type<DutyAttendanceRestSource>().default('ANY_DUTY').notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
   active: boolean('active').default(true).notNull(),
   note: text('note').default('').notNull(),
