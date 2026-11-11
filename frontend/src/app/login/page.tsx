@@ -2,12 +2,14 @@
 
 import { Hospital, LogIn } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { useAuth } from '@/lib/auth';
 import { tokenStore } from '@/lib/api';
+import { getPublicBranding, PUBLIC_BRANDING_QUERY } from '@/lib/branding';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,6 +18,11 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const { data: branding } = useQuery({
+    queryKey: PUBLIC_BRANDING_QUERY,
+    queryFn: getPublicBranding,
+    staleTime: 300_000,
+  });
 
   useEffect(() => {
     if (tokenStore.access) router.replace('/dashboard');
@@ -37,16 +44,17 @@ export default function LoginPage() {
     <div className="app-viewport-min app-safe-page grid lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between bg-[var(--primary)] p-10 text-white lg:flex">
         <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-2xl bg-white/15">
+          <div className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/15">
             <Hospital className="size-6" />
+            {branding?.logo ? <img src={branding.logo} alt="" className="absolute inset-0 size-full bg-white object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : null}
           </div>
           <div>
-            <div className="text-lg font-semibold">QLBS</div>
-            <div className="text-xs text-white/75">Phần mềm Quản lý Bệnh viện</div>
+            <div className="text-lg font-semibold">{branding?.name ?? 'QLBS'}</div>
+            <div className="text-xs text-white/75">{branding?.subtitle ?? 'Quản lý bệnh viện'}</div>
           </div>
         </div>
         <div />
-        <div className="text-xs text-white/60">Hệ thống dùng nội bộ — Bệnh viện Quân y 4</div>
+        <div className="text-xs text-white/60">Hệ thống dùng nội bộ — {branding?.hospitalName ?? 'Bệnh viện'}</div>
       </div>
 
       <div className="flex items-center justify-center p-6">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, Save, Settings2 } from "lucide-react";
+import { ImagePlus, RotateCcw, Save, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/page-header";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input, Label, Switch, Textarea } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
+import { brandImageSource, PUBLIC_BRANDING_QUERY } from "@/lib/branding";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -55,12 +56,21 @@ const GROUP_ICON: Record<string, string> = {
   system: "⚙️",
 };
 
+const BRAND_LOGO_MAX_BYTES = 512 * 1024;
+const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Không đọc được tệp logo"));
+  reader.onerror = () => reject(new Error("Không đọc được tệp logo"));
+  reader.readAsDataURL(file);
+});
+
 /** Cấu hình hệ thống — mọi tham số đều sửa được từ giao diện, không hard-code. */
 export default function SettingsPage() {
   const can = useAuth((s) => s.can);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -96,7 +106,10 @@ export default function SettingsPage() {
     onSuccess: async () => {
       toast.success(`Đã lưu ${dirtyCount} thay đổi`);
       setDraft({});
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: PUBLIC_BRANDING_QUERY }),
+      ]);
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -107,7 +120,10 @@ export default function SettingsPage() {
       toast.success("Đã khôi phục cấu hình mặc định");
       setConfirmReset(false);
       setDraft({});
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: PUBLIC_BRANDING_QUERY }),
+      ]);
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -125,6 +141,37 @@ export default function SettingsPage() {
     return false;
   };
 
+  const persistLogo = async (item: SettingItem, value: string) => {
+    setUploadingLogo(true);
+    try {
+      await apiFetch(`/settings/${encodeURIComponent(item.key)}`, {
+        method: "PUT",
+        body: {
+          value,
+          group: item.group,
+          label: item.label ?? undefined,
+          description: item.description ?? undefined,
+          valueType: item.valueType ?? undefined,
+          isPublic: item.isPublic,
+        },
+      });
+      toast.success(value ? "Đã cập nhật logo ứng dụng" : "Đã xóa logo ứng dụng");
+      setDraft((current) => {
+        const next = { ...current };
+        delete next[item.key];
+        return next;
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: PUBLIC_BRANDING_QUERY }),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể cập nhật logo");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   const renderField = (item: SettingItem): React.ReactNode => {
     const value = valueOf(item);
     const type =
@@ -134,6 +181,50 @@ export default function SettingsPage() {
         : typeof item.value === "number"
           ? "number"
           : "text");
+    if (item.key === "hospital.logo") {
+      const source = brandImageSource(value);
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-[var(--muted)] text-xs text-[var(--muted-foreground)]">
+              {source ? <img src={source} alt="Xem trước logo ứng dụng" className="size-full object-contain" /> : "Chưa có"}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium shadow-sm transition-colors hover:bg-[var(--muted)] ${(!can("setting.update") || uploadingLogo) ? "pointer-events-none opacity-60" : ""}`}>
+                <ImagePlus className="size-4" /> {uploadingLogo ? "Đang lưu…" : "Chọn tệp logo"}
+                <input
+                  className="sr-only"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  disabled={!can("setting.update") || uploadingLogo}
+                  onChange={async (event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (!file) return;
+                    if (file.size > BRAND_LOGO_MAX_BYTES) return toast.error("Logo tối đa 512 KB");
+                    try {
+                      const dataUrl = await readAsDataUrl(file);
+                      if (!brandImageSource(dataUrl)) return toast.error("Chỉ nhận ảnh PNG, JPEG hoặc WebP");
+                      await persistLogo(item, dataUrl);
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Không đọc được tệp logo");
+                    }
+                  }}
+                />
+              </label>
+              {source ? <Button type="button" size="sm" variant="outline" disabled={!can("setting.update") || uploadingLogo} onClick={() => void persistLogo(item, "")}><Trash2 className="size-4" /> Xóa logo</Button> : null}
+            </div>
+          </div>
+          <Input
+            disabled={!can("setting.update") || uploadingLogo}
+            value={String(value ?? "")}
+            placeholder="Hoặc dán đường dẫn ảnh /logo.png"
+            onChange={(event) => setDraft((current) => ({ ...current, [item.key]: event.target.value }))}
+          />
+          <p className="text-[11px] text-[var(--muted-foreground)]">Chọn PNG/JPEG/WebP tối đa 512 KB để lưu ngay, hoặc dán đường dẫn rồi bấm “Lưu thay đổi”.</p>
+        </div>
+      );
+    }
     if (type === "attendance-lock-policy") {
       return (
         <select
@@ -314,7 +405,7 @@ export default function SettingsPage() {
                 <div key={item.key} className="space-y-1.5">
                   <div className="flex items-center gap-2">
                     <Label htmlFor={`s-${item.key}`}>
-                      {item.label ?? item.key}
+                      {item.key === "hospital.logo" ? "Logo ứng dụng" : item.label ?? item.key}
                     </Label>
                     {item.isPublic ? (
                       <Badge tone="info">Công khai</Badge>

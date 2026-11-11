@@ -3,7 +3,7 @@
  * Cho phép quản trị thay đổi thông tin bệnh viện, quy tắc nghiệp vụ, mẫu in mặc định…
  * mà không cần sửa mã nguồn hay triển khai lại.
  */
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { settings } from '../../db/schema';
@@ -161,6 +161,30 @@ export class SettingsService implements OnModuleInit {
 
   /** Chặn giá trị giữ/dọn nguy hiểm ngay tại API, không chỉ lúc công việc chạy. */
   private normalizeManagedValue(key: string, value: unknown): unknown {
+    if (key === 'app.brandName') {
+      const name = String(value ?? '').trim();
+      return name ? name.slice(0, 80) : 'QLBS';
+    }
+    if (key === 'app.brandSubtitle') {
+      const subtitle = String(value ?? '').trim();
+      return subtitle ? subtitle.slice(0, 120) : 'Quản lý bệnh viện';
+    }
+    if (key === 'hospital.logo') {
+      const source = String(value ?? '').trim();
+      if (!source) return '';
+      const dataUrl = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(source);
+      if (dataUrl) {
+        const mime = dataUrl[1].toLowerCase(); const encoded = dataUrl[2]; const bytes = Buffer.from(encoded, 'base64');
+        if (!bytes.length || bytes.length > 512 * 1024) throw new BadRequestException('Logo phải là ảnh PNG/JPEG/WebP không quá 512 KB');
+        const isPng = bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        const isWebp = bytes.subarray(0, 4).equals(Buffer.from('RIFF')) && bytes.subarray(8, 12).equals(Buffer.from('WEBP'));
+        if ((mime === 'png' && !isPng) || (mime === 'jpeg' && !isJpeg) || (mime === 'webp' && !isWebp)) throw new BadRequestException('Nội dung logo không khớp định dạng ảnh đã chọn');
+        return `data:image/${mime};base64,${encoded}`;
+      }
+      if ((source.startsWith('/') || /^https?:\/\//i.test(source)) && source.length <= 2_000) return source;
+      throw new BadRequestException('Logo phải là ảnh PNG/JPEG/WebP hoặc đường dẫn ảnh hợp lệ');
+    }
     const policies: Record<string, { fallback: number; min: number; max: number }> = {
       'backup.keepCount': { fallback: 3, min: 3, max: 365 },
       'backup.exportRetentionDays': { fallback: 30, min: 1, max: 3650 },
@@ -223,11 +247,13 @@ export function defaultSettings(): SettingItem[] {
   return [
     // Thông tin đơn vị
     { key: 'hospital.name', value: 'BỆNH VIỆN QUÂN Y 4', group: 'hospital', label: 'Tên bệnh viện', isPublic: true },
+    { key: 'app.brandName', value: 'QLBS', group: 'hospital', label: 'Tên ứng dụng', description: 'Tên hiển thị thay cho QLBS ở menu và màn hình đăng nhập.', isPublic: true },
+    { key: 'app.brandSubtitle', value: 'Quản lý bệnh viện', group: 'hospital', label: 'Dòng mô tả ứng dụng', description: 'Dòng chữ nhỏ bên dưới tên ứng dụng.', isPublic: true },
     { key: 'hospital.shortName', value: 'BVQY4', group: 'hospital', label: 'Tên viết tắt', isPublic: true },
     { key: 'hospital.address', value: '', group: 'hospital', label: 'Địa chỉ', isPublic: true },
     { key: 'hospital.phone', value: '', group: 'hospital', label: 'Điện thoại', isPublic: true },
     { key: 'hospital.website', value: '', group: 'hospital', label: 'Website', isPublic: true },
-    { key: 'hospital.logo', value: '', group: 'hospital', label: 'Logo (đường dẫn)', isPublic: true },
+    { key: 'hospital.logo', value: '', group: 'hospital', label: 'Logo ứng dụng', description: 'Chọn tệp PNG/JPEG/WebP tối đa 512 KB hoặc nhập đường dẫn ảnh. Logo hiển thị ở menu và màn hình đăng nhập.', valueType: 'brand-logo', isPublic: true },
     { key: 'hospital.director', value: '', group: 'hospital', label: 'Giám đốc bệnh viện', isPublic: true },
     { key: 'hospital.parentName', value: '', group: 'hospital', label: 'Cơ quan cấp trên (dòng trên tên đơn vị ở biên bản)', isPublic: true },
     { key: 'hospital.place', value: '', group: 'hospital', label: 'Địa danh ghi trên văn bản (vd: TP. Hồ Chí Minh)', isPublic: true },

@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 import { Blocks, ChevronRight, Hospital, Sparkles, X } from 'lucide-react';
 import { NAV_GROUPS, navHrefs, type NavItem } from './nav';
 import { apiFetch } from '@/lib/api';
+import { getPublicBranding, PUBLIC_BRANDING_QUERY } from '@/lib/branding';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -43,6 +44,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const can = useAuth((s) => s.can);
   const user = useAuth((s) => s.user);
+  const { data: branding } = useQuery({
+    queryKey: PUBLIC_BRANDING_QUERY,
+    queryFn: getPublicBranding,
+    staleTime: 300_000,
+  });
 
   // Tiện ích mở rộng do quản trị viên khai báo — menu hiện theo quyền của từng người
   const { data: utilities } = useQuery({
@@ -93,13 +99,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r bg-[var(--card)]">
       <div className="flex items-center gap-2 border-b px-4 py-3">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-[var(--primary)] text-white">
+        <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--primary)] text-white">
           <Hospital className="size-5" />
+          {branding?.logo ? <img src={branding.logo} alt="" className="absolute inset-0 size-full bg-white object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : null}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">QLBS</div>
+          <div className="truncate text-sm font-semibold">{branding?.name ?? 'QLBS'}</div>
           <div className="truncate text-[11px] text-[var(--muted-foreground)]">
-            Quản lý bệnh viện
+            {branding?.subtitle ?? 'Quản lý bệnh viện'}
           </div>
         </div>
         {onNavigate ? (
