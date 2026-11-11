@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 const COLUMN_KEY = /^[A-Z][A-Z0-9_]{0,31}$/;
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -94,4 +94,36 @@ export class AttendanceHolidayDto {
   @IsDateString() holidayDate!: string;
   @IsString() @IsNotEmpty() @MaxLength(160) name!: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+export class AttendanceWorkdayOverrideDto {
+  @IsDateString() workDate!: string;
+  @IsString() @IsNotEmpty() @MaxLength(160) name!: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+/** Ngày do thông báo từng năm quyết định thêm vào lịch nghỉ hoặc lịch làm bù. */
+export class NationalHolidayPlanAdjustmentDto {
+  @IsDateString() date!: string;
+  @IsString() @IsNotEmpty() @MaxLength(160) name!: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+/** Phương án năm để tạo dự thảo ngày lễ Nhà nước; chỉ áp dụng sau khi quản trị viên xác nhận. */
+export class NationalHolidayPlanDto {
+  @Type(() => Number) @IsInt() @Min(1900) @Max(2100) year!: number;
+  /** Mốc ngày đầu đợt Tết so với mùng 1 âm lịch; phải đối chiếu quyết định hằng năm. */
+  @Type(() => Number) @IsInt() @Min(-10) @Max(10) tetStartOffset!: number;
+  @Type(() => Number) @IsInt() @Min(1) @Max(10) tetDayCount!: number;
+  @IsIn(['BEFORE', 'AFTER']) nationalDayAdjacent!: 'BEFORE' | 'AFTER';
+  @IsBoolean() compensateWeeklyRest!: boolean;
+  /** Ngày nghỉ kéo dài/nghỉ bù được cơ quan có thẩm quyền công bố riêng cho năm. */
+  @IsOptional() @IsArray() @ArrayMaxSize(31) @ValidateNested({ each: true }) @Type(() => NationalHolidayPlanAdjustmentDto)
+  additionalRestDays?: NationalHolidayPlanAdjustmentDto[];
+  /** Ngày làm bù, thường rơi vào cuối tuần, phải được tính như ngày làm việc. */
+  @IsOptional() @IsArray() @ArrayMaxSize(31) @ValidateNested({ each: true }) @Type(() => NationalHolidayPlanAdjustmentDto)
+  compensatoryWorkdays?: NationalHolidayPlanAdjustmentDto[];
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+export class NationalHolidayPlanQueryDto {
+  @Type(() => Number) @IsInt() @Min(1900) @Max(2100) year!: number;
 }

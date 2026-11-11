@@ -114,3 +114,17 @@ test('nhiều nghỉ bù liên tiếp cùng quy về ca phù hợp gần nhất 
   assert.equal(result.values.SYS_NGHI_BU_CHUA_GAN, 1, 'nghỉ chỉ ghép Tăng cường không được ghép nhầm với Trực');
   assert.equal(result.warnings.length, 1);
 });
+
+test('ngày làm bù cuối tuần được tính như ngày thường nhưng ngày lễ vẫn ưu tiên để không sai phân loại', () => {
+  const result = calculateAttendanceMetrics({
+    monthDates: ['2026-08-08', '2026-08-09'],
+    holidayDates: ['2026-08-09'],
+    workdayDates: ['2026-08-08', '2026-08-09'],
+    codes,
+    restPairLookbackDays: 14,
+    entries: [{ date: '2026-08-08', code: 'T' }, { date: '2026-08-09', code: 'TC' }],
+  });
+  assert.equal(result.values.SYS_NGAY_CONG, 1, 'Thứ Bảy làm bù tăng một Ngày công');
+  assert.equal(result.values.SYS_TRUC_NGAY_THUONG, 1, 'Trực ngày làm bù là trực ngày thường');
+  assert.equal(result.values.SYS_TANG_CUONG_NGAY_LE, 1, 'Ngày lễ trùng ngày làm bù vẫn ưu tiên là ngày lễ');
+});

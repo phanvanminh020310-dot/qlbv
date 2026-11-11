@@ -8,9 +8,18 @@ export interface AttendanceSystemMetric { key: string; label: string; descriptio
 export interface AttendanceSection { id: number; code: string; name: string; kind: 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM'; color: string; sortOrder: number; active: boolean }
 export interface AttendanceColumn { id: number; sectionId: number; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
 export interface AttendanceValidation { id: number; name: string; expression: string; message: string; sortOrder: number; active: boolean }
+export type AttendanceHolidaySource = 'HOSPITAL' | 'NATIONAL_TEMPLATE';
+export interface AttendanceHoliday { id: number; holidayDate: string; name: string; note: string; source: AttendanceHolidaySource; ruleKey: string; holidayYear: number | null }
+export interface AttendanceWorkdayOverride { id: number; workDate: string; name: string; note: string; source: AttendanceHolidaySource; ruleKey: string; workdayYear: number | null }
+export type NationalDayAdjacent = 'BEFORE' | 'AFTER';
+export interface NationalHolidayPlanAdjustment { date: string; name: string; note: string }
+export interface NationalHolidayPlan { year: number; tetStartOffset: number; tetDayCount: number; nationalDayAdjacent: NationalDayAdjacent; compensateWeeklyRest: boolean; additionalRestDays: NationalHolidayPlanAdjustment[]; compensatoryWorkdays: NationalHolidayPlanAdjustment[]; note: string }
+export interface NationalHolidayCandidate { date: string; name: string; note: string; ruleKey: string; kind: 'STATUTORY' | 'SUBSTITUTE' | 'APPROVED_ADJUSTMENT' }
+export interface NationalWorkdayCandidate { date: string; name: string; note: string; ruleKey: string; kind: 'COMPENSATORY_WORKDAY' }
+export interface NationalHolidayProposal { plan: NationalHolidayPlan; lunarNewYear: string; candidates: NationalHolidayCandidate[]; workdayCandidates: NationalWorkdayCandidate[]; warnings: string[]; saved: boolean; added?: number; updated?: number; removed?: number; preservedHospital?: number; unchanged?: number; addedWorkdays?: number; updatedWorkdays?: number; removedWorkdays?: number; unchangedWorkdays?: number; templateConflicts?: number }
 export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
-export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string }
+export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string; workdayName: string; isWorkingOverride: boolean }
 export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; username: string }
 export interface AttendanceDepartment { id: number; name: string; code: string; shortName: string }
 export interface AttendanceDepartmentScope { canSelect: boolean; items: AttendanceDepartment[] }
@@ -39,7 +48,8 @@ export interface AttendanceMonth {
   calculationWarnings: Record<string, string[]>;
   /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa userId. */
   rowValues: Record<string, Record<string, string | number>>;
-  holidays: Array<{ id: number; holidayDate: string; name: string; note: string }>;
+  holidays: AttendanceHoliday[];
+  workdayOverrides: AttendanceWorkdayOverride[];
 }
 type CodeGroupPayload = Omit<AttendanceCodeGroup, 'id'>;
 type CodePayload = Omit<AttendanceCode, 'id'>;
@@ -74,9 +84,16 @@ export const dutyAttendanceApi = {
   createValidation: (body: ValidationPayload) => post<AttendanceValidation>('/duty-attendance/validations', body),
   updateValidation: (id: number, body: ValidationPayload) => put<AttendanceValidation>(`/duty-attendance/validations/${id}`, body),
   deleteValidation: (id: number) => remove<{ deleted: true }>(`/duty-attendance/validations/${id}`),
-  holidays: (month: string) => get<Array<{ id: number; holidayDate: string; name: string; note: string }>>(`/duty-attendance/holidays?month=${month}`),
-  saveHoliday: (body: { holidayDate: string; name: string; note?: string }) => post('/duty-attendance/holidays', body),
+  holidays: (month: string) => get<AttendanceHoliday[]>(`/duty-attendance/holidays?month=${month}`),
+  workdayOverrides: (month: string) => get<AttendanceWorkdayOverride[]>(`/duty-attendance/workday-overrides?month=${month}`),
+  nationalHolidayPlan: (year: number) => get<NationalHolidayProposal>(`/duty-attendance/holidays/national-plan?year=${year}`),
+  previewNationalHolidayPlan: (body: NationalHolidayPlan) => post<NationalHolidayProposal>('/duty-attendance/holidays/national-plan/preview', body),
+  saveNationalHolidayPlan: (body: NationalHolidayPlan) => put<NationalHolidayProposal>('/duty-attendance/holidays/national-plan', body),
+  applyNationalHolidayPlan: (body: NationalHolidayPlan) => post<NationalHolidayProposal>('/duty-attendance/holidays/national-plan/apply', body),
+  saveHoliday: (body: { holidayDate: string; name: string; note?: string }) => post<AttendanceHoliday>('/duty-attendance/holidays', body),
   deleteHoliday: (id: number) => remove(`/duty-attendance/holidays/${id}`),
+  saveWorkdayOverride: (body: { workDate: string; name: string; note?: string }) => post<AttendanceWorkdayOverride>('/duty-attendance/workday-overrides', body),
+  deleteWorkdayOverride: (id: number) => remove(`/duty-attendance/workday-overrides/${id}`),
 };
 /** Khóa cache luôn có ID tài khoản để không lộ bảng/tình trạng cũ khi đổi tài khoản không cần F5. */
 export const attendanceKeys = {

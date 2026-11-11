@@ -8,6 +8,9 @@ import {
   AttendanceColumnDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
+  AttendanceWorkdayOverrideDto,
+  NationalHolidayPlanDto,
+  NationalHolidayPlanQueryDto,
   AttendanceSectionDto,
   AttendanceValidationDto,
   SaveAttendanceEntriesDto,
@@ -79,6 +82,19 @@ export class DutyAttendanceController {
   deleteValidation(@Param('id', ParseIntPipe) id: number) { return this.service.deleteValidation(id); }
 
   @Get('holidays') @RequirePermissions('duty-attendance.view') holidays(@Query() q: AttendanceMonthQueryDto) { return this.service.holidays(q); }
-  @Post('holidays') @RequirePermissions('duty-attendance.catalog.manage') saveHoliday(@CurrentUser() user: AccessContext, @Body() dto: AttendanceHolidayDto) { return this.service.saveHoliday(user, dto); }
-  @Delete('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') deleteHoliday(@Param('id', ParseIntPipe) id: number) { return this.service.deleteHoliday(id); }
+  @Get('workday-overrides') @RequirePermissions('duty-attendance.view') workdayOverrides(@Query() q: AttendanceMonthQueryDto) { return this.service.workdayOverrides(q); }
+  @Get('holidays/national-plan') @RequirePermissions('duty-attendance.catalog.manage') nationalHolidayPlan(@Query() q: NationalHolidayPlanQueryDto) { return this.service.nationalHolidayPlan(q.year); }
+  @Post('holidays/national-plan/preview') @RequirePermissions('duty-attendance.catalog.manage') previewNationalHolidayPlan(@Body() dto: NationalHolidayPlanDto) { return this.service.previewNationalHolidayPlan(dto); }
+  @Put('holidays/national-plan') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_national_holiday_plans', description: 'Lưu phương án ngày nghỉ lễ Nhà nước theo năm' })
+  saveNationalHolidayPlan(@CurrentUser() user: AccessContext, @Body() dto: NationalHolidayPlanDto) { return this.service.saveNationalHolidayPlan(user, dto); }
+  @Post('holidays/national-plan/apply') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_holidays', description: 'Áp dụng lịch ngày nghỉ lễ Nhà nước đã rà soát' })
+  applyNationalHolidayPlan(@CurrentUser() user: AccessContext, @Body() dto: NationalHolidayPlanDto) { return this.service.applyNationalHolidayPlan(user, dto); }
+  @Post('holidays') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_holidays', description: 'Khai báo ngày nghỉ/lễ của bệnh viện' })
+  saveHoliday(@CurrentUser() user: AccessContext, @Body() dto: AttendanceHolidayDto) { return this.service.saveHoliday(user, dto); }
+  @Delete('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_holidays', description: 'Xóa ngày nghỉ/lễ đã khai báo' })
+  deleteHoliday(@Param('id', ParseIntPipe) id: number) { return this.service.deleteHoliday(id); }
+  @Post('workday-overrides') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_workday_overrides', description: 'Khai báo ngày làm việc hoán đổi của bệnh viện' })
+  saveWorkdayOverride(@CurrentUser() user: AccessContext, @Body() dto: AttendanceWorkdayOverrideDto) { return this.service.saveWorkdayOverride(user, dto); }
+  @Delete('workday-overrides/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_workday_overrides', description: 'Xóa ngày làm việc hoán đổi' })
+  deleteWorkdayOverride(@Param('id', ParseIntPipe) id: number) { return this.service.deleteWorkdayOverride(id); }
 }

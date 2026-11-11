@@ -38,8 +38,13 @@ const count = (value: string | number) => {
 const toDate = (value: string) => new Date(`${value}T00:00:00Z`);
 const formatDate = (value: string) => `${value.slice(8, 10)}/${value.slice(5, 7)}`;
 
-export function attendanceDayClass(date: string, holidayDates: Set<string>): AttendanceDayClass {
+/**
+ * Ngày lễ ưu tiên hơn cuối tuần. Ngày làm bù/hoán đổi chỉ chuyển ngày cuối tuần thành
+ * ngày làm việc và không được phép lấn át một ngày lễ đang tồn tại.
+ */
+export function attendanceDayClass(date: string, holidayDates: Set<string>, workdayDates: Set<string> = new Set()): AttendanceDayClass {
   if (holidayDates.has(date)) return 'HOLIDAY';
+  if (workdayDates.has(date)) return 'WEEKDAY';
   const weekday = toDate(date).getUTCDay();
   return weekday === 0 || weekday === 6 ? 'WEEKEND' : 'WEEKDAY';
 }
@@ -60,11 +65,14 @@ function isMatchedDuty(role: DutyAttendanceCalculationRole, source: DutyAttendan
 export function calculateAttendanceMetrics(input: {
   monthDates: string[];
   holidayDates: Iterable<string>;
+  /** Ngày được quyết định là làm việc bù/hoán đổi, kể cả khi rơi vào cuối tuần. */
+  workdayDates?: Iterable<string>;
   codes: MetricCode[];
   entries: MetricEntry[];
   restPairLookbackDays: number;
 }) {
   const holidaySet = new Set(input.holidayDates);
+  const workdaySet = new Set(input.workdayDates ?? []);
   const values: Record<string, number> = Object.fromEntries(ATTENDANCE_SYSTEM_METRICS.map((metric) => [metric.key, 0]));
   const warnings: string[] = [];
   const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
@@ -72,7 +80,7 @@ export function calculateAttendanceMetrics(input: {
   const currentEntries = new Map(input.entries.filter((entry) => currentDates.has(entry.date)).map((entry) => [entry.date, entry]));
 
   for (const date of input.monthDates) {
-    const kind = attendanceDayClass(date, holidaySet);
+    const kind = attendanceDayClass(date, holidaySet, workdaySet);
     if (kind === 'WEEKDAY') values.SYS_NGAY_CONG += 1;
     const entry = currentEntries.get(date);
     const code = entry ? codes.get(entry.code.toUpperCase()) : undefined;
@@ -108,7 +116,7 @@ export function calculateAttendanceMetrics(input: {
       continue;
     }
     const dutyCode = codes.get(matched.code.toUpperCase())!;
-    const kind = attendanceDayClass(matched.date, holidaySet);
+    const kind = attendanceDayClass(matched.date, holidaySet, workdaySet);
     values[metricKey(dutyCode.calculationRole === 'DUTY' ? 'SYS_NGHI_TRUC' : 'SYS_NGHI_TANG_CUONG', kind)] += value;
   }
 

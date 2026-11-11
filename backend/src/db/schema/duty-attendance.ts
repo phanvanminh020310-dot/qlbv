@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, date, index, integer, numeric, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, date, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { departments } from './org';
 import { users } from './system';
 
@@ -107,15 +107,58 @@ export const dutyAttendanceManualValues = pgTable('duty_attendance_manual_values
   index('duty_attendance_manual_values_month_idx').on(t.departmentId, t.month, t.userId),
 ]);
 
-/** Ngày nghỉ lễ/đặc biệt ngoài thứ bảy, chủ nhật. */
+export const DUTY_ATTENDANCE_HOLIDAY_SOURCES = ['HOSPITAL', 'NATIONAL_TEMPLATE'] as const;
+export type DutyAttendanceHolidaySource = (typeof DUTY_ATTENDANCE_HOLIDAY_SOURCES)[number];
+export const DUTY_ATTENDANCE_NATIONAL_DAY_ADJACENT = ['BEFORE', 'AFTER'] as const;
+export type DutyAttendanceNationalDayAdjacent = (typeof DUTY_ATTENDANCE_NATIONAL_DAY_ADJACENT)[number];
+/** Một ngày do cơ quan Nhà nước/bệnh viện chốt thêm vào phương án năm. */
+export type DutyAttendancePlanDateAdjustment = { date: string; name: string; note?: string };
+
+/** Ngày nghỉ lễ/đặc biệt ngoài thứ bảy, chủ nhật. Nguồn giúp bảo toàn ngày bệnh viện tự khai báo khi áp dụng lịch mẫu quốc gia. */
 export const dutyAttendanceHolidays = pgTable('duty_attendance_holidays', {
   id: serial('id').primaryKey(),
   holidayDate: date('holiday_date').notNull(),
   name: text('name').notNull(),
   note: text('note').default('').notNull(),
+  source: text('source').$type<DutyAttendanceHolidaySource>().default('HOSPITAL').notNull(),
+  /** Khóa ngày lễ do lịch mẫu quốc gia sinh; rỗng với ngày bệnh viện tự khai báo. */
+  ruleKey: text('rule_key').default('').notNull(),
+  /** Năm của phương án lịch; có thể rỗng cho dữ liệu lịch sử trước khi nâng cấp. */
+  holidayYear: integer('holiday_year'),
   createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-}, (t) => [uniqueIndex('duty_attendance_holidays_date_uq').on(t.holidayDate)]);
+}, (t) => [uniqueIndex('duty_attendance_holidays_date_uq').on(t.holidayDate), index('duty_attendance_holidays_source_year_idx').on(t.source, t.holidayYear)]);
+
+/** Phương án nghỉ lễ Nhà nước theo từng năm do bệnh viện rà soát/xác nhận trước khi áp dụng. */
+export const dutyAttendanceNationalHolidayPlans = pgTable('duty_attendance_national_holiday_plans', {
+  year: integer('year').primaryKey(),
+  tetStartOffset: integer('tet_start_offset').default(-2).notNull(),
+  tetDayCount: integer('tet_day_count').default(5).notNull(),
+  nationalDayAdjacent: text('national_day_adjacent').$type<DutyAttendanceNationalDayAdjacent>().default('AFTER').notNull(),
+  compensateWeeklyRest: boolean('compensate_weekly_rest').default(true).notNull(),
+  /** Ngày nghỉ/hoán đổi được thông báo riêng từng năm, ngoài nhóm ngày tự sinh. */
+  additionalRestDays: jsonb('additional_rest_days').$type<DutyAttendancePlanDateAdjustment[]>().default(sql`'[]'::jsonb`).notNull(),
+  /** Ngày làm bù theo thông báo Nhà nước (thường là cuối tuần), áp dụng như ngày làm việc. */
+  compensatoryWorkdays: jsonb('compensatory_workdays').$type<DutyAttendancePlanDateAdjustment[]>().default(sql`'[]'::jsonb`).notNull(),
+  note: text('note').default('').notNull(),
+  createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedBy: integer('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Một ngày cuối tuần/hoán đổi được xem là ngày làm việc. Ngày bệnh viện tự khai báo không bị lịch mẫu ghi đè. */
+export const dutyAttendanceWorkdayOverrides = pgTable('duty_attendance_workday_overrides', {
+  id: serial('id').primaryKey(),
+  workDate: date('work_date').notNull(),
+  name: text('name').notNull(),
+  note: text('note').default('').notNull(),
+  source: text('source').$type<DutyAttendanceHolidaySource>().default('HOSPITAL').notNull(),
+  ruleKey: text('rule_key').default('').notNull(),
+  workdayYear: integer('workday_year'),
+  createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex('duty_attendance_workday_overrides_date_uq').on(t.workDate), index('duty_attendance_workday_overrides_source_year_idx').on(t.source, t.workdayYear)]);
 
 /** Một nhân viên, một ngày, một ký hiệu thực tế. Lịch trực chỉ để đối chiếu, không tự chấm. */
 export const dutyAttendanceEntries = pgTable('duty_attendance_entries', {

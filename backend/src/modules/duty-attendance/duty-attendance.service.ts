@@ -11,7 +11,9 @@ import {
   dutyAttendanceEntries,
   dutyAttendanceHolidays,
   dutyAttendanceManualValues,
+  dutyAttendanceNationalHolidayPlans,
   dutyAttendanceSections,
+  dutyAttendanceWorkdayOverrides,
   dutyAttendanceValidations,
   users,
   type DutyAttendanceColumnType,
@@ -22,12 +24,15 @@ import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
 import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, calculateAttendanceMetrics } from './attendance-metrics';
+import { defaultNationalHolidayPlan, nationalHolidayProposal, type NationalHolidayPlanConfig } from './national-holiday-plan';
 import type {
   AttendanceCodeDto,
   AttendanceCodeGroupDto,
   AttendanceColumnDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
+  AttendanceWorkdayOverrideDto,
+  NationalHolidayPlanDto,
   AttendanceSectionDto,
   AttendanceValidationDto,
   SaveAttendanceEntriesDto,
@@ -201,13 +206,14 @@ export class DutyAttendanceService {
     const { from, to } = monthBounds(month);
     const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
-    const [department, staff, allCodes, metricHolidayRows, records, previousRecords, manualRows] = await Promise.all([
+    const [department, staff, allCodes, metricHolidayRows, metricWorkdayRows, records, previousRecords, manualRows] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
       this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, username: users.username }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))).orderBy(asc(users.fullName)),
       // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
       // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
       this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
       this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, lookbackFrom), lt(dutyAttendanceHolidays.holidayDate, to))),
+      this.db.db.select().from(dutyAttendanceWorkdayOverrides).where(and(gte(dutyAttendanceWorkdayOverrides.workDate, lookbackFrom), lt(dutyAttendanceWorkdayOverrides.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, lookbackFrom), lt(dutyAttendanceEntries.workDate, from))),
       this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId, value: dutyAttendanceManualValues.value }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, month))),
@@ -216,10 +222,12 @@ export class DutyAttendanceService {
     if (!currentDepartment) throw new NotFoundException('Không tìm thấy khoa/phòng được gán');
     const today = bangkokToday();
     const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
+    const workdayOverrides = metricWorkdayRows.filter((workday) => workday.workDate >= from);
     const holidayDates = new Set(metricHolidayRows.map((holiday) => holiday.holidayDate));
+    const workdayDates = new Set(metricWorkdayRows.map((workday) => workday.workDate));
     const dates = Array.from({ length: daysInMonth(month) }, (_, index) => {
-      const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6;
-      return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isLocked: isDateLocked(date, today, lockPolicy), isRest: isWeekend || holidayDates.has(date), holidayName: holidays.find((holiday) => holiday.holidayDate === date)?.name ?? '' };
+      const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6; const holiday = holidays.find((item) => item.holidayDate === date); const workday = workdayOverrides.find((item) => item.workDate === date);
+      return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isLocked: isDateLocked(date, today, lockPolicy), isRest: holiday ? true : isWeekend && !workday, holidayName: holiday?.name ?? '', workdayName: !holiday ? workday?.name ?? '' : '', isWorkingOverride: !!workday && !holiday };
     });
     const entryByCell = new Map(records.map((record) => [`${record.userId}:${record.workDate}`, { code: record.code, note: record.note }]));
     for (const [cell, entry] of entryOverrides) { if (!entry.code) entryByCell.delete(cell); else entryByCell.set(cell, { code: entry.code, note: entry.note ?? '' }); }
@@ -245,6 +253,7 @@ export class DutyAttendanceService {
       const metrics = calculateAttendanceMetrics({
         monthDates: dates.map((date) => date.date),
         holidayDates,
+        workdayDates,
         codes: allCodes,
         entries: [
           ...previousRecords.filter((entry) => entry.userId === person.id).map((entry) => ({ date: entry.workDate, code: entry.code })),
@@ -312,6 +321,7 @@ export class DutyAttendanceService {
       calculationWarnings,
       rowValues,
       holidays,
+      workdayOverrides,
     };
   }
 
@@ -474,8 +484,91 @@ export class DutyAttendanceService {
   async deleteValidation(id: number) { const [item] = await this.db.db.delete(dutyAttendanceValidations).where(eq(dutyAttendanceValidations.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ràng buộc'); return { deleted: true }; }
 
   async holidays(q: AttendanceMonthQueryDto) { this.assertMonth(q.month); const { from, to } = monthBounds(q.month); return this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, from), lt(dutyAttendanceHolidays.holidayDate, to))).orderBy(asc(dutyAttendanceHolidays.holidayDate)); }
-  async saveHoliday(user: AccessContext, dto: AttendanceHolidayDto) { const [item] = await this.db.db.insert(dutyAttendanceHolidays).values({ ...dto, name: dto.name.trim(), note: dto.note?.trim() ?? '', createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceHolidays.holidayDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '' } }).returning(); return item; }
+  async workdayOverrides(q: AttendanceMonthQueryDto) { this.assertMonth(q.month); const { from, to } = monthBounds(q.month); return this.db.db.select().from(dutyAttendanceWorkdayOverrides).where(and(gte(dutyAttendanceWorkdayOverrides.workDate, from), lt(dutyAttendanceWorkdayOverrides.workDate, to))).orderBy(asc(dutyAttendanceWorkdayOverrides.workDate)); }
+  private assertCalendarDate(value: string, label: string) { if (!YMD.test(value) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) throw new BadRequestException(`${label} không hợp lệ`); }
+  /** Người dùng chủ động sửa/thêm ngày lễ sẽ trở thành ngày bệnh viện khai báo, không bị lịch mẫu quốc gia ghi đè sau này. */
+  async saveHoliday(user: AccessContext, dto: AttendanceHolidayDto) {
+    this.assertCalendarDate(dto.holidayDate, 'Ngày nghỉ/lễ'); const holidayYear = Number(dto.holidayDate.slice(0, 4));
+    return this.db.transaction(async (tx) => {
+      const [workday] = await tx.select().from(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.workDate, dto.holidayDate));
+      if (workday?.source === 'HOSPITAL') throw new ConflictException('Ngày này đang là ngày làm việc do bệnh viện khai báo. Hãy xóa hoặc điều chỉnh ngày làm việc trước.');
+      if (workday) await tx.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, workday.id));
+      const [item] = await tx.insert(dutyAttendanceHolidays).values({ holidayDate: dto.holidayDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', holidayYear: Number.isInteger(holidayYear) ? holidayYear : null, createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceHolidays.holidayDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', holidayYear: Number.isInteger(holidayYear) ? holidayYear : null } }).returning(); return item;
+    });
+  }
   async deleteHoliday(id: number) { const [item] = await this.db.db.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ngày nghỉ'); return { deleted: true }; }
+  /** Khai báo ngày làm việc thay thế của bệnh viện. Nếu thay thế lịch mẫu, chỉ lịch mẫu được gỡ bỏ; dữ liệu bệnh viện luôn phải được xử lý rõ ràng. */
+  async saveWorkdayOverride(user: AccessContext, dto: AttendanceWorkdayOverrideDto) {
+    this.assertCalendarDate(dto.workDate, 'Ngày làm việc'); const workdayYear = Number(dto.workDate.slice(0, 4));
+    return this.db.transaction(async (tx) => {
+      const [holiday] = await tx.select().from(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.holidayDate, dto.workDate));
+      if (holiday?.source === 'HOSPITAL') throw new ConflictException('Ngày này đang là ngày nghỉ/lễ do bệnh viện khai báo. Hãy xóa hoặc điều chỉnh ngày nghỉ trước.');
+      if (holiday) await tx.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, holiday.id));
+      const [item] = await tx.insert(dutyAttendanceWorkdayOverrides).values({ workDate: dto.workDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', workdayYear: Number.isInteger(workdayYear) ? workdayYear : null, createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceWorkdayOverrides.workDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', workdayYear: Number.isInteger(workdayYear) ? workdayYear : null } }).returning(); return item;
+    });
+  }
+  async deleteWorkdayOverride(id: number) { const [item] = await this.db.db.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ngày làm việc hoán đổi'); return { deleted: true }; }
+
+  private nationalHolidayConfig(dto: NationalHolidayPlanDto): NationalHolidayPlanConfig {
+    return { year: dto.year, tetStartOffset: dto.tetStartOffset, tetDayCount: dto.tetDayCount, nationalDayAdjacent: dto.nationalDayAdjacent, compensateWeeklyRest: dto.compensateWeeklyRest, additionalRestDays: dto.additionalRestDays ?? [], compensatoryWorkdays: dto.compensatoryWorkdays ?? [], note: dto.note?.trim() ?? '' };
+  }
+  private storedNationalHolidayConfig(stored: typeof dutyAttendanceNationalHolidayPlans.$inferSelect): NationalHolidayPlanConfig {
+    return { year: stored.year, tetStartOffset: stored.tetStartOffset, tetDayCount: stored.tetDayCount, nationalDayAdjacent: stored.nationalDayAdjacent, compensateWeeklyRest: stored.compensateWeeklyRest, additionalRestDays: Array.isArray(stored.additionalRestDays) ? stored.additionalRestDays : [], compensatoryWorkdays: Array.isArray(stored.compensatoryWorkdays) ? stored.compensatoryWorkdays : [], note: stored.note };
+  }
+  private proposalFor(config: NationalHolidayPlanConfig) {
+    try { return nationalHolidayProposal(config); } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Không tạo được dự thảo lịch nghỉ lễ'); }
+  }
+  private planValues(plan: NationalHolidayPlanConfig) { return { ...plan, additionalRestDays: plan.additionalRestDays ?? [], compensatoryWorkdays: plan.compensatoryWorkdays ?? [] }; }
+  async nationalHolidayPlan(year: number) {
+    const [stored] = await this.db.db.select().from(dutyAttendanceNationalHolidayPlans).where(eq(dutyAttendanceNationalHolidayPlans.year, year));
+    const plan = stored ? this.storedNationalHolidayConfig(stored) : defaultNationalHolidayPlan(year);
+    return { ...this.proposalFor(plan), saved: !!stored };
+  }
+  async previewNationalHolidayPlan(dto: NationalHolidayPlanDto) { return { ...this.proposalFor(this.nationalHolidayConfig(dto)), saved: false }; }
+  async saveNationalHolidayPlan(user: AccessContext, dto: NationalHolidayPlanDto) {
+    const plan = this.proposalFor(this.nationalHolidayConfig(dto)).plan;
+    const [stored] = await this.db.db.insert(dutyAttendanceNationalHolidayPlans).values({ ...this.planValues(plan), createdBy: user.id, updatedBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceNationalHolidayPlans.year, set: { tetStartOffset: plan.tetStartOffset, tetDayCount: plan.tetDayCount, nationalDayAdjacent: plan.nationalDayAdjacent, compensateWeeklyRest: plan.compensateWeeklyRest, additionalRestDays: plan.additionalRestDays ?? [], compensatoryWorkdays: plan.compensatoryWorkdays ?? [], note: plan.note ?? '', updatedBy: user.id, updatedAt: new Date() } }).returning();
+    return { ...this.proposalFor(this.storedNationalHolidayConfig(stored)), saved: true };
+  }
+  /**
+   * Áp dụng dự thảo sau xác nhận. Khi phương án cùng năm đổi, chỉ các dòng NATIONAL_TEMPLATE
+   * đã trở nên lỗi thời mới được gỡ trong cùng giao dịch. Dòng HOSPITAL không bao giờ bị ghi đè/xóa.
+   */
+  async applyNationalHolidayPlan(user: AccessContext, dto: NationalHolidayPlanDto) {
+    const proposal = this.proposalFor(this.nationalHolidayConfig(dto)); const plan = proposal.plan;
+    const from = `${plan.year}-01-01`; const to = `${plan.year + 1}-01-01`;
+    return this.db.transaction(async (tx) => {
+      const [stored] = await tx.insert(dutyAttendanceNationalHolidayPlans).values({ ...this.planValues(plan), createdBy: user.id, updatedBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceNationalHolidayPlans.year, set: { tetStartOffset: plan.tetStartOffset, tetDayCount: plan.tetDayCount, nationalDayAdjacent: plan.nationalDayAdjacent, compensateWeeklyRest: plan.compensateWeeklyRest, additionalRestDays: plan.additionalRestDays ?? [], compensatoryWorkdays: plan.compensatoryWorkdays ?? [], note: plan.note ?? '', updatedBy: user.id, updatedAt: new Date() } }).returning();
+      const [holidayRows, workdayRows] = await Promise.all([
+        tx.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, from), lt(dutyAttendanceHolidays.holidayDate, to))),
+        tx.select().from(dutyAttendanceWorkdayOverrides).where(and(gte(dutyAttendanceWorkdayOverrides.workDate, from), lt(dutyAttendanceWorkdayOverrides.workDate, to))),
+      ]);
+      const plannedHolidayDates = new Set(proposal.candidates.map((candidate) => candidate.date)); const plannedWorkdayDates = new Set(proposal.workdayCandidates.map((candidate) => candidate.date));
+      let removed = 0; let removedWorkdays = 0;
+      for (const current of holidayRows) if (current.source === 'NATIONAL_TEMPLATE' && current.holidayYear === plan.year && !plannedHolidayDates.has(current.holidayDate)) { await tx.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, current.id)); removed += 1; }
+      for (const current of workdayRows) if (current.source === 'NATIONAL_TEMPLATE' && current.workdayYear === plan.year && !plannedWorkdayDates.has(current.workDate)) { await tx.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, current.id)); removedWorkdays += 1; }
+      const holidaysByDate = new Map(holidayRows.filter((row) => !(row.source === 'NATIONAL_TEMPLATE' && row.holidayYear === plan.year && !plannedHolidayDates.has(row.holidayDate))).map((row) => [row.holidayDate, row]));
+      const workdaysByDate = new Map(workdayRows.filter((row) => !(row.source === 'NATIONAL_TEMPLATE' && row.workdayYear === plan.year && !plannedWorkdayDates.has(row.workDate))).map((row) => [row.workDate, row]));
+      let added = 0; let updated = 0; let preservedHospital = 0; let unchanged = 0; let addedWorkdays = 0; let updatedWorkdays = 0; let unchangedWorkdays = 0; let templateConflicts = 0;
+      for (const candidate of proposal.candidates) {
+        const current = holidaysByDate.get(candidate.date); const workday = workdaysByDate.get(candidate.date);
+        if (!current && workday) { if (workday.source === 'HOSPITAL') preservedHospital += 1; else templateConflicts += 1; continue; }
+        if (!current) { await tx.insert(dutyAttendanceHolidays).values({ holidayDate: candidate.date, name: candidate.name, note: candidate.note, source: 'NATIONAL_TEMPLATE', ruleKey: candidate.ruleKey, holidayYear: plan.year, createdBy: user.id }); added += 1; continue; }
+        if (current.source === 'HOSPITAL') { preservedHospital += 1; continue; }
+        if (current.name === candidate.name && current.note === candidate.note && current.ruleKey === candidate.ruleKey && current.holidayYear === plan.year) { unchanged += 1; continue; }
+        await tx.update(dutyAttendanceHolidays).set({ name: candidate.name, note: candidate.note, source: 'NATIONAL_TEMPLATE', ruleKey: candidate.ruleKey, holidayYear: plan.year }).where(eq(dutyAttendanceHolidays.id, current.id)); updated += 1;
+      }
+      for (const candidate of proposal.workdayCandidates) {
+        const current = workdaysByDate.get(candidate.date); const holiday = holidaysByDate.get(candidate.date);
+        if (!current && holiday) { if (holiday.source === 'HOSPITAL') preservedHospital += 1; else templateConflicts += 1; continue; }
+        if (!current) { await tx.insert(dutyAttendanceWorkdayOverrides).values({ workDate: candidate.date, name: candidate.name, note: candidate.note, source: 'NATIONAL_TEMPLATE', ruleKey: candidate.ruleKey, workdayYear: plan.year, createdBy: user.id }); addedWorkdays += 1; continue; }
+        if (current.source === 'HOSPITAL') { preservedHospital += 1; continue; }
+        if (current.name === candidate.name && current.note === candidate.note && current.ruleKey === candidate.ruleKey && current.workdayYear === plan.year) { unchangedWorkdays += 1; continue; }
+        await tx.update(dutyAttendanceWorkdayOverrides).set({ name: candidate.name, note: candidate.note, source: 'NATIONAL_TEMPLATE', ruleKey: candidate.ruleKey, workdayYear: plan.year }).where(eq(dutyAttendanceWorkdayOverrides.id, current.id)); updatedWorkdays += 1;
+      }
+      return { ...proposal, plan: this.storedNationalHolidayConfig(stored), saved: true, added, updated, removed, preservedHospital, unchanged, addedWorkdays, updatedWorkdays, removedWorkdays, unchangedWorkdays, templateConflicts };
+    });
+  }
 
   private displayColumns(data: Board): DisplayColumn[] {
     const columns: DisplayColumn[] = [];

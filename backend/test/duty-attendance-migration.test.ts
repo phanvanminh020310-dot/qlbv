@@ -22,6 +22,13 @@ test('migration bảng chấm công tạo danh mục ký hiệu cấu hình đư
   const calculationMigration = readFileSync(migrationPath('0031_cong_thuc_nghiep_vu_cham_cong.sql'), 'utf8');
   await pg.exec(calculationMigration);
   await pg.exec(calculationMigration);
+  await pg.exec("INSERT INTO duty_attendance_holidays (holiday_date, name) VALUES ('2026-01-01', 'Ngày tự khai báo trước nâng cấp')");
+  const nationalHolidayMigration = readFileSync(migrationPath('0032_lich_nghi_le_nha_nuoc_theo_nam.sql'), 'utf8');
+  await pg.exec(nationalHolidayMigration);
+  await pg.exec(nationalHolidayMigration);
+  const workdayMigration = readFileSync(migrationPath('0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql'), 'utf8');
+  await pg.exec(workdayMigration);
+  await pg.exec(workdayMigration);
   const codes = await pg.query<{ code: string; counts_as_duty: boolean; show_summary: boolean }>(`
     SELECT code, counts_as_duty, show_summary FROM duty_attendance_codes ORDER BY sort_order
   `);
@@ -48,6 +55,11 @@ test('migration bảng chấm công tạo danh mục ký hiệu cấu hình đư
   assert.deepEqual(workdayColumn.rows, [{ key: 'NGAY_CONG', formula: '[SYS_NGAY_CONG]' }], 'cột Ngày công dùng biến nghiệp vụ thay vì công thức cộng trừ thủ công');
   const defaultReports = await pg.query<{ count: string }>("SELECT count(*)::text AS count FROM duty_attendance_columns WHERE key LIKE '%NGAY_%' OR key = 'NGAY_CONG' OR key = 'NGHI_BU_CHUA_GAN'");
   assert.equal(defaultReports.rows[0]?.count, '14', 'báo cáo mặc định có đủ cột phân loại trực, nghỉ bù và tăng cường');
+  const oldHoliday = await pg.query<{ source: string; rule_key: string }>("SELECT source, rule_key FROM duty_attendance_holidays WHERE holiday_date = '2026-01-01'");
+  assert.deepEqual(oldHoliday.rows, [{ source: 'HOSPITAL', rule_key: '' }], 'ngày đã có trước nâng cấp được bảo vệ khỏi lịch mẫu quốc gia');
+  await pg.exec("INSERT INTO duty_attendance_workday_overrides (work_date, name) VALUES ('2026-02-21', 'Làm bù thử')");
+  const workday = await pg.query<{ work_date: string; source: string }>("SELECT work_date::text, source FROM duty_attendance_workday_overrides WHERE work_date = '2026-02-21'");
+  assert.deepEqual(workday.rows, [{ work_date: '2026-02-21', source: 'HOSPITAL' }], 'migration tạo ngày làm việc hoán đổi mà không sửa dữ liệu lễ cũ');
   await assert.rejects(
     pg.exec(`INSERT INTO duty_attendance_holidays (holiday_date, name) VALUES ('2026-01-01', 'Tết'); INSERT INTO duty_attendance_holidays (holiday_date, name) VALUES ('2026-01-01', 'Trùng')`),
   );
