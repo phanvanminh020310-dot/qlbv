@@ -61,7 +61,10 @@ export default function LoginPage() {
         <form onSubmit={onSubmit} className="w-full max-w-sm space-y-5">
           <div className="space-y-1 text-center lg:text-left">
             <div className="flex items-center justify-center gap-2 lg:justify-start">
-              <Hospital className="size-6 text-[var(--primary)] lg:hidden" />
+              <div className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden lg:hidden">
+                <Hospital className="size-6 text-[var(--primary)]" />
+                {branding?.logo ? <img src={branding.logo} alt="" className="absolute inset-0 size-full bg-white object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : null}
+              </div>
               <span className="text-xl font-semibold">Đăng nhập hệ thống</span>
             </div>
             <p className="text-sm text-[var(--muted-foreground)]">

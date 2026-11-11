@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 import { MaintenanceOverlay } from './maintenance-overlay';
 import { PwaInstallPrompt } from './pwa-install-prompt';
 import { MobileViewportStabilizer } from './mobile-viewport-stabilizer';
+import { BrandingDocumentAssets } from './branding-document-assets';
 
 /**
  * Bọc ứng dụng với React Query (cache dữ liệu, tự làm mới) và khu vực hiện thông báo.
@@ -26,6 +27,7 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={client}>
+      <BrandingDocumentAssets />
       <MobileViewportStabilizer />
       {children}
       <Toaster position="top-right" richColors closeButton />

@@ -26,6 +26,8 @@ const nextConfig = {
   async rewrites() {
     return [
       { source: '/api/:path*', destination: `${API_PROXY_TARGET}/api/:path*` },
+      // Giữ tương thích logo/tệp ảnh cũ lưu ở backend khi được dùng làm favicon/PWA asset.
+      { source: '/files/:path*', destination: `${API_PROXY_TARGET}/files/:path*` },
       { source: '/health', destination: `${API_PROXY_TARGET}/health` },
     ];
   },

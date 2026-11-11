@@ -57,12 +57,54 @@ const GROUP_ICON: Record<string, string> = {
 };
 
 const BRAND_LOGO_MAX_BYTES = 512 * 1024;
-const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+const BRAND_LOGO_SIZES = [512, 448, 384, 320, 256, 192, 128, 96, 64];
+const readAsDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Không đọc được tệp logo"));
   reader.onerror = () => reject(new Error("Không đọc được tệp logo"));
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(blob);
 });
+const loadLogoImage = (file: File) => new Promise<HTMLImageElement>((resolve, reject) => {
+  const source = URL.createObjectURL(file);
+  const image = new Image();
+  image.onload = () => { URL.revokeObjectURL(source); resolve(image); };
+  image.onerror = () => { URL.revokeObjectURL(source); reject(new Error("Tệp logo không phải ảnh hợp lệ")); };
+  image.src = source;
+});
+const canvasBlob = (canvas: HTMLCanvasElement, type: "image/png" | "image/jpeg", quality?: number) => new Promise<Blob>((resolve, reject) => {
+  canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Không thể xử lý logo")), type, quality);
+});
+
+/** Chuẩn hoá logo chọn từ máy thành PNG/JPEG giới hạn kích thước để favicon/PWA luôn dùng được, kể cả tệp WebP. */
+async function prepareBrandLogo(file: File): Promise<string> {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error("Chỉ nhận ảnh PNG, JPEG hoặc WebP");
+  const image = await loadLogoImage(file);
+  const render = async (size: number, type: "image/png" | "image/jpeg", quality?: number) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Trình duyệt không hỗ trợ xử lý logo");
+    if (type === "image/jpeg") { context.fillStyle = "#ffffff"; context.fillRect(0, 0, size, size); }
+    const ratio = Math.min(size / image.naturalWidth, size / image.naturalHeight);
+    const width = Math.max(1, Math.round(image.naturalWidth * ratio));
+    const height = Math.max(1, Math.round(image.naturalHeight * ratio));
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, Math.round((size - width) / 2), Math.round((size - height) / 2), width, height);
+    return canvasBlob(canvas, type, quality);
+  };
+  for (const size of BRAND_LOGO_SIZES) {
+    const png = await render(size, "image/png");
+    if (png.size <= BRAND_LOGO_MAX_BYTES) return readAsDataUrl(png);
+  }
+  for (const size of BRAND_LOGO_SIZES) {
+    for (const quality of [0.9, 0.8, 0.7, 0.6]) {
+      const jpeg = await render(size, "image/jpeg", quality);
+      if (jpeg.size <= BRAND_LOGO_MAX_BYTES) return readAsDataUrl(jpeg);
+    }
+  }
+  throw new Error("Không thể nén logo xuống tối đa 512 KB");
+}
 
 /** Cấu hình hệ thống — mọi tham số đều sửa được từ giao diện, không hard-code. */
 export default function SettingsPage() {
@@ -201,9 +243,9 @@ export default function SettingsPage() {
                     const file = event.currentTarget.files?.[0];
                     event.currentTarget.value = "";
                     if (!file) return;
-                    if (file.size > BRAND_LOGO_MAX_BYTES) return toast.error("Logo tối đa 512 KB");
+                    if (file.size > BRAND_LOGO_MAX_BYTES) return toast.error("Tệp logo gốc tối đa 512 KB");
                     try {
-                      const dataUrl = await readAsDataUrl(file);
+                      const dataUrl = await prepareBrandLogo(file);
                       if (!brandImageSource(dataUrl)) return toast.error("Chỉ nhận ảnh PNG, JPEG hoặc WebP");
                       await persistLogo(item, dataUrl);
                     } catch (error) {
@@ -221,7 +263,7 @@ export default function SettingsPage() {
             placeholder="Hoặc dán đường dẫn ảnh /logo.png"
             onChange={(event) => setDraft((current) => ({ ...current, [item.key]: event.target.value }))}
           />
-          <p className="text-[11px] text-[var(--muted-foreground)]">Chọn PNG/JPEG/WebP tối đa 512 KB để lưu ngay, hoặc dán đường dẫn rồi bấm “Lưu thay đổi”.</p>
+          <p className="text-[11px] text-[var(--muted-foreground)]">Chọn PNG/JPEG/WebP tối đa 512 KB để lưu ngay (tự chuẩn hoá cho favicon/PWA), hoặc dán đường dẫn rồi bấm “Lưu thay đổi”.</p>
         </div>
       );
     }

@@ -10,18 +10,17 @@ export const metadata: Metadata = {
   description:
     'Hệ thống quản lý bệnh viện: sửa hồ sơ bệnh án điện tử, báo cáo công tác của khoa, thiết kế bản in và quản trị tập trung.',
   applicationName: 'QLBS',
-  manifest: '/manifest.webmanifest',
+  // Các route này dựng PNG/manifest từ logo hiện tại trong CSDL khi trình duyệt yêu cầu.
+  manifest: '/branding-manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
     title: 'QLBS',
   },
   icons: {
-    apple: '/icons/pwa-192.png',
-    icon: [
-      { url: '/icons/pwa-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icons/pwa-512.png', sizes: '512x512', type: 'image/png' },
-    ],
+    apple: [{ url: '/branding-icon/180', sizes: '180x180', type: 'image/png' }],
+    // Icon PWA 192/512 được khai báo trong branding-manifest.webmanifest động.
+    icon: [{ url: '/branding-icon/32', sizes: '32x32', type: 'image/png' }],
   },
   other: {
     google: 'notranslate',
