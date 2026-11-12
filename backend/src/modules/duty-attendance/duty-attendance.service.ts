@@ -16,6 +16,7 @@ import {
   dutyAttendanceSections,
   dutyAttendanceWorkdayOverrides,
   dutyAttendanceValidations,
+  jobTitles,
   users,
   type DutyAttendanceColumnType,
 } from '../../db/schema';
@@ -44,6 +45,19 @@ const YMD = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const COLUMN_KEY = /^[A-Z][A-Z0-9_]{0,31}$/;
 const NUMBER = /^-?\d+(?:[.,]\d+)?$/;
+/**
+ * Ưu tiên đúng sort_order của danh mục chức danh. Dữ liệu cũ có title trống/
+ * không còn trong danh mục được giữ nguyên và xếp sau, với users.id là thứ tự phụ ổn định.
+ * Tuyệt đối không dùng job_titles.id làm tiêu chí sắp xếp.
+ */
+const compareByJobTitleSortOrder = (
+  a: { id: number; titleSortOrder: number | null },
+  b: { id: number; titleSortOrder: number | null },
+) => {
+  if (a.titleSortOrder === null && b.titleSortOrder !== null) return 1;
+  if (a.titleSortOrder !== null && b.titleSortOrder === null) return -1;
+  return (a.titleSortOrder ?? 0) - (b.titleSortOrder ?? 0) || a.id - b.id;
+};
 export const ATTENDANCE_LOCK_POLICIES = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const;
 export type AttendanceLockPolicy = (typeof ATTENDANCE_LOCK_POLICIES)[number];
 const SYSTEM_SECTION_CODES = new Set(['ADMIN', 'DAYS', 'SYMBOLS', 'REPORT']);
@@ -272,7 +286,12 @@ export class DutyAttendanceService {
       ...manualRows.map((row) => row.userId),
     ])];
     const people = candidateIds.length
-      ? await this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, candidateIds))
+      ? await this.db.db
+        .select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt, titleSortOrder: jobTitles.sortOrder })
+        .from(users)
+        // users.title lưu tên; bỏ khoảng trắng thừa và không phân biệt hoa/thường để dữ liệu cũ vẫn lấy đúng thứ tự danh mục.
+        .leftJoin(jobTitles, sql`lower(btrim(${jobTitles.name})) = lower(btrim(${users.title}))`)
+        .where(inArray(users.id, candidateIds))
       : [];
     const assignmentRows = candidateIds.length
       ? await this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, candidateIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom))
@@ -286,7 +305,7 @@ export class DutyAttendanceService {
         const assignedHere = this.assignedToDepartmentInMonth(assignmentsByUser.get(person.id) ?? [], person.departmentId, departmentId, month);
         return retainedIds.has(person.id) || (person.active && assignedHere);
       })
-      .sort((a, b) => a.id - b.id);
+      .sort(compareByJobTitleSortOrder);
 
     const today = bangkokToday();
     const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
@@ -365,7 +384,7 @@ export class DutyAttendanceService {
       departments: [{ id: currentDepartment.id, name: currentDepartment.name }], multiDepartment: false,
       dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations,
       systemMetrics: ATTENDANCE_SYSTEM_METRICS, restPairLookbackDays,
-      staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
+      staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, titleSortOrder: person.titleSortOrder, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
       entries, manualValues, manualViolations, calculationWarnings, rowValues, holidays, workdayOverrides,
     };
   }
@@ -390,7 +409,7 @@ export class DutyAttendanceService {
       for (const [key, value] of Object.entries(board.calculationWarnings)) calculationWarnings[`${prefix}${key}`] = value;
       for (const [key, value] of Object.entries(board.rowValues)) rowValues[`${prefix}${key}`] = value;
     }
-    const staff = mergedStaff.sort((a, b) => a.id - b.id || a.departmentId - b.departmentId).map((person, index) => ({ ...person, stt: index + 1 }));
+    const staff = mergedStaff.sort((a, b) => compareByJobTitleSortOrder(a, b) || a.departmentId - b.departmentId).map((person, index) => ({ ...person, stt: index + 1 }));
     return {
       ...first,
       department: { id: 0, name: `${boards.length} khoa/phòng đã chọn`, hospital: first.department.hospital },

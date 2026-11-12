@@ -20,6 +20,7 @@ const actor = (): AccessContext => ({
 async function setup(lockPolicy?: string) {
   const pg = await PGlite.create();
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0000_init_khoi_tao.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0005_them_danh_muc_chuc_danh.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0025_bang_cham_cong_truc.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0030_nhom_ky_hieu_cham_cong.sql'), 'utf8'));
@@ -134,6 +135,29 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
     /chưa được khai báo/,
   );
   assert.equal(formula.columnType, 'FORMULA');
+});
+
+test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức danh và vẫn giữ dữ liệu title cũ', async (t) => {
+  const { pg, service } = await setup(); t.after(() => pg.close());
+  // ID danh mục được tạo theo thứ tự ngược với thứ tự cần hiển thị để chặn hồi quy sắp xếp theo job_titles.id.
+  await pg.exec(`
+    INSERT INTO job_titles (code, name, sort_order) VALUES
+      ('CD_HIGH_ID_LOW', 'Điều dưỡng xếp sau', 90),
+      ('CD_LOW_ID_HIGH', 'Bac si xep truoc', 5);
+    INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES
+      (2, 'NV02', 'sort_high', 'hash', 'Nhân viên chức danh sau', 'Điều dưỡng xếp sau', 10, true),
+      (3, 'NV03', 'legacy_first', 'hash', 'Nhân viên title cũ A', 'Chức danh cũ chưa khai báo', 10, true),
+      (4, 'NV04', 'sort_low', 'hash', 'Nhân viên chức danh trước', '  BAC SI XEP TRUOC  ', 10, true),
+      (5, 'NV05', 'legacy_second', 'hash', 'Nhân viên title cũ B', 'Chức danh cũ chưa khai báo', 10, true);
+  `);
+  const titleRows = await pg.query<{ id: number; sort_order: number }>("SELECT id, sort_order FROM job_titles WHERE code IN ('CD_HIGH_ID_LOW', 'CD_LOW_ID_HIGH') ORDER BY id");
+  assert.deepEqual(titleRows.rows.map((row) => row.sort_order), [90, 5], 'ID danh mục nhỏ có sort_order lớn hơn để chứng minh không dùng ID');
+
+  const board = await service.month(actor(), { departmentId: 10, month: '2026-10' });
+  const added = board.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
+  assert.deepEqual(added.map((person) => person.id), [4, 2, 3, 5]);
+  assert.deepEqual(added.map((person) => person.titleSortOrder), [5, 90, null, null]);
+  assert.ok(board.staff.some((person) => person.id === 1 && person.titleSortOrder === null), 'nhân viên dữ liệu cũ không có danh mục chức danh vẫn được giữ trên bảng');
 });
 
 test('chế độ khóa bảng chấm công áp dụng đúng cho ngày và số liệu tự nhập theo kỳ', async (t) => {

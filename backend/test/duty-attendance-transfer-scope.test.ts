@@ -31,13 +31,17 @@ test('query phạm vi khoa nhận đúng một hoặc nhiều departmentIds từ
 
 async function setup() {
   const pg = await PGlite.create();
-  for (const file of ['0000_init_khoi_tao.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql']) await pg.exec(migration(file));
+  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql']) await pg.exec(migration(file));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true), (12, 'C', 'Khoa C', true);
-    INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES
-      (1, 'nv001', 'hash', 'Nhân viên chuyển khoa', 11, true),
-      (2, 'nv002', 'hash', 'Nhân viên thứ hai', 11, true),
-      (99, 'coordinator', 'hash', 'Điều phối', 10, true);
+    -- ID 1 có sort_order 90, ID 2 có sort_order 10: bảng phải theo sort_order, không theo ID danh mục.
+    INSERT INTO job_titles (code, name, sort_order) VALUES
+      ('CD_HIGH_ID_LOW', 'Điều dưỡng', 90),
+      ('CD_LOW_ID_HIGH', 'Bác sĩ', 10);
+    INSERT INTO users (id, username, password_hash, full_name, title, department_id, active) VALUES
+      (1, 'nv001', 'hash', 'Nhân viên chuyển khoa', 'Điều dưỡng', 11, true),
+      (2, 'nv002', 'hash', 'Nhân viên thứ hai', 'Bác sĩ', 11, true),
+      (99, 'coordinator', 'hash', 'Điều phối', 'Chức danh lịch sử không còn danh mục', 10, true);
     -- Mốc nền 1900 được migration tạo tự động chỉ cho người đã có trước migration;
     -- fixture này tạo người sau migration nên khai báo đầy đủ lịch sử thật.
     INSERT INTO duty_attendance_department_assignments (user_id, department_id, effective_from, created_by) VALUES
@@ -64,8 +68,8 @@ test('chuyển khoa nhiều lần giữ dòng cũ, hiện đúng từng khoa và
   const a = await service.month(coordinator, { month: '2026-10', departmentId: 10 });
   const b = await service.month(coordinator, { month: '2026-10', departmentId: 11 });
   const c = await service.month(coordinator, { month: '2026-10', departmentId: 12 });
-  assert.deepEqual(a.staff.map((person) => person.id), [1, 99], 'khoa cũ vẫn có nhân viên vì có mốc/lịch sử tháng đó; bảng sắp xếp users.id tăng dần');
-  assert.deepEqual(b.staff.map((person) => person.id), [1, 2], 'nhân viên xuất hiện ở khoa mới sau mốc chuyển');
+  assert.deepEqual(a.staff.map((person) => person.id), [1, 99], 'khoa cũ vẫn có nhân viên vì có mốc/lịch sử tháng đó; title cũ ngoài danh mục được giữ và xếp sau');
+  assert.deepEqual(b.staff.map((person) => person.id), [2, 1], 'sort_order chức danh nhỏ hơn đứng trước tại khoa mới, dù users.id lớn hơn');
   assert.deepEqual(c.staff.map((person) => person.id), [1], 'mốc chuyển thứ hai trong cùng tháng không làm mất đoạn giữa');
   assert.equal(a.entries['1:2026-10-10']?.code, 'T');
   assert.equal(b.entries['1:2026-10-11']?.code, 'T');
@@ -81,6 +85,8 @@ test('chuyển khoa nhiều lần giữ dòng cũ, hiện đúng từng khoa và
 test('phạm vi nhiều/toàn bộ khoa xuất một dòng cho mỗi nhân viên-khoa và có cột khoa/phòng', async (t) => {
   const { pg, service } = await setup(); t.after(() => pg.close());
   const data = await service.month(coordinator, { month: '2026-10', departmentIds: [10, 11, 12] });
+  assert.deepEqual(data.staff.map((person) => person.key), ['11:2', '10:1', '11:1', '12:1', '10:99'], 'phạm vi nhiều khoa cũng theo job_titles.sort_order, rồi mới dùng thứ tự phụ ổn định');
+  assert.deepEqual(data.staff.map((person) => person.titleSortOrder), [10, 90, 90, 90, null]);
   const transferred = data.staff.filter((person) => person.id === 1);
   assert.deepEqual(transferred.map((person) => person.departmentId), [10, 11, 12]);
   assert.deepEqual(transferred.map((person) => person.key), ['10:1', '11:1', '12:1']);
