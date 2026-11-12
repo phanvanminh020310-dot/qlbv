@@ -8,6 +8,7 @@ import {
   dutyAttendanceCodeGroups,
   dutyAttendanceCodes,
   dutyAttendanceColumns,
+  dutyAttendanceDepartmentAssignments,
   dutyAttendanceEntries,
   dutyAttendanceHolidays,
   dutyAttendanceManualValues,
@@ -110,16 +111,27 @@ export class DutyAttendanceService {
   /** Vai trò phạm vi TOÀN VIỆN (gồm Điều phối chấm công KHTH) được chọn khoa rõ ràng. */
   private canSelectAnyDepartment(user: AccessContext) { return user.isSuperAdmin || user.dataScope === 'ALL'; }
 
-  private async deptId(user: AccessContext, requestedDepartmentId?: number) {
+  /**
+   * Chuẩn hóa phạm vi khoa được chọn. `departmentId` được giữ để các liên kết/API
+   * cũ tiếp tục dùng được; `departmentIds` là phạm vi nhiều khoa mới.
+   */
+  private async deptIds(user: AccessContext, requestedDepartmentId?: number, requestedDepartmentIds?: number[]) {
+    const requested = [...new Set([...(requestedDepartmentIds ?? []), ...(requestedDepartmentId ? [requestedDepartmentId] : [])])];
     if (!this.canSelectAnyDepartment(user)) {
       if (!user.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng; không thể nhập bảng chấm công');
-      if (requestedDepartmentId !== undefined && requestedDepartmentId !== user.departmentId) throw new ForbiddenException('Bạn chỉ được xem và chấm công cho khoa/phòng được gán');
-      return user.departmentId;
+      if (requested.some((id) => id !== user.departmentId)) throw new ForbiddenException('Bạn chỉ được xem và chấm công cho khoa/phòng được gán');
+      return [user.departmentId];
     }
-    if (!requestedDepartmentId) throw new BadRequestException('Vui lòng chọn khoa/phòng cần xem bảng chấm công');
-    const [department] = await this.db.db.select({ id: departments.id }).from(departments).where(and(eq(departments.id, requestedDepartmentId), eq(departments.active, true), isNull(departments.deletedAt)));
-    if (!department) throw new NotFoundException('Không tìm thấy khoa/phòng đang hoạt động');
-    return department.id;
+    if (!requested.length) throw new BadRequestException('Vui lòng chọn khoa/phòng cần xem bảng chấm công');
+    const rows = await this.db.db.select({ id: departments.id }).from(departments).where(and(inArray(departments.id, requested), eq(departments.active, true), isNull(departments.deletedAt)));
+    if (rows.length !== requested.length) throw new NotFoundException('Có khoa/phòng không tồn tại hoặc đã ngừng hoạt động');
+    return rows.map((row) => row.id).sort((a, b) => a - b);
+  }
+
+  /** Phép ghi một ô luôn chỉ thuộc một khoa; phạm vi nhiều khoa chỉ dành cho xem/xuất. */
+  private async deptId(user: AccessContext, requestedDepartmentId?: number) {
+    const ids = await this.deptIds(user, requestedDepartmentId);
+    return ids[0]!;
   }
 
   async availableDepartments(user: AccessContext) {
@@ -127,9 +139,35 @@ export class DutyAttendanceService {
       const items = await this.db.db.select({ id: departments.id, name: departments.name, code: departments.code, shortName: departments.shortName }).from(departments).where(and(eq(departments.active, true), isNull(departments.deletedAt))).orderBy(asc(departments.name));
       return { canSelect: true, items };
     }
-    const id = await this.deptId(user);
+    const id = (await this.deptIds(user))[0]!;
     const [item] = await this.db.db.select({ id: departments.id, name: departments.name, code: departments.code, shortName: departments.shortName }).from(departments).where(eq(departments.id, id));
     return { canSelect: false, items: item ? [item] : [] };
+  }
+
+  /** Khoa có hiệu lực tại đầu ngày; nếu chưa có nhật ký (dữ liệu trước nâng cấp), dùng khoa hiện tại làm mốc tương thích. */
+  private departmentAtDate(
+    assignments: Array<{ departmentId: number; effectiveFrom: string }>,
+    fallbackDepartmentId: number | null,
+    date: string,
+  ) {
+    let departmentId: number | null = null;
+    for (const assignment of assignments) {
+      if (assignment.effectiveFrom > date) break;
+      departmentId = assignment.departmentId;
+    }
+    return departmentId ?? fallbackDepartmentId;
+  }
+
+  private assignedToDepartmentInMonth(
+    assignments: Array<{ departmentId: number; effectiveFrom: string }>,
+    fallbackDepartmentId: number | null,
+    departmentId: number,
+    month: string,
+  ) {
+    const { from, to } = monthBounds(month);
+    if (!assignments.length) return fallbackDepartmentId === departmentId;
+    const points = [from, ...assignments.filter((assignment) => assignment.effectiveFrom >= from && assignment.effectiveFrom < to).map((assignment) => assignment.effectiveFrom)];
+    return points.some((date) => this.departmentAtDate(assignments, fallbackDepartmentId, date) === departmentId);
   }
 
   private assertMonth(month: string) { if (!MONTH.test(month)) throw new BadRequestException('Tháng phải có dạng YYYY-MM'); }
@@ -200,15 +238,15 @@ export class DutyAttendanceService {
     if (typeof evaluateExpression(expression, Object.fromEntries([...ATTENDANCE_SYSTEM_METRICS.map((item) => [item.key, 0]), ...codes.map((item) => [item.code, 0]), ...columns.map((item) => [item.key, 0])])) !== 'boolean') throw new BadRequestException('Ràng buộc phải là phép so sánh, ví dụ: [A] + [B] == [TONG]');
   }
 
-  private async buildBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
+  /** Xây dựng bảng của một khoa, bao gồm mốc chuyển khoa và dữ liệu lịch sử đã ghi. */
+  private async buildSingleBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
     this.assertMonth(month);
     const [lockPolicy, restPairLookbackDays] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays()]);
     const { from, to } = monthBounds(month);
     const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
-    const [department, staff, allCodes, metricHolidayRows, metricWorkdayRows, records, previousRecords, manualRows] = await Promise.all([
+    const [department, allCodes, metricHolidayRows, metricWorkdayRows, records, previousRecords, manualRows, departmentAssignmentRows, currentDepartmentUsers] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
-      this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))).orderBy(asc(users.fullName)),
       // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
       // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
       this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
@@ -217,9 +255,39 @@ export class DutyAttendanceService {
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, lookbackFrom), lt(dutyAttendanceEntries.workDate, from))),
       this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId, value: dutyAttendanceManualValues.value }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, month))),
+      this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId }).from(dutyAttendanceDepartmentAssignments).where(and(eq(dutyAttendanceDepartmentAssignments.departmentId, departmentId), lt(dutyAttendanceDepartmentAssignments.effectiveFrom, to))),
+      this.db.db.select({ id: users.id }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))),
     ]);
     const currentDepartment = department[0];
     if (!currentDepartment) throw new NotFoundException('Không tìm thấy khoa/phòng được gán');
+
+    // Ngoài nhân viên đang có mốc làm việc ở khoa trong tháng, luôn giữ các nhân viên
+    // có dòng chấm công/số liệu đã ghi tại khoa này. Đây là lớp bảo toàn dữ liệu trước
+    // khi hệ thống bắt đầu ghi lịch sử chuyển khoa.
+    const candidateIds = [...new Set([
+      ...departmentAssignmentRows.map((row) => row.userId),
+      ...currentDepartmentUsers.map((row) => row.id),
+      ...records.map((row) => row.userId),
+      ...previousRecords.map((row) => row.userId),
+      ...manualRows.map((row) => row.userId),
+    ])];
+    const people = candidateIds.length
+      ? await this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, candidateIds))
+      : [];
+    const assignmentRows = candidateIds.length
+      ? await this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, candidateIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom))
+      : [];
+    const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
+    for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), { departmentId: assignment.departmentId, effectiveFrom: assignment.effectiveFrom }]);
+    const retainedIds = new Set([...records.map((row) => row.userId), ...previousRecords.map((row) => row.userId), ...manualRows.map((row) => row.userId)]);
+    const staff = people
+      .filter((person) => {
+        if (person.deletedAt) return false;
+        const assignedHere = this.assignedToDepartmentInMonth(assignmentsByUser.get(person.id) ?? [], person.departmentId, departmentId, month);
+        return retainedIds.has(person.id) || (person.active && assignedHere);
+      })
+      .sort((a, b) => a.id - b.id);
+
     const today = bangkokToday();
     const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
     const workdayOverrides = metricWorkdayRows.filter((workday) => workday.workDate >= from);
@@ -251,16 +319,10 @@ export class DutyAttendanceService {
         }
       }
       const metrics = calculateAttendanceMetrics({
-        monthDates: dates.map((date) => date.date),
-        holidayDates,
-        workdayDates,
-        codes: allCodes,
+        monthDates: dates.map((date) => date.date), holidayDates, workdayDates, codes: allCodes,
         entries: [
           ...previousRecords.filter((entry) => entry.userId === person.id).map((entry) => ({ date: entry.workDate, code: entry.code })),
-          ...dates.flatMap((date) => {
-            const entry = entryByCell.get(`${person.id}:${date.date}`);
-            return entry ? [{ date: date.date, code: entry.code }] : [];
-          }),
+          ...dates.flatMap((date) => { const entry = entryByCell.get(`${person.id}:${date.date}`); return entry ? [{ date: date.date, code: entry.code }] : []; }),
         ],
         restPairLookbackDays,
       });
@@ -284,14 +346,10 @@ export class DutyAttendanceService {
     }
     const manualViolations: Record<string, string[]> = {};
     for (const rule of layout.validations) {
-      const referencedManualColumns = expressionReferences(rule.expression)
-        .map((reference) => manualColumns.find((column) => column.key.toUpperCase() === reference))
-        .filter((column): column is typeof manualColumns[number] => !!column);
+      const referencedManualColumns = expressionReferences(rule.expression).map((reference) => manualColumns.find((column) => column.key.toUpperCase() === reference)).filter((column): column is typeof manualColumns[number] => !!column);
       if (!referencedManualColumns.length) continue;
       for (const person of staff) {
         const values = rowValues[String(person.id)];
-        // Để người dùng bắt đầu nhập một nhóm cột mà không báo đỏ khi toàn bộ còn trống,
-        // nhưng ngay khi có ít nhất một giá trị thì mọi ô liên quan phải báo rõ nếu chưa đạt.
         if (!referencedManualColumns.some((column) => String(values?.[column.key.toUpperCase()] ?? '').trim())) continue;
         if (booleanExpression(rule.expression, values)) continue;
         const message = rule.message || `Ràng buộc “${rule.name}” chưa thỏa mãn`;
@@ -302,30 +360,49 @@ export class DutyAttendanceService {
       }
     }
     return {
-      month,
-      today,
-      lockPolicy,
-      manualLocked: isManualMonthLocked(month, today, lockPolicy),
+      month, today, lockPolicy, manualLocked: isManualMonthLocked(month, today, lockPolicy),
       department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital },
-      dates,
-      codes,
-      sections: layout.sections,
-      columns: layout.columns,
-      validations: layout.validations,
-      systemMetrics: ATTENDANCE_SYSTEM_METRICS,
-      restPairLookbackDays,
-      staff: staff.map((person, index) => ({ stt: index + 1, ...person })),
-      entries,
-      manualValues,
-      manualViolations,
-      calculationWarnings,
-      rowValues,
-      holidays,
-      workdayOverrides,
+      departments: [{ id: currentDepartment.id, name: currentDepartment.name }], multiDepartment: false,
+      dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations,
+      systemMetrics: ATTENDANCE_SYSTEM_METRICS, restPairLookbackDays,
+      staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
+      entries, manualValues, manualViolations, calculationWarnings, rowValues, holidays, workdayOverrides,
     };
   }
 
-  async month(user: AccessContext, q: AttendanceMonthQueryDto) { this.assertMonth(q.month); return this.buildBoard(await this.deptId(user, q.departmentId), q.month); }
+  /** Ghép nhiều bảng khoa thành một phạm vi xem/xuất, không làm lẫn hàng của cùng nhân viên ở các khoa khác nhau. */
+  private async buildBoard(departmentIds: number[], month: string) {
+    const boards = await Promise.all(departmentIds.map((departmentId) => this.buildSingleBoard(departmentId, month)));
+    const first = boards[0];
+    if (!first) throw new BadRequestException('Vui lòng chọn ít nhất một khoa/phòng');
+    if (boards.length === 1) return first;
+    const entries: Record<string, { code: string; note: string }> = {};
+    const manualValues: Record<string, string> = {};
+    const manualViolations: Record<string, string[]> = {};
+    const calculationWarnings: Record<string, string[]> = {};
+    const rowValues: Record<string, Record<string, string | number>> = {};
+    const mergedStaff = boards.flatMap((board) => board.staff.map((person) => ({ ...person, key: `${board.department.id}:${person.id}`, departmentId: board.department.id, departmentName: board.department.name })));
+    for (const board of boards) {
+      const prefix = `${board.department.id}:`;
+      for (const [key, value] of Object.entries(board.entries)) entries[`${prefix}${key}`] = value;
+      for (const [key, value] of Object.entries(board.manualValues)) manualValues[`${prefix}${key}`] = value;
+      for (const [key, value] of Object.entries(board.manualViolations)) manualViolations[`${prefix}${key}`] = value;
+      for (const [key, value] of Object.entries(board.calculationWarnings)) calculationWarnings[`${prefix}${key}`] = value;
+      for (const [key, value] of Object.entries(board.rowValues)) rowValues[`${prefix}${key}`] = value;
+    }
+    const staff = mergedStaff.sort((a, b) => a.id - b.id || a.departmentId - b.departmentId).map((person, index) => ({ ...person, stt: index + 1 }));
+    return {
+      ...first,
+      department: { id: 0, name: `${boards.length} khoa/phòng đã chọn`, hospital: first.department.hospital },
+      departments: boards.map((board) => ({ id: board.department.id, name: board.department.name })), multiDepartment: true,
+      staff, entries, manualValues, manualViolations, calculationWarnings, rowValues,
+    };
+  }
+
+  async month(user: AccessContext, q: AttendanceMonthQueryDto) {
+    this.assertMonth(q.month);
+    return this.buildBoard(await this.deptIds(user, q.departmentId, q.departmentIds), q.month);
+  }
 
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
     const departmentId = await this.deptId(user, dto.departmentId);
@@ -338,24 +415,48 @@ export class DutyAttendanceService {
       if (isDateLocked(date, today, lockPolicy)) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} theo chế độ khóa bảng hiện tại`);
     }
     const personIds = [...new Set(dto.entries.map((entry) => entry.userId))];
-    const [staff, activeCodes] = await Promise.all([
-      this.db.db.select({ id: users.id }).from(users).where(and(inArray(users.id, personIds), eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))),
+    const [people, activeCodes, existingEntries, assignmentRows] = await Promise.all([
+      this.db.db.select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, personIds)),
       this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.active, true)),
+      this.db.db.select({ id: dutyAttendanceEntries.id, userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, departmentId: dutyAttendanceEntries.departmentId }).from(dutyAttendanceEntries).where(and(inArray(dutyAttendanceEntries.userId, personIds), inArray(dutyAttendanceEntries.workDate, dates))),
+      this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, personIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom)),
     ]);
-    if (staff.length !== personIds.length) throw new ForbiddenException('Chỉ được chấm công cho nhân viên đang hoạt động thuộc khoa của bạn');
+    if (people.length !== personIds.length) throw new NotFoundException('Không tìm thấy nhân viên cần chấm công');
+    const peopleById = new Map(people.map((person) => [person.id, person]));
+    const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
+    for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), assignment]);
+    const existingByCell = new Map(existingEntries.map((entry) => [`${entry.userId}:${entry.workDate}`, entry]));
     const byCode = new Map(activeCodes.map((code) => [code.code.toUpperCase(), code.id]));
-    // Ràng buộc giữa các cột là tín hiệu trực quan trên bảng, không được phép
-    // làm mất hay từ chối số liệu hợp lệ người dùng vừa nhập.
     for (const entry of dto.entries) {
       const code = entry.code?.trim().toUpperCase() || null;
       if (code && !byCode.has(code)) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
+      const person = peopleById.get(entry.userId)!;
+      const existing = existingByCell.get(`${entry.userId}:${entry.workDate}`);
+      // Một ngày có đúng một dòng chấm công xuyên khoa theo khóa lịch sử hiện hữu.
+      // Tuyệt đối không dùng upsert để đổi department_id của dòng đã ghi.
+      if (existing) {
+        if (existing.departmentId !== departmentId) throw new ConflictException('Dòng chấm công ngày này đã thuộc khoa/phòng khác; hệ thống giữ nguyên khoa lịch sử để tránh sai lệch dữ liệu');
+        continue;
+      }
+      if (!code) continue;
+      if (person.deletedAt || !person.active) throw new ForbiddenException('Chỉ được chấm công mới cho nhân viên đang hoạt động');
+      const actualDepartment = this.departmentAtDate(assignmentsByUser.get(person.id) ?? [], person.departmentId, entry.workDate);
+      if (actualDepartment !== departmentId) throw new ForbiddenException(`Nhân viên không thuộc khoa/phòng này vào ngày ${fmtDate(entry.workDate)}`);
     }
     await this.db.transaction(async (tx) => {
       for (const entry of dto.entries) {
+        const existing = existingByCell.get(`${entry.userId}:${entry.workDate}`);
         const code = entry.code?.trim().toUpperCase();
-        if (!code) { await tx.delete(dutyAttendanceEntries).where(and(eq(dutyAttendanceEntries.userId, entry.userId), eq(dutyAttendanceEntries.workDate, entry.workDate), eq(dutyAttendanceEntries.departmentId, departmentId))); continue; }
+        if (!code) {
+          if (existing) await tx.delete(dutyAttendanceEntries).where(eq(dutyAttendanceEntries.id, existing.id));
+          continue;
+        }
         const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
-        await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceEntries.userId, dutyAttendanceEntries.workDate], set: { departmentId, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id, updatedAt: new Date() } });
+        if (existing) {
+          await tx.update(dutyAttendanceEntries).set({ codeId, note: entry.note?.trim() ?? '', updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existing.id));
+        } else {
+          await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id });
+        }
       }
     });
     return { saved: dto.entries.length };
@@ -368,12 +469,23 @@ export class DutyAttendanceService {
     const lockPolicy = await this.attendanceLockPolicy();
     if (isManualMonthLocked(dto.month, today, lockPolicy)) throw new ForbiddenException('Tháng/kỳ năm đã qua được khóa theo chế độ khóa bảng hiện tại');
     const columnIds = [...new Set(dto.values.map((value) => value.columnId))]; const personIds = [...new Set(dto.values.map((value) => value.userId))];
-    const [columns, staff] = await Promise.all([
+    const [columns, people, existingValues, assignmentRows] = await Promise.all([
       this.db.db.select().from(dutyAttendanceColumns).where(and(inArray(dutyAttendanceColumns.id, columnIds), eq(dutyAttendanceColumns.active, true))),
-      this.db.db.select({ id: users.id }).from(users).where(and(inArray(users.id, personIds), eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))),
+      this.db.db.select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, personIds)),
+      this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, dto.month), inArray(dutyAttendanceManualValues.userId, personIds), inArray(dutyAttendanceManualValues.columnId, columnIds))),
+      this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, personIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom)),
     ]);
-    if (staff.length !== personIds.length) throw new ForbiddenException('Chỉ được nhập số liệu cho nhân viên đang hoạt động thuộc khoa của bạn');
+    if (people.length !== personIds.length) throw new NotFoundException('Không tìm thấy nhân viên cần nhập số liệu');
     if (columns.length !== columnIds.length || columns.some((column) => column.columnType !== 'MANUAL')) throw new BadRequestException('Chỉ cột tự nhập đang hoạt động mới được ghi số liệu');
+    const peopleById = new Map(people.map((person) => [person.id, person]));
+    const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
+    for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), assignment]);
+    const existingCells = new Set(existingValues.map((value) => `${value.userId}:${value.columnId}`));
+    for (const person of people) {
+      const hasExisting = dto.values.some((value) => value.userId === person.id && existingCells.has(`${value.userId}:${value.columnId}`));
+      const belongsThisMonth = this.assignedToDepartmentInMonth(assignmentsByUser.get(person.id) ?? [], person.departmentId, departmentId, dto.month);
+      if (!hasExisting && (person.deletedAt || !person.active || !belongsThisMonth)) throw new ForbiddenException('Chỉ được nhập số liệu mới cho nhân viên đang hoạt động thuộc khoa/phòng trong tháng đã chọn');
+    }
     const byColumn = new Map(columns.map((column) => [column.id, column])); const overrides = new Map<string, string | null>();
     for (const item of dto.values) {
       const column = byColumn.get(item.columnId)!; const submitted = item.value ?? ''; const value = column.dataType === 'NUMBER' ? submitted.trim().replace(',', '.') : submitted;
@@ -575,6 +687,7 @@ export class DutyAttendanceService {
     for (const section of data.sections) {
       if (section.kind === 'ADMIN') columns.push(...[
         { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh', source: 'ADMIN', section },
+        ...(data.multiDepartment ? [{ key: 'DEPARTMENT', name: 'Khoa/Phòng', source: 'ADMIN' as const, section }] : []),
       ] as DisplayColumn[]);
       if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
       if (section.kind === 'SYMBOLS') columns.push(...data.codes.map((code) => ({ key: code.code.toUpperCase(), name: code.name, source: 'VALUE' as const, section })));
@@ -584,15 +697,15 @@ export class DutyAttendanceService {
   }
   private groups(data: Board) { const columns = this.displayColumns(data); return data.sections.map((section) => ({ section, columns: columns.filter((column) => column.section.id === section.id) })).filter((group) => group.columns.length); }
   private cellValue(person: Board['staff'][number], column: DisplayColumn, data: Board) {
-    if (column.source === 'DAY') return data.entries[`${person.id}:${column.day!.date}`]?.code ?? '';
-    if (column.source === 'VALUE') return data.rowValues[String(person.id)]?.[column.key] ?? '';
-    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.title; return person.manv;
+    if (column.source === 'DAY') return data.entries[`${person.key}:${column.day!.date}`]?.code ?? '';
+    if (column.source === 'VALUE') return data.rowValues[person.key]?.[column.key] ?? '';
+    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.title; if (column.key === 'DEPARTMENT') return person.departmentName; return person.manv;
   }
   private matrix(data: Board) { const columns = this.displayColumns(data); return data.staff.map((person) => columns.map((column) => this.cellValue(person, column, data))); }
-  private async exportData(user: AccessContext, month: string, departmentId?: number) { return this.month(user, { month, departmentId }); }
+  private async exportData(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]) { return this.month(user, { month, departmentId, departmentIds }); }
 
-  async exportExcel(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
-    const data = await this.exportData(user, month, departmentId); const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('Cham cong'); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const total = columns.length;
+  async exportExcel(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]): Promise<AttendanceExport> {
+    const data = await this.exportData(user, month, departmentId, departmentIds); const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('Cham cong'); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const total = columns.length;
     sheet.mergeCells(1, 1, 1, total); sheet.getCell('A1').value = data.department.hospital.toUpperCase(); sheet.getCell('A1').font = { name: 'Times New Roman', bold: true, size: 12 }; sheet.getCell('A1').alignment = { horizontal: 'center' };
     sheet.mergeCells(2, 1, 2, total); sheet.getCell('A2').value = 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC'; sheet.getCell('A2').font = { name: 'Times New Roman', bold: true, size: 15 }; sheet.getCell('A2').alignment = { horizontal: 'center' };
     sheet.mergeCells(3, 1, 3, total); sheet.getCell('A3').value = `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`; sheet.getCell('A3').alignment = { horizontal: 'center' };
@@ -615,15 +728,15 @@ export class DutyAttendanceService {
     return { buffer: Buffer.from(await workbook.xlsx.writeBuffer()), fileName: `BANG_CHAM_CONG_${month}_${data.department.id}.xlsx`, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
   }
 
-  async exportWord(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
-    const data = await this.exportData(user, month, departmentId); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const mkCell = (value: unknown, bold = false) => new TableCell({ width: { size: Math.max(180, Math.floor(9500 / columns.length)), type: WidthType.DXA }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: String(value ?? ''), bold, size: 14 })] })] });
+  async exportWord(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]): Promise<AttendanceExport> {
+    const data = await this.exportData(user, month, departmentId, departmentIds); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const mkCell = (value: unknown, bold = false) => new TableCell({ width: { size: Math.max(180, Math.floor(9500 / columns.length)), type: WidthType.DXA }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: String(value ?? ''), bold, size: 14 })] })] });
     const rows = [new TableRow({ children: columns.map((column) => mkCell(column.section.name, true)) }), new TableRow({ children: columns.map((column) => mkCell(column.name, true)) }), new TableRow({ children: columns.map((column) => mkCell(column.source === 'DAY' ? column.day!.weekday : '', true)) }), ...this.matrix(data).map((row) => new TableRow({ children: row.map((value) => mkCell(value)) }))];
     const doc = new Document({ sections: [{ properties: { page: { size: { width: 16840, height: 11900 }, margin: { top: 600, right: 500, bottom: 600, left: 500 } } }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: data.department.hospital.toUpperCase(), bold: true, size: 20 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC', bold: true, size: 26 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`, italics: true, size: 18 })] }), new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })] }] });
     return { buffer: await Packer.toBuffer(doc), fileName: `BANG_CHAM_CONG_${month}_${data.department.id}.docx`, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
   }
 
-  async exportPdf(user: AccessContext, month: string, departmentId?: number): Promise<AttendanceExport> {
-    const data = await this.exportData(user, month, departmentId); const columns = this.displayColumns(data); const rows = data.staff.map((person) => Object.fromEntries(columns.map((column, index) => [`c${index}`, this.cellValue(person, column, data)])));
+  async exportPdf(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]): Promise<AttendanceExport> {
+    const data = await this.exportData(user, month, departmentId, departmentIds); const columns = this.displayColumns(data); const rows = data.staff.map((person) => Object.fromEntries(columns.map((column, index) => [`c${index}`, this.cellValue(person, column, data)])));
     const width = columns.length > 42 ? 5.4 : 7.5; const W = 273; const L = 12;
     const doc = { paperSize: 'A4', orientation: 'landscape', margins: { top: 8, right: 8, bottom: 10, left: 8 }, defaultStyle: { fontFamily: 'Times New Roman', fontSize: 6.5 }, pageNumbering: { show: true, position: 'bottom-right', format: 'Trang {page}/{pages}' }, pages: [{ id: 'p', name: 'Bảng chấm công', elements: [
       { id: 'org', type: 'text', x: L, y: 7, w: W, h: 5, text: data.department.hospital.toUpperCase(), style: { bold: true, align: 'center', fontSize: 9 } },

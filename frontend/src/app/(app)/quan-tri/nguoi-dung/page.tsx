@@ -215,6 +215,7 @@ export default function UsersPage() {
       help: 'Không bắt buộc · chọn Bác sĩ sẽ tự thêm vai trò Nhân viên trực khám',
     },
     { name: 'departmentId', label: 'Khoa công tác', type: 'select', options: (departments ?? []).map((d) => ({ value: d.id, label: `${'— '.repeat(Math.max(0, d.level - 1))}${d.name}` })) },
+    { name: 'departmentEffectiveFrom', label: 'Áp dụng chuyển khoa từ ngày', type: 'date', hideInTable: true, help: 'Chỉ dùng khi đổi khoa công tác; để trống sẽ lấy ngày hiện tại. Mốc này giữ nguyên dữ liệu chấm công ở khoa cũ.' },
     { name: 'email', label: 'Thư điện tử', type: 'email', placeholder: 'Không bắt buộc' },
     { name: 'phone', label: 'Điện thoại', placeholder: 'Không bắt buộc' },
     { name: 'password', label: 'Mật khẩu ban đầu', type: 'password', createOnly: true, hideInTable: true, help: 'Bỏ trống để dùng mật khẩu mặc định "1"' },

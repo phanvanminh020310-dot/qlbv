@@ -43,7 +43,7 @@ export class DutyAttendanceController {
   @Get('export/:format') @RequirePermissions('duty-attendance.export')
   @Audit({ module: 'DUTY_ATTENDANCE', action: 'EXPORT', entity: 'duty_attendance_entries', description: 'Xuất bảng chấm công tháng' })
   async export(@CurrentUser() user: AccessContext, @Param('format') format: string, @Query() q: AttendanceMonthQueryDto) {
-    const result = format === 'xlsx' ? await this.service.exportExcel(user, q.month, q.departmentId) : format === 'docx' ? await this.service.exportWord(user, q.month, q.departmentId) : format === 'pdf' ? await this.service.exportPdf(user, q.month, q.departmentId) : null;
+    const result = format === 'xlsx' ? await this.service.exportExcel(user, q.month, q.departmentId, q.departmentIds) : format === 'docx' ? await this.service.exportWord(user, q.month, q.departmentId, q.departmentIds) : format === 'pdf' ? await this.service.exportPdf(user, q.month, q.departmentId, q.departmentIds) : null;
     if (!result) throw new Error('Định dạng xuất không hỗ trợ');
     return new StreamableFile(result.buffer, { type: result.mime, disposition: `attachment; filename="${encodeURIComponent(result.fileName)}"`, length: result.buffer.length });
   }

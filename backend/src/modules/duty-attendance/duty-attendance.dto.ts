@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 const COLUMN_KEY = /^[A-Z][A-Z0-9_]{0,31}$/;
@@ -7,9 +7,12 @@ const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 export class AttendanceMonthQueryDto {
   @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'Tháng phải có dạng YYYY-MM' })
   month!: string;
-  /** Vai trò phạm vi Toàn viện có thể chọn khoa khác; vai trò phạm vi khoa luôn bị ép về khoa được gán. */
+  /** Tương thích liên kết cũ chỉ chọn một khoa. */
   @IsOptional() @Type(() => Number) @IsInt()
   departmentId?: number;
+  /** Vai trò phạm vi Toàn viện có thể chọn một hay nhiều khoa; vai trò phạm vi khoa luôn bị ép về khoa được gán. */
+  @IsOptional() @Transform(({ value }) => value === undefined ? undefined : (Array.isArray(value) ? value : [value]).map(Number)) @IsArray() @ArrayMaxSize(500) @IsInt({ each: true })
+  departmentIds?: number[];
 }
 export class AttendanceEntryDto {
   @IsInt() userId!: number;

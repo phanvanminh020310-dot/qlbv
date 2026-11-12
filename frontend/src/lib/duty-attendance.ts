@@ -20,7 +20,7 @@ export interface NationalHolidayProposal { plan: NationalHolidayPlan; lunarNewYe
 export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string; workdayName: string; isWorkingOverride: boolean }
-export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; manv: string; username: string }
+export interface AttendanceStaff { stt: number; id: number; key: string; departmentId: number; departmentName: string; fullName: string; title: string; manv: string; username: string }
 export interface AttendanceDepartment { id: number; name: string; code: string; shortName: string }
 export interface AttendanceDepartmentScope { canSelect: boolean; items: AttendanceDepartment[] }
 export interface AttendanceMonth {
@@ -30,6 +30,8 @@ export interface AttendanceMonth {
   /** Cột tự nhập đại diện cho cả tháng, nên có khóa riêng theo tháng/năm. */
   manualLocked: boolean;
   department: { id: number; name: string; hospital: string };
+  departments: Array<{ id: number; name: string }>;
+  multiDepartment: boolean;
   dates: AttendanceDate[];
   codes: AttendanceCode[];
   sections: AttendanceSection[];
@@ -40,13 +42,13 @@ export interface AttendanceMonth {
   restPairLookbackDays: number;
   staff: AttendanceStaff[];
   entries: Record<string, { code: string; note: string }>;
-  /** Giá trị cột tự nhập đang có, dùng khóa userId:columnId. */
+  /** Giá trị cột tự nhập đang có, dùng khóa staffKey:columnId. */
   manualValues: Record<string, string>;
-  /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập userId:columnId. */
+  /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập staffKey:columnId. */
   manualViolations: Record<string, string[]>;
-  /** Nghỉ bù chưa ghép được ca trực/tăng cường phù hợp, theo userId; không chặn nhập liệu. */
+  /** Nghỉ bù chưa ghép được ca trực/tăng cường phù hợp, theo staffKey; không chặn nhập liệu. */
   calculationWarnings: Record<string, string[]>;
-  /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa userId. */
+  /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa staffKey. */
   rowValues: Record<string, Record<string, string | number>>;
   holidays: AttendanceHoliday[];
   workdayOverrides: AttendanceWorkdayOverride[];
@@ -60,12 +62,17 @@ const get = <T,>(path: string) => apiFetch<T>(path);
 const put = <T,>(path: string, body: unknown) => apiFetch<T>(path, { method: 'PUT', body });
 const post = <T,>(path: string, body: unknown) => apiFetch<T>(path, { method: 'POST', body });
 const remove = <T,>(path: string) => apiFetch<T>(path, { method: 'DELETE' });
+const attendanceScopeParams = (month: string, departmentIds: number[]) => {
+  const params = new URLSearchParams({ month });
+  departmentIds.forEach((id) => params.append('departmentIds', String(id)));
+  return params;
+};
 export const dutyAttendanceApi = {
   departments: () => get<AttendanceDepartmentScope>('/duty-attendance/departments'),
-  month: (month: string, departmentId?: number) => get<AttendanceMonth>(`/duty-attendance/month?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`),
-  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, ...(departmentId ? { departmentId } : {}) }),
-  saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId?: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, ...(departmentId ? { departmentId } : {}) }),
-  exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentId?: number) => `/duty-attendance/export/${format}?${new URLSearchParams({ month, ...(departmentId ? { departmentId: String(departmentId) } : {}) })}`,
+  month: (month: string, departmentIds: number[]) => get<AttendanceMonth>(`/duty-attendance/month?${attendanceScopeParams(month, departmentIds)}`),
+  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, departmentId }),
+  saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, departmentId }),
+  exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentIds: number[]) => `/duty-attendance/export/${format}?${attendanceScopeParams(month, departmentIds)}`,
   codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),
   createCodeGroup: (body: CodeGroupPayload) => post<AttendanceCodeGroup>('/duty-attendance/code-groups', body),
   updateCodeGroup: (id: number, body: CodeGroupPayload) => put<AttendanceCodeGroup>(`/duty-attendance/code-groups/${id}`, body),
@@ -98,7 +105,7 @@ export const dutyAttendanceApi = {
 /** Khóa cache luôn có ID tài khoản để không lộ bảng/tình trạng cũ khi đổi tài khoản không cần F5. */
 export const attendanceKeys = {
   departments: (userId?: number) => ['duty-attendance', 'departments', userId ?? 0] as const,
-  month: (userId: number | undefined, month: string, departmentId?: number) => ['duty-attendance', 'month', userId ?? 0, month, departmentId ?? 0] as const,
+  month: (userId: number | undefined, month: string, departmentIds: number[]) => ['duty-attendance', 'month', userId ?? 0, month, ...departmentIds] as const,
   layout: ['duty-attendance', 'layout'] as const,
   codeGroups: ['duty-attendance', 'code-groups'] as const,
 };

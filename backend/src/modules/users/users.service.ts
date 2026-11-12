@@ -15,6 +15,7 @@ import { DbService } from '../../db/db.service';
 import { SettingsService } from '../settings/settings.service';
 import {
   departments,
+  dutyAttendanceDepartmentAssignments,
   loginLogs,
   permissions,
   rolePermissions,
@@ -28,6 +29,7 @@ import { SUPER_ADMIN_ROLE, type AccessContext } from '../../common/types/access-
 import { AuthService } from '../auth/auth.service';
 import { AuditService } from '../audit/audit.service';
 import { DUTY_STAFF_ROLE_CODE, isDoctorTitle } from './duty-staff-role';
+import { bangkokToday } from '../duty/duty-rules';
 import type {
   CreateUserDto,
   ResetPasswordDto,
@@ -292,6 +294,12 @@ export class UsersService {
         .values(dto.departmentScopeIds.map((departmentId) => ({ userId: created.id, departmentId })))
         .onConflictDoNothing();
     }
+    if (created.departmentId) {
+      await this.db.db
+        .insert(dutyAttendanceDepartmentAssignments)
+        .values({ userId: created.id, departmentId: created.departmentId, effectiveFrom: dto.departmentEffectiveFrom ?? bangkokToday(), createdBy: actor.id })
+        .onConflictDoNothing();
+    }
 
     await this.auth.invalidateUserCache(created.id);
     return { ...(await this.findOne(created.id)), initialPassword: dto.password ? undefined : password };
@@ -311,23 +319,57 @@ export class UsersService {
       if (dup.length > 0) throw new ConflictException(`Tên đăng nhập "${dto.username}" đã tồn tại`);
     }
 
-    await this.db.db
-      .update(users)
-      .set({
-        ...(dto.manv !== undefined ? { manv: dto.manv.trim() } : {}),
-        ...(dto.username !== undefined ? { username: dto.username.trim().toLowerCase() } : {}),
-        ...(dto.fullName !== undefined ? { fullName: dto.fullName.trim() } : {}),
-        ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.email !== undefined ? { email: dto.email } : {}),
-        ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
-        ...(dto.departmentId !== undefined ? { departmentId: dto.departmentId ?? null } : {}),
-        ...(dto.note !== undefined ? { note: dto.note } : {}),
-        ...(dto.active !== undefined ? { active: dto.active } : {}),
-        ...(dto.mustChangePassword !== undefined ? { mustChangePassword: dto.mustChangePassword } : {}),
-        ...(dto.password ? { passwordHash: await this.auth.hashPassword(dto.password) } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, id));
+    const nextDepartmentId = dto.departmentId !== undefined ? dto.departmentId ?? null : current.departmentId;
+    const changingDepartment = dto.departmentId !== undefined && nextDepartmentId !== current.departmentId;
+    const effectiveFrom = dto.departmentEffectiveFrom ?? bangkokToday();
+    if (dto.departmentEffectiveFrom && !/^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(dto.departmentEffectiveFrom)) {
+      throw new BadRequestException('Ngày hiệu lực chuyển khoa không hợp lệ');
+    }
+    await this.db.transaction(async (tx) => {
+      // Chỉ ghi một mốc lịch sử khi thực sự chuyển khoa. Không cập nhật/di chuyển
+      // duty_attendance_entries cũ: chúng luôn giữ khoa lúc đã chấm công.
+      if (changingDepartment && nextDepartmentId) {
+        // Người được nhập từ tệp cũ có thể chưa có mốc. Tạo mốc nền tương thích
+        // trước khi ghi chuyển khoa đầu tiên, giống backfill migration và không sửa dữ liệu ngày.
+        const [firstAssignment] = await tx
+          .select({ id: dutyAttendanceDepartmentAssignments.id })
+          .from(dutyAttendanceDepartmentAssignments)
+          .where(eq(dutyAttendanceDepartmentAssignments.userId, id))
+          .orderBy(asc(dutyAttendanceDepartmentAssignments.effectiveFrom))
+          .limit(1);
+        if (!firstAssignment && current.departmentId) {
+          await tx.insert(dutyAttendanceDepartmentAssignments).values({ userId: id, departmentId: current.departmentId, effectiveFrom: '1900-01-01', createdBy: actor.id });
+        }
+        const [sameDate] = await tx
+          .select({ departmentId: dutyAttendanceDepartmentAssignments.departmentId })
+          .from(dutyAttendanceDepartmentAssignments)
+          .where(and(eq(dutyAttendanceDepartmentAssignments.userId, id), eq(dutyAttendanceDepartmentAssignments.effectiveFrom, effectiveFrom)))
+          .limit(1);
+        if (sameDate && sameDate.departmentId !== nextDepartmentId) {
+          throw new ConflictException('Ngày hiệu lực này đã có một mốc chuyển khoa khác; không thể ghi đè lịch sử chấm công');
+        }
+        if (!sameDate) {
+          await tx.insert(dutyAttendanceDepartmentAssignments).values({ userId: id, departmentId: nextDepartmentId, effectiveFrom, createdBy: actor.id });
+        }
+      }
+      await tx
+        .update(users)
+        .set({
+          ...(dto.manv !== undefined ? { manv: dto.manv.trim() } : {}),
+          ...(dto.username !== undefined ? { username: dto.username.trim().toLowerCase() } : {}),
+          ...(dto.fullName !== undefined ? { fullName: dto.fullName.trim() } : {}),
+          ...(dto.title !== undefined ? { title: dto.title } : {}),
+          ...(dto.email !== undefined ? { email: dto.email } : {}),
+          ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+          ...(dto.departmentId !== undefined ? { departmentId: dto.departmentId ?? null } : {}),
+          ...(dto.note !== undefined ? { note: dto.note } : {}),
+          ...(dto.active !== undefined ? { active: dto.active } : {}),
+          ...(dto.mustChangePassword !== undefined ? { mustChangePassword: dto.mustChangePassword } : {}),
+          ...(dto.password ? { passwordHash: await this.auth.hashPassword(dto.password) } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, id));
+    });
 
     if (dto.roleCodes) await this.setRoles(id, { roleCodes: dto.roleCodes, replace: true }, actor);
     else await this.assignDutyStaffRoleIfDoctor(id, dto.title ?? current.title);

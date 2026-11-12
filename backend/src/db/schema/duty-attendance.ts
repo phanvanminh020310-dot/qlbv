@@ -91,6 +91,24 @@ export const dutyAttendanceValidations = pgTable('duty_attendance_validations', 
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [index('duty_attendance_validations_order_idx').on(t.active, t.sortOrder)]);
 
+/**
+ * Lịch sử đơn vị làm việc phục vụ chấm công. Một mốc mới có hiệu lực từ đầu ngày;
+ * mốc kế tiếp tự kết thúc mốc trước, nhờ đó nhân viên có thể xuất hiện ở nhiều khoa
+ * trong cùng tháng mà các dòng chấm công cũ vẫn thuộc đúng khoa lúc phát sinh.
+ */
+export const dutyAttendanceDepartmentAssignments = pgTable('duty_attendance_department_assignments', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+  effectiveFrom: date('effective_from').notNull(),
+  createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('duty_attendance_department_assignments_user_from_uq').on(t.userId, t.effectiveFrom),
+  index('duty_attendance_department_assignments_department_from_idx').on(t.departmentId, t.effectiveFrom),
+  index('duty_attendance_department_assignments_user_from_idx').on(t.userId, t.effectiveFrom),
+]);
+
 /** Giá trị nhập theo nhân viên/tháng/cột; lịch sử ký hiệu ngày vẫn tiếp tục nằm tại dutyAttendanceEntries. */
 export const dutyAttendanceManualValues = pgTable('duty_attendance_manual_values', {
   id: serial('id').primaryKey(),

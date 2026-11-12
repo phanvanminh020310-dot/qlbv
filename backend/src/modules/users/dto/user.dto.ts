@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEmail,
   IsInt,
   IsNotEmpty,
@@ -87,6 +88,13 @@ export class CreateUserDto {
   @Type(() => Number)
   @IsInt()
   departmentId?: number | null;
+
+  /** Ngày bắt đầu làm việc tại khoa mới khi chuyển khoa; chỉ dùng khi khoa công tác thay đổi. */
+  @ApiPropertyOptional({ description: 'Ngày hiệu lực chuyển khoa, định dạng YYYY-MM-DD' })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsDateString()
+  departmentEffectiveFrom?: string;
 
   @ApiPropertyOptional({ description: 'Danh sách mã vai trò', example: ['NHAP_LIEU'] })
   @IsOptional()
