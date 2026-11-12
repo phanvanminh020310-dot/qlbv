@@ -208,7 +208,7 @@ export class DutyAttendanceService {
     const layout = await this.activeLayout();
     const [department, staff, allCodes, metricHolidayRows, metricWorkdayRows, records, previousRecords, manualRows] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
-      this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, username: users.username }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))).orderBy(asc(users.fullName)),
+      this.db.db.select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username }).from(users).where(and(eq(users.departmentId, departmentId), eq(users.active, true), isNull(users.deletedAt))).orderBy(asc(users.fullName)),
       // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
       // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
       this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
@@ -586,7 +586,7 @@ export class DutyAttendanceService {
   private cellValue(person: Board['staff'][number], column: DisplayColumn, data: Board) {
     if (column.source === 'DAY') return data.entries[`${person.id}:${column.day!.date}`]?.code ?? '';
     if (column.source === 'VALUE') return data.rowValues[String(person.id)]?.[column.key] ?? '';
-    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.title; return person.username;
+    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.title; return person.manv;
   }
   private matrix(data: Board) { const columns = this.displayColumns(data); return data.staff.map((person) => columns.map((column) => this.cellValue(person, column, data))); }
   private async exportData(user: AccessContext, month: string, departmentId?: number) { return this.month(user, { month, departmentId }); }

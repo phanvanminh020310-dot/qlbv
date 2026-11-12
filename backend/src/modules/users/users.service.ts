@@ -42,6 +42,7 @@ const DEFAULT_RESET_PASSWORD = '1'; // Mật khẩu mặc định khi tạo/đ�
 import { pushFilters, type FilterTarget } from '../../common/filters/apply-filter';
 /** Trường lọc nâng cao của danh sách người dùng. */
 const USER_FILTERS: Record<string, FilterTarget> = {
+  manv: { expr: users.manv, type: 'text' },
   username: { expr: users.username, type: 'text' },
   fullName: { expr: users.fullName, type: 'text' },
   title: { expr: users.title, type: 'text' },
@@ -50,6 +51,8 @@ const USER_FILTERS: Record<string, FilterTarget> = {
 
 /** Các cột cho phép sắp xếp ở danh sách người dùng (chống SQL injection qua tên trường) */
 const USER_SORTABLE = {
+  id: users.id,
+  manv: users.manv,
   username: users.username,
   fullName: users.fullName,
   title: users.title,
@@ -92,6 +95,7 @@ export class UsersService {
       where.push(
         or(
           ilike(users.fullName, like),
+          ilike(users.manv, like),
           ilike(users.username, like),
           ilike(users.title, like),
           ilike(users.email, like),
@@ -120,6 +124,7 @@ export class UsersService {
     const rows = await this.db.db
       .select({
         id: users.id,
+        manv: users.manv,
         username: users.username,
         fullName: users.fullName,
         title: users.title,
@@ -166,6 +171,7 @@ export class UsersService {
     const [user] = await this.db.db
       .select({
         id: users.id,
+        manv: users.manv,
         username: users.username,
         fullName: users.fullName,
         title: users.title,
@@ -237,6 +243,7 @@ export class UsersService {
       throw new ForbiddenException('Chỉ Quản trị tối cao mới tạo được tài khoản có vai trò Quản trị tối cao');
     }
     const username = dto.username.trim().toLowerCase();
+    const manv = dto.manv.trim();
     const dup = await this.db.db
       .select({ id: users.id })
       .from(users)
@@ -256,6 +263,7 @@ export class UsersService {
     const [created] = await this.db.db
       .insert(users)
       .values({
+        manv,
         username,
         passwordHash: await this.auth.hashPassword(password),
         fullName: dto.fullName.trim(),
@@ -306,6 +314,7 @@ export class UsersService {
     await this.db.db
       .update(users)
       .set({
+        ...(dto.manv !== undefined ? { manv: dto.manv.trim() } : {}),
         ...(dto.username !== undefined ? { username: dto.username.trim().toLowerCase() } : {}),
         ...(dto.fullName !== undefined ? { fullName: dto.fullName.trim() } : {}),
         ...(dto.title !== undefined ? { title: dto.title } : {}),

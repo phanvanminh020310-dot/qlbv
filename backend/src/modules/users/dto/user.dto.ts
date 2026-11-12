@@ -40,6 +40,14 @@ export class CreateUserDto {
   @Matches(/^[A-Za-z0-9._-]+$/, { message: 'Tên đăng nhập chỉ gồm chữ, số, dấu chấm, gạch ngang, gạch dưới' })
   username!: string;
 
+  @ApiProperty({ example: 'bsng', description: 'Mã nhân viên liên thông; phải nhập khi thêm người dùng mới.' })
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty({ message: 'Vui lòng nhập MANV' })
+  @MaxLength(64)
+  @Matches(/^[A-Za-z0-9._-]+$/, { message: 'MANV chỉ gồm chữ, số, dấu chấm, gạch ngang hoặc gạch dưới' })
+  manv!: string;
+
   @ApiProperty({ example: 'Nguyễn Văn A' })
   @IsString()
   @IsNotEmpty({ message: 'Vui lòng nhập họ tên' })

@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 type Action = 'create' | 'update' | 'skip' | 'error';
 interface PreviewRow {
   line: number;
+  manv: string;
   username: string;
   usernameGenerated: boolean;
   fullName: string;
@@ -243,9 +244,9 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
               <div className="font-medium text-[var(--foreground)]">Kéo thả tệp vào đây hoặc bấm để chọn</div>
               <div>
                 Các cột nhận diện được (không phân biệt dấu, hoa thường, thứ tự): <b>Họ và tên</b>, Tên đăng nhập, Chức
-                danh, Mã khoa (hoặc tên khoa), Thư điện tử, Điện thoại, Vai trò, Ghi chú, Mật khẩu, Mã nhân viên.
+                danh, Mã khoa (hoặc tên khoa), Thư điện tử, Điện thoại, Vai trò, Ghi chú, Mật khẩu, MANV.
               </div>
-              <div>Tên đăng nhập bỏ trống sẽ tự tạo từ họ tên: “Nguyễn Văn An” → annv.</div>
+              <div>MANV để trống sẽ lấy 4 ký tự đầu tên đăng nhập; tên đăng nhập bỏ trống sẽ tự tạo từ họ tên: “Nguyễn Văn An” → annv.</div>
             </div>
           </div>
         ) : null}
@@ -329,6 +330,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                   <tr>
                     <Th>Dòng</Th>
                     <Th>Kết quả</Th>
+                    <Th>MANV</Th>
                     <Th>Tên đăng nhập</Th>
                     <Th>Họ tên</Th>
                     <Th>Chức danh</Th>
@@ -347,6 +349,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                         <Td>
                           <Badge tone={badge.tone}>{badge.label}</Badge>
                         </Td>
+                        <Td className="font-mono text-xs">{r.manv || '—'}</Td>
                         <Td className="font-mono text-xs">
                           {r.username || '—'}
                           {r.usernameGenerated ? <span className="ml-1 text-[10px] text-[var(--muted-foreground)]">(tự tạo)</span> : null}
@@ -385,7 +388,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                   })}
                   {!rows.length ? (
                     <Tr>
-                      <Td colSpan={9} className="py-6 text-center text-[var(--muted-foreground)]">
+                      <Td colSpan={10} className="py-6 text-center text-[var(--muted-foreground)]">
                         Không có dòng nào
                       </Td>
                     </Tr>

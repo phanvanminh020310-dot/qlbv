@@ -26,11 +26,12 @@ async function setup(lockPolicy?: string) {
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0031_cong_thuc_nghiep_vu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0034_ma_nhan_vien_lien_thong.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
-    INSERT INTO users (id, username, password_hash, full_name, title, department_id, active) VALUES
-      (1, 'nv001', 'hash', 'Nhân viên Một', 'Điều dưỡng', 10, true),
-      (99, 'manager', 'hash', 'Quản lý', 'Trưởng khoa', 10, true);
+    INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES
+      (1, 'NV01', 'nv001', 'hash', 'Nhân viên Một', 'Điều dưỡng', 10, true),
+      (99, 'MGR1', 'manager', 'hash', 'Quản lý', 'Trưởng khoa', 10, true);
   `);
   const db = drizzle(pg, { schema });
   const dbService = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
@@ -65,7 +66,8 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   await service.saveManualValues(user, { departmentId: 10, month, values: [{ userId: 1, columnId: a.id, value: '1' }, { userId: 1, columnId: b.id, value: '2' }, { userId: 1, columnId: c.id, value: '3' }] });
   await service.createValidation({ name: 'Tổng công A/B/C', expression: '[CONG_A] + [CONG_B] + [CONG_C] == [CONG_HANH_CHINH]', message: 'Tổng ba cột công phải bằng công hành chính', sortOrder: 10, active: true });
   const board = await service.month(user, { departmentId: 10, month });
-  assert.equal(board.staff[0]?.username, 'nv001', 'MANV lấy từ tên đăng nhập');
+  assert.equal(board.staff[0]?.manv, 'NV01', 'bảng chấm công lấy MANV liên thông thay vì tên đăng nhập');
+  assert.equal(board.staff[0]?.username, 'nv001', 'tên đăng nhập vẫn được giữ riêng cho các chức năng cũ');
   assert.equal(board.rowValues['1']?.T, 6, 'ký hiệu dùng giá trị đếm đã khai báo');
   assert.equal(board.rowValues['1']?.CONG_HANH_CHINH, 6, 'công thức được tính từ cột ký hiệu');
   assert.equal(board.manualValues['1:' + a.id], '1', 'chỉ cột tự nhập được lưu');

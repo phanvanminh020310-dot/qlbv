@@ -33,6 +33,8 @@ import {
 export const DEFAULT_IMPORT_PASSWORD = '1'; // Mật khẩu mặc định cho tài khoản nhập từ tệp khi ô mật khẩu để trống
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const USERNAME_RE = /^[a-z0-9._-]+$/;
+/** MANV do tệp cung cấp có thể khác quy tắc backfill 4 ký tự, nhưng vẫn cùng bộ ký tự an toàn. */
+const MANV_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[0-9+().\-\s/,;]+$/;
 
@@ -46,6 +48,8 @@ export interface ImportOptions {
 type Level = 'error' | 'warning' | 'info';
 export interface ImportPreviewRow {
   line: number;
+  /** Mã nhân viên liên thông, từ cột MANV hoặc 4 ký tự đầu tên đăng nhập. */
+  manv: string;
   username: string;
   usernameGenerated: boolean;
   fullName: string;
@@ -59,6 +63,8 @@ export interface ImportPreviewRow {
 }
 
 interface PlannedRow extends ImportPreviewRow {
+  /** Chỉ cột MANV được cung cấp mới được ghi đè trên tài khoản đã có. */
+  manvProvided: boolean;
   existingId?: number;
   departmentId: number | null;
   roleIds: number[];
@@ -114,6 +120,7 @@ export class UserImportService {
     const FIELD_KEYS: Record<string, ImportField> = {
       username: 'username', fullname: 'fullName', title: 'title', departmentcode: 'department',
       department: 'department', email: 'email', phone: 'phone', note: 'note', roles: 'roles', password: 'password',
+      manv: 'employeeCode', employeecode: 'employeeCode', employeeid: 'employeeCode',
     };
     const parsed: ParsedRow[] = rows.map((r, i) => {
       const values: ParsedRow['values'] = {};
@@ -131,6 +138,7 @@ export class UserImportService {
     const k = normalizeKey(header);
     const map: Record<string, ImportField> = {
       tendangnhap: 'username', taikhoan: 'username', hoten: 'fullName', hovaten: 'fullName',
+      manhanvien: 'employeeCode', manv: 'employeeCode', macanbo: 'employeeCode', macb: 'employeeCode', employeecode: 'employeeCode', employeeid: 'employeeCode', sohieu: 'employeeCode',
       chucdanh: 'title', makhoa: 'department', khoa: 'department', dienthoai: 'phone', sdt: 'phone',
       email: 'email', thudientu: 'email', ghichu: 'note', vaitro: 'roles', matkhau: 'password',
     };
@@ -163,7 +171,7 @@ export class UserImportService {
     }
 
     const preview = plan.rows.map(
-      ({ existingId: _e, departmentId: _d, roleIds: _r, note: _n, password: _p, ...rest }) => rest,
+      ({ existingId: _e, manvProvided: _mp, departmentId: _d, roleIds: _r, note: _n, password: _p, ...rest }) => rest,
     );
     return {
       dryRun: !!opts.dryRun,
@@ -188,7 +196,7 @@ export class UserImportService {
   private async plan(rows: ParsedRow[], opts: ImportOptions) {
     const [allUsers, depts, roleRows, titles] = await Promise.all([
       this.db.db
-        .select({ id: users.id, username: users.username, fullName: users.fullName, deletedAt: users.deletedAt })
+        .select({ id: users.id, manv: users.manv, username: users.username, fullName: users.fullName, deletedAt: users.deletedAt })
         .from(users),
       this.db.db
         .select({ id: departments.id, code: departments.code, name: departments.name, shortName: departments.shortName })
@@ -223,6 +231,8 @@ export class UserImportService {
       const fullName = (v.fullName ?? '').trim();
       const row: PlannedRow = {
         line,
+        manv: '',
+        manvProvided: false,
         username: '',
         usernameGenerated: false,
         fullName,
@@ -244,7 +254,7 @@ export class UserImportService {
 
       if (!fullName) fail('Thiếu họ tên');
 
-      // Tên đăng nhập: cột "Tên đăng nhập" → cột "Mã nhân viên" → tự tạo từ họ tên
+      // Giữ tương thích tệp cũ: nếu không có tên đăng nhập, cột MANV vẫn được dùng làm tên đăng nhập.
       let username = (v.username || v.employeeCode || '').trim().toLowerCase();
       if (!username && fullName) {
         const match = this.findGeneratedMatch(fullName, allUsers, seenInFile);
@@ -272,6 +282,22 @@ export class UserImportService {
         }
       } else if (fullName) {
         fail('Không tạo được tên đăng nhập từ họ tên — hãy nhập cột "Tên đăng nhập"');
+      }
+
+      // MANV: ưu tiên giá trị tệp; nếu trống, giữ quy tắc đã chốt = 4 ký tự đầu username.
+      // Khi ghi đè một tài khoản cũ, MANV chỉ thay đổi nếu tệp thực sự có cột/giá trị MANV.
+      const suppliedManv = (v.employeeCode ?? '').trim();
+      if (row.action !== 'error') {
+        if (suppliedManv) {
+          if (!MANV_RE.test(suppliedManv)) {
+            fail(`MANV "${suppliedManv}" không hợp lệ (tối đa 64 chữ, số, dấu chấm, gạch ngang hoặc gạch dưới)`);
+          } else {
+            row.manv = suppliedManv;
+            row.manvProvided = true;
+          }
+        } else {
+          row.manv = userByName.get(username)?.manv || username.slice(0, 4);
+        }
       }
 
       // Thư điện tử / điện thoại: không bắt buộc, sai định dạng → bỏ qua giá trị
@@ -434,6 +460,7 @@ export class UserImportService {
           const [created] = await tx
             .insert(users)
             .values({
+              manv: r.manv,
               username: r.username,
               passwordHash: r.password ? customHashes.get(r.password)! : defaultHash,
               fullName: r.fullName,
@@ -452,6 +479,7 @@ export class UserImportService {
             .update(users)
             .set({
               fullName: r.fullName,
+              ...(r.manvProvided ? { manv: r.manv } : {}),
               ...(r.title ? { title: r.title } : {}),
               ...(r.email ? { email: r.email } : {}),
               ...(r.phone ? { phone: r.phone } : {}),
@@ -495,6 +523,7 @@ export class UserImportService {
     const ws = wb.addWorksheet('Nhân viên', { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [
       { header: 'Họ và tên', key: 'fullName', width: 28 },
+      { header: 'MANV', key: 'employeeCode', width: 12 },
       { header: 'Tên đăng nhập', key: 'username', width: 18 },
       { header: 'Chức danh', key: 'title', width: 18 },
       { header: 'Mã khoa', key: 'department', width: 14 },
@@ -509,17 +538,18 @@ export class UserImportService {
     header.alignment = { vertical: 'middle' };
     header.height = 22;
     ws.getColumn('phone').numFmt = '@'; // giữ số 0 đầu
+    ws.getColumn('employeeCode').numFmt = '@';
     ws.getColumn('username').numFmt = '@';
     const khoa = depts.filter((d) => d.kind === 'KHOA');
     const d1 = (khoa[0] ?? depts[0])?.code ?? '';
     const d2 = (khoa[1] ?? depts[1])?.code ?? d1;
-    ws.addRow({ fullName: 'Nguyễn Văn An', username: '', title: titles[0]?.name ?? 'Bác sĩ', department: d1, email: 'an.nv@benhvien.vn', phone: '0912345678', roles: '', note: 'Để trống tên đăng nhập → tự tạo "annv"' });
-    ws.addRow({ fullName: 'Trần Thị Bình', username: 'binhtt', title: titles[1]?.name ?? 'Điều dưỡng', department: d2, email: '', phone: '', roles: '', note: '' });
+    ws.addRow({ fullName: 'Nguyễn Văn An', employeeCode: '', username: '', title: titles[0]?.name ?? 'Bác sĩ', department: d1, email: 'an.nv@benhvien.vn', phone: '0912345678', roles: '', note: 'Để trống MANV → lấy 4 ký tự đầu tên đăng nhập tự tạo "annv"' });
+    ws.addRow({ fullName: 'Trần Thị Bình', employeeCode: 'bint', username: 'binhtt', title: titles[1]?.name ?? 'Điều dưỡng', department: d2, email: '', phone: '', roles: '', note: '' });
     ws.getRow(2).font = { italic: true, color: { argb: 'FF6B7280' } };
     ws.getRow(3).font = { italic: true, color: { argb: 'FF6B7280' } };
     if (titles.length) {
       for (let r = 2; r <= 500; r++) {
-        ws.getCell(`C${r}`).dataValidation = {
+        ws.getCell(`D${r}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           showErrorMessage: false,
@@ -542,7 +572,8 @@ export class UserImportService {
     const notes = [
       'Nhập dữ liệu ở trang "Nhân viên", mỗi người một dòng. Có thể xoá 2 dòng ví dụ.',
       'Bắt buộc: Họ và tên.',
-      'Không bắt buộc: Tên đăng nhập, Chức danh, Mã khoa, Thư điện tử, Điện thoại, Vai trò, Ghi chú.',
+      'Không bắt buộc: MANV, Tên đăng nhập, Chức danh, Mã khoa, Thư điện tử, Điện thoại, Vai trò, Ghi chú.',
+      'MANV: nếu để trống, hệ thống lấy 4 ký tự đầu Tên đăng nhập; nếu có nhập, hệ thống giữ nguyên mã liên thông đã cung cấp.',
       'Tên đăng nhập để trống → tự tạo từ họ tên: "Nguyễn Văn An" → annv (trùng thì annv2…).',
       'Mã khoa: nhập mã hoặc tên khoa (xem cột bên phải).',
       'Chức danh: chọn theo danh mục; chức danh mới có thể tự thêm vào danh mục khi nhập.',

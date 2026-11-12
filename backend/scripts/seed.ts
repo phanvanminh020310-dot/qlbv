@@ -131,6 +131,7 @@ async function seedAdmin(roleMap: Map<string, number>): Promise<void> {
     const [created] = await db
       .insert(schema.users)
       .values({
+        manv: username.slice(0, 4),
         username,
         passwordHash: hash,
         fullName: config.seed.adminName,

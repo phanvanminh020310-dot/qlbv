@@ -204,6 +204,7 @@ export default function UsersPage() {
   });
 
   const fields: CrudField[] = [
+    { name: 'manv', label: 'MANV', required: true, placeholder: 'bsng', help: 'Mã nhân viên liên thông. Dữ liệu cũ được lấy từ 4 ký tự đầu tên đăng nhập.' },
     { name: 'username', label: 'Tên đăng nhập', required: true, createOnly: true, placeholder: 'bs.nguyenvana' },
     { name: 'fullName', label: 'Họ và tên', required: true, placeholder: 'Nguyễn Văn A' },
     {
@@ -304,7 +305,7 @@ export default function UsersPage() {
         filterResource="users"
         fields={fields}
         createLabel="Thêm người dùng"
-        searchPlaceholder="Tìm theo tên, tài khoản, chức danh…"
+        searchPlaceholder="Tìm theo tên, MANV, tài khoản, chức danh…"
         canCreate={can('user.create')}
         canEdit={can('user.update')}
         canDelete={can('user.delete')}
@@ -334,7 +335,7 @@ export default function UsersPage() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold">{String(row.fullName ?? '—')}</div>
-                      <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--muted-foreground)]">@{String(row.username ?? '—')}</div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--muted-foreground)]">MANV: {String(row.manv ?? '—')} · @{String(row.username ?? '—')}</div>
                     </div>
                     <UserStatus row={row} />
                   </div>
@@ -361,6 +362,8 @@ export default function UsersPage() {
           );
         }}
         columns={[
+          { key: 'id', label: 'ID', className: 'font-mono text-xs' },
+          { key: 'manv', label: 'MANV', className: 'font-mono text-xs font-semibold' },
           { key: 'username', label: 'Tài khoản' },
           { key: 'fullName', label: 'Họ và tên' },
           { key: 'title', label: 'Chức danh' },

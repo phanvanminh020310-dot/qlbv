@@ -20,7 +20,7 @@ export interface NationalHolidayProposal { plan: NationalHolidayPlan; lunarNewYe
 export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string; workdayName: string; isWorkingOverride: boolean }
-export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; username: string }
+export interface AttendanceStaff { stt: number; id: number; fullName: string; title: string; manv: string; username: string }
 export interface AttendanceDepartment { id: number; name: string; code: string; shortName: string }
 export interface AttendanceDepartmentScope { canSelect: boolean; items: AttendanceDepartment[] }
 export interface AttendanceMonth {

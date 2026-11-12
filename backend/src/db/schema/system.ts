@@ -26,6 +26,8 @@ export const users = pgTable(
   'users',
   {
     id: serial('id').primaryKey(),
+    /** Mã nhân viên liên thông; dữ liệu cũ được sinh từ 4 ký tự đầu tên đăng nhập. */
+    manv: text('manv').default('').notNull(),
     username: text('username').notNull(),
     passwordHash: text('password_hash').notNull(),
     fullName: text('full_name').notNull(),
@@ -58,6 +60,8 @@ export const users = pgTable(
   },
   (t) => [
     uniqueIndex('users_username_uq').on(t.username).where(sql`${t.deletedAt} is null`),
+    // Không unique: dữ liệu lịch sử phải giữ đúng quy tắc lấy 4 ký tự đầu username, kể cả khi trùng.
+    index('users_manv_idx').on(t.manv),
     index('users_department_idx').on(t.departmentId),
     index('users_active_idx').on(t.active),
     // Lọc theo khoa và liệt kê tài khoản đang dùng rất thường xuyên

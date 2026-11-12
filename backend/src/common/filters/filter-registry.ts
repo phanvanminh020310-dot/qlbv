@@ -168,6 +168,7 @@ const RESOURCES: ResourceFilterSpec[] = [
     label: 'Người dùng',
     path: '/users',
     fields: [
+      { field: 'manv', label: 'MANV', type: 'text', defaultOp: 'like', ops: OPS_TEXT },
       { field: 'username', label: 'Tên đăng nhập', type: 'text', defaultOp: 'like', ops: OPS_TEXT },
       { field: 'fullName', label: 'Họ tên', type: 'text', defaultOp: 'like', ops: OPS_TEXT },
       { field: 'title', label: 'Chức danh', type: 'text', defaultOp: 'like', ops: OPS_TEXT },
