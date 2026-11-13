@@ -37,6 +37,7 @@ async function setup() {
   await pg.exec(migration('0005_them_danh_muc_chuc_danh.sql'));
   await pg.exec(migration('0013_telegram_link.sql'));
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
+  await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
   const db = drizzle(pg, { schema });
   const dbService = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
   const auth = {
@@ -87,8 +88,19 @@ test('migration MANV backfill 4 ký tự đầu, cho phép trùng lịch sử v�
   assert.equal(manual?.manv, 'CUSTOM', 'chạy lại migration không ghi đè MANV đã được nhập');
 });
 
+test('migration tách chức danh chuyên môn và chức vụ giữ nguyên title cũ, không tự suy đoán chuyên môn', async (t) => {
+  const pg = await PGlite.create();
+  t.after(() => pg.close());
+  await pg.exec(migration('0000_init_khoi_tao.sql'));
+  await pg.exec("INSERT INTO users (id, username, password_hash, full_name, title) VALUES (1, 'chief', 'hash', 'Bác sĩ kiêm chủ nhiệm', 'Chủ nhiệm khoa')");
+  await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
+  await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
+  const rows = await pg.query<{ title: string; management_position: string }>('SELECT title, management_position FROM users WHERE id = 1');
+  assert.deepEqual(rows.rows, [{ title: 'Chủ nhiệm khoa', management_position: '' }], 'migration chỉ thêm trường mới, không tự đổi title hay tự gán Bác sĩ sai cho dữ liệu cũ');
+});
+
 test('DTO API yêu cầu MANV khi thêm mới, kiểm tra định dạng và cho phép sửa từng phần', async () => {
-  const valid = plainToInstance(CreateUserDto, { username: 'nhan.vien', manv: 'NV-001', fullName: 'Nhân viên' });
+  const valid = plainToInstance(CreateUserDto, { username: 'nhan.vien', manv: 'NV-001', fullName: 'Nhân viên', title: 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa' });
   assert.equal((await validate(valid)).length, 0);
 
   const missing = plainToInstance(CreateUserDto, { username: 'nhan.vien', fullName: 'Nhân viên' });
@@ -103,22 +115,30 @@ test('DTO API yêu cầu MANV khi thêm mới, kiểm tra định dạng và cho
 test('API người dùng trả/lưu MANV khi tạo, sửa, tìm kiếm và sắp xếp', async (t) => {
   const fixture = await setup();
   t.after(() => fixture.pg.close());
+  await fixture.pg.exec("INSERT INTO roles (code, name) VALUES ('NHAN_VIEN_TRUC', 'Nhân viên trực khám')");
 
   const created = await fixture.users.create({
     manv: 'EXT-01',
     username: 'New.Staff',
     fullName: 'Nhân viên mới',
+    title: 'Bác sĩ',
+    managementPosition: 'Chủ nhiệm khoa',
     active: true,
   } as never, actor);
   assert.equal(created.manv, 'EXT-01');
   assert.equal(created.username, 'new.staff', 'tên đăng nhập vẫn là định danh đăng nhập riêng');
+  assert.equal(created.title, 'Bác sĩ');
+  assert.equal(created.managementPosition, 'Chủ nhiệm khoa');
+  assert.ok(created.roles.some((role: { code: string }) => role.code === 'NHAN_VIEN_TRUC'), 'Bác sĩ kiêm Chủ nhiệm vẫn tự có quyền xem lịch trực');
 
   const listed = await fixture.users.list({ page: 1, pageSize: 10, limit: 10, offset: 0, q: 'EXT-01', sortBy: 'manv', sortDir: 'asc' } as never);
   assert.equal(listed.total, 1);
   assert.equal(listed.items[0]?.manv, 'EXT-01');
 
-  const updated = await fixture.users.update(created.id as number, { manv: 'EXT-02' } as never, actor);
+  const updated = await fixture.users.update(created.id as number, { manv: 'EXT-02', managementPosition: 'Phó chủ nhiệm khoa' } as never, actor);
   assert.equal(updated.manv, 'EXT-02');
+  assert.equal(updated.managementPosition, 'Phó chủ nhiệm khoa');
+  assert.equal(updated.title, 'Bác sĩ', 'sửa chức vụ kiêm nhiệm không làm mất chức danh chuyên môn');
   assert.equal(updated.username, 'new.staff', 'sửa MANV không thay đổi username hoặc ID');
 });
 
@@ -127,15 +147,18 @@ test('nhập MANV từ JSON/tệp: lưu mã cung cấp, tự sinh khi trống v�
   t.after(() => fixture.pg.close());
 
   const parsed = await parseImportFile(
-    Buffer.from('Họ và tên,MANV,Tên đăng nhập\nNguyễn Văn An,NV-001,nguyen.van.an\n', 'utf8'),
+    Buffer.from('Họ và tên,MANV,Tên đăng nhập,Chức danh chuyên môn,Chức vụ\nNguyễn Văn An,NV-001,nguyen.van.an,Bác sĩ,Chủ nhiệm khoa\n', 'utf8'),
     'nhan-vien.csv',
   );
   assert.equal(parsed.columns.find((column) => column.header === 'MANV')?.field, 'employeeCode');
+  assert.equal(parsed.columns.find((column) => column.header === 'Chức vụ')?.field, 'managementPosition');
   assert.equal(parsed.rows[0]?.values.employeeCode, 'NV-001');
+  assert.equal(parsed.rows[0]?.values.title, 'Bác sĩ');
+  assert.equal(parsed.rows[0]?.values.managementPosition, 'Chủ nhiệm khoa');
 
   const first = await fixture.importer.importJson(
     [
-      { username: 'long.login', manv: 'NV-001', fullName: 'Nhân viên có mã liên thông' },
+      { username: 'long.login', manv: 'NV-001', fullName: 'Nhân viên có mã liên thông', title: 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa' },
       { username: 'no-code-user', fullName: 'Nhân viên tự sinh mã' },
     ],
     { overwrite: false, dryRun: false },
@@ -157,11 +180,11 @@ test('nhập MANV từ JSON/tệp: lưu mã cung cấp, tự sinh khi trống v�
     actor,
   );
   const imported = await fixture.dbService.db
-    .select({ username: schema.users.username, manv: schema.users.manv, fullName: schema.users.fullName })
+    .select({ username: schema.users.username, manv: schema.users.manv, fullName: schema.users.fullName, title: schema.users.title, managementPosition: schema.users.managementPosition })
     .from(schema.users)
     .orderBy(schema.users.username);
   assert.deepEqual(imported, [
-    { username: 'long.login', manv: 'EXTERNAL-07', fullName: 'Nhân viên giữ mã cũ' },
-    { username: 'no-code-user', manv: 'no-c', fullName: 'Nhân viên tự sinh mã' },
-  ]);
+    { username: 'long.login', manv: 'EXTERNAL-07', fullName: 'Nhân viên giữ mã cũ', title: 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa' },
+    { username: 'no-code-user', manv: 'no-c', fullName: 'Nhân viên tự sinh mã', title: '', managementPosition: '' },
+  ], 'tệp không có chức vụ/chức danh mới không ghi đè dữ liệu chuyên môn và kiêm nhiệm hiện có');
 });

@@ -209,10 +209,16 @@ export default function UsersPage() {
     { name: 'fullName', label: 'Họ và tên', required: true, placeholder: 'Nguyễn Văn A' },
     {
       name: 'title',
-      label: 'Chức danh',
+      label: 'Chức danh chuyên môn',
       type: 'select',
       options: (jobTitles ?? []).map((t) => ({ value: t.name, label: t.name })),
-      help: 'Không bắt buộc · chọn Bác sĩ sẽ tự thêm vai trò Nhân viên trực khám',
+      help: 'Dùng để xét điều kiện lịch khám. Chọn Bác sĩ sẽ tự thêm vai trò Nhân viên trực khám. Hồ sơ cũ ghi Chủ nhiệm khoa cần chuyển sang Bác sĩ và nhập chức vụ ở ô bên dưới.',
+    },
+    {
+      name: 'managementPosition',
+      label: 'Chức vụ quản lý / kiêm nhiệm',
+      placeholder: 'Ví dụ: Chủ nhiệm khoa',
+      help: 'Lưu riêng với chức danh chuyên môn; Bác sĩ kiêm Chủ nhiệm khoa vẫn được xếp lịch với chức danh Bác sĩ.',
     },
     { name: 'departmentId', label: 'Khoa công tác', type: 'select', options: (departments ?? []).map((d) => ({ value: d.id, label: `${'— '.repeat(Math.max(0, d.level - 1))}${d.name}` })) },
     { name: 'departmentEffectiveFrom', label: 'Áp dụng chuyển khoa từ ngày', type: 'date', hideInTable: true, help: 'Chỉ dùng khi đổi khoa công tác; để trống sẽ lấy ngày hiện tại. Mốc này giữ nguyên dữ liệu chấm công ở khoa cũ.' },

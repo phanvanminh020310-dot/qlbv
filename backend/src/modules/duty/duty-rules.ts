@@ -309,7 +309,7 @@ export function evaluateCandidate(i: EvaluateInput): EvaluateResult {
   if (i.registrationBlocked) err('REGISTRATION', i.registrationBlocked);
 
   if (s.requiredTitle && normTitle(u.title) !== normTitle(s.requiredTitle)) {
-    err('TITLE', `Chức danh "${u.title || 'chưa khai báo'}" không khớp vai trò ${s.roleName} (yêu cầu: ${s.requiredTitle})`);
+    err('TITLE', `Chức danh chuyên môn "${u.title || 'chưa khai báo'}" không khớp vai trò ${s.roleName} (yêu cầu: ${s.requiredTitle})`);
   }
 
   // Absences are whole hospital days, including the second day of overnight shifts.

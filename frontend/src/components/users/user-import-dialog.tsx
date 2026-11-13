@@ -20,6 +20,7 @@ interface PreviewRow {
   usernameGenerated: boolean;
   fullName: string;
   title: string;
+  managementPosition: string;
   department: string;
   email: string;
   phone: string;
@@ -60,7 +61,8 @@ const ACTION_BADGE: Record<Action, { label: string; tone: 'success' | 'info' | '
 const FIELD_LABEL: Record<string, string> = {
   username: 'Tên đăng nhập',
   fullName: 'Họ tên',
-  title: 'Chức danh',
+  title: 'Chức danh chuyên môn',
+  managementPosition: 'Chức vụ kiêm nhiệm',
   department: 'Khoa',
   email: 'Thư điện tử',
   phone: 'Điện thoại',
@@ -214,7 +216,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
             <span>
               <span className="font-medium">Ghi đè tài khoản đã có</span>
               <span className="block text-xs text-[var(--muted-foreground)]">
-                Cập nhật họ tên, chức danh, khoa… theo tệp. Ô trống không xoá dữ liệu cũ, mật khẩu không đổi.
+                Cập nhật họ tên, chức danh chuyên môn, chức vụ kiêm nhiệm, khoa… theo tệp. Ô trống không xoá dữ liệu cũ, mật khẩu không đổi.
               </span>
             </span>
           </label>
@@ -244,7 +246,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
               <div className="font-medium text-[var(--foreground)]">Kéo thả tệp vào đây hoặc bấm để chọn</div>
               <div>
                 Các cột nhận diện được (không phân biệt dấu, hoa thường, thứ tự): <b>Họ và tên</b>, Tên đăng nhập, Chức
-                danh, Mã khoa (hoặc tên khoa), Thư điện tử, Điện thoại, Vai trò, Ghi chú, Mật khẩu, MANV.
+                danh chuyên môn, Chức vụ kiêm nhiệm, Mã khoa (hoặc tên khoa), Thư điện tử, Điện thoại, Vai trò, Ghi chú, Mật khẩu, MANV.
               </div>
               <div>MANV để trống sẽ lấy 4 ký tự đầu tên đăng nhập; tên đăng nhập bỏ trống sẽ tự tạo từ họ tên: “Nguyễn Văn An” → annv.</div>
             </div>
@@ -333,7 +335,8 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                     <Th>MANV</Th>
                     <Th>Tên đăng nhập</Th>
                     <Th>Họ tên</Th>
-                    <Th>Chức danh</Th>
+                    <Th>Chức danh chuyên môn</Th>
+                    <Th>Chức vụ kiêm nhiệm</Th>
                     <Th>Khoa</Th>
                     <Th>Thư điện tử</Th>
                     <Th>Điện thoại</Th>
@@ -356,6 +359,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                         </Td>
                         <Td>{r.fullName || <span className="text-[var(--danger)]">(trống)</span>}</Td>
                         <Td>{r.title || '—'}</Td>
+                        <Td>{r.managementPosition || '—'}</Td>
                         <Td>{r.department || '—'}</Td>
                         <Td>{r.email || '—'}</Td>
                         <Td>{r.phone || '—'}</Td>
@@ -388,7 +392,7 @@ export function UserImportDialog({ open, onClose }: { open: boolean; onClose: ()
                   })}
                   {!rows.length ? (
                     <Tr>
-                      <Td colSpan={10} className="py-6 text-center text-[var(--muted-foreground)]">
+                      <Td colSpan={11} className="py-6 text-center text-[var(--muted-foreground)]">
                         Không có dòng nào
                       </Td>
                     </Tr>

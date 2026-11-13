@@ -117,6 +117,7 @@ export interface Candidate {
   userId: number;
   fullName: string;
   title: string;
+  managementPosition: string;
   departmentId: number | null;
   departmentName: string;
   /** Ứng viên thuộc phạm vi khoa của người xếp lịch hiện tại. */

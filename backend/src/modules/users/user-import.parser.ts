@@ -15,6 +15,7 @@ export type ImportField =
   | 'username'
   | 'fullName'
   | 'title'
+  | 'managementPosition'
   | 'department'
   | 'email'
   | 'phone'
@@ -54,7 +55,8 @@ export function normalizeKey(s: string): string {
 const HEADER_ALIASES: Record<ImportField, string[]> = {
   username: ['tendangnhap', 'taikhoan', 'tentaikhoan', 'username', 'login', 'user', 'account'],
   fullName: ['hoten', 'hovaten', 'hotennhanvien', 'tennhanvien', 'fullname', 'name', 'hotencanbo', 'tencanbo'],
-  title: ['chucdanh', 'chucvu', 'title', 'jobtitle', 'chucdanhnghenghiep'],
+  title: ['chucdanh', 'title', 'jobtitle', 'chucdanhnghenghiep', 'chucdanhchuyenmon'],
+  managementPosition: ['chucvu', 'chucvukiemnhiem', 'chucvuquanly', 'managementposition', 'position'],
   department: ['makhoa', 'khoa', 'khoaphong', 'donvi', 'madonvi', 'tendonvi', 'tenkhoa', 'phongban', 'department', 'departmentcode', 'bophan'],
   email: ['email', 'thudientu', 'mail', 'diachiemail', 'emailaddress', 'thu'],
   phone: ['dienthoai', 'sodienthoai', 'sdt', 'dt', 'phone', 'mobile', 'didong', 'sodidong', 'dienthoaididong'],

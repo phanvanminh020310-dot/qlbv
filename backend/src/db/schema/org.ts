@@ -63,8 +63,8 @@ export type Department = typeof departments.$inferSelect;
 export type NewDepartment = typeof departments.$inferInsert;
 
 /**
- * Danh mục chức danh (Bác sĩ, Điều dưỡng, Kế toán…) — khai báo từ giao diện.
- * Người dùng lưu tên chức danh ở cột users.title (chọn từ danh mục này).
+ * Danh mục chức danh chuyên môn (Bác sĩ, Điều dưỡng, Kế toán…) — khai báo từ giao diện.
+ * Người dùng lưu tên chức danh chuyên môn ở cột users.title; chức vụ kiêm nhiệm lưu riêng ở users.managementPosition.
  */
 export const jobTitles = pgTable(
   'job_titles',

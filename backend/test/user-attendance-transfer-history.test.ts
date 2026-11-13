@@ -14,7 +14,7 @@ const actor: AccessContext = { id: 99, username: 'manager', fullName: 'Quản l�
 
 test('đổi khoa người dùng ghi thêm mốc hiệu lực, không ghi đè mốc cùng ngày khác khoa', async (t) => {
   const pg = await PGlite.create(); t.after(() => pg.close());
-  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0013_telegram_link.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql']) await pg.exec(migration(file));
+  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0013_telegram_link.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql', '0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql']) await pg.exec(migration(file));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true), (12, 'C', 'Khoa C', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES (99, 'manager', 'hash', 'Quản lý', 10, true);

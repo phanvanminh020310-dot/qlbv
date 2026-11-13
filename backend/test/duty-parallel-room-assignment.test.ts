@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "../src/db/schema";
+import type { AccessContext } from "../src/common/types/access-context";
 import { DutyCoreService } from "../src/modules/duty/duty-core.service";
+import { DutyService } from "../src/modules/duty/duty.service";
 
 const rules = JSON.stringify({
   maxShiftsPerDay: 1,
@@ -37,13 +39,13 @@ test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phé
   const dutyDate = bangkokFutureDate();
   const pg = await PGlite.create();
   t.after(() => pg.close());
-  for (const file of ["0000_init_khoi_tao.sql", "0015_lich_truc.sql", "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql"]) {
+  for (const file of ["0000_init_khoi_tao.sql", "0015_lich_truc.sql", "0028_ca_kham_theo_buoi_hoac_ca_ngay.sql", "0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql"]) {
     await pg.exec(readFileSync(resolve(__dirname, "..", "drizzle", file), "utf8"));
   }
   await pg.exec(`
     INSERT INTO departments(id,code,name) VALUES(1,'K1','Khoa 1');
-    INSERT INTO users(id,username,password_hash,full_name,title,department_id,active)
-      VALUES(1,'doctor','fixture','Bác sĩ kiểm thử','Bác sĩ',1,true);
+    INSERT INTO users(id,username,password_hash,full_name,title,management_position,department_id,active)
+      VALUES(1,'doctor','fixture','Bác sĩ kiểm thử','Bác sĩ','Chủ nhiệm khoa',1,true);
     INSERT INTO duty_rooms(id,code,name,department_id) VALUES
       (1,'P1','Phòng 1',1),(2,'P2','Phòng 2',1);
     INSERT INTO duty_roles(id,code,name,required_title) VALUES(1,'BS','Bác sĩ','Bác sĩ');
@@ -62,6 +64,8 @@ test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phé
   const db = { db: drizzle(pg, { schema }) };
   const core = new DutyCoreService(db as any, { notify: async () => {} } as any, { publish: () => {} } as any);
   const doctor = (await core.loadUsers(db.db as any, [1])).get(1)!;
+  const position = await pg.query<{ title: string; management_position: string }>('SELECT title, management_position FROM users WHERE id = 1');
+  assert.deepEqual(position.rows, [{ title: 'Bác sĩ', management_position: 'Chủ nhiệm khoa' }], 'chức danh chuyên môn và chức vụ kiêm nhiệm được lưu độc lập');
 
   // CSDL có hai phòng cùng một ca, nhưng bộ đếm theo kỳ phải ghi nhận một ca.
   const counts = await core.loadPeriodCounts(db.db as any, [1], [1]);
@@ -71,8 +75,19 @@ test("PostgreSQL: cùng bác sĩ ở nhiều phòng trong cùng ca được phé
   const parallel = (await core.evaluatePairs(db.db as any, core.pairsFor(sameShiftOtherRoom, [doctor]))).get("2:1")!;
   assert.equal(parallel.ok, true, JSON.stringify(parallel.errors));
   assert.equal(parallel.errors.some((error) => error.code === "OVERLAP"), false);
+  assert.equal(parallel.errors.some((error) => error.code === "TITLE"), false, 'Bác sĩ kiêm Chủ nhiệm khoa vẫn đạt điều kiện chức danh chuyên môn của vai trò khám');
   assert.equal(parallel.errors.some((error) => error.code === "SHIFTS_PER_DAY"), false);
   assert.equal(parallel.errors.some((error) => error.code === "SHIFTS_PER_PERIOD"), false);
+
+  const service = new DutyService(db as any, core, {} as any);
+  const scheduler: AccessContext = {
+    id: 9, username: 'scheduler', fullName: 'Người xếp lịch', title: '', departmentId: 1, departmentName: 'Khoa 1',
+    roles: ['DIEU_PHOI_TRUC'], permissions: ['duty.manage-all'], dataScope: 'ALL', departmentIds: [], isSuperAdmin: false, sessionId: 'test',
+  };
+  const candidates = await service.candidates(scheduler, 2);
+  assert.deepEqual(candidates.map((candidate) => ({ userId: candidate.userId, title: candidate.title, managementPosition: candidate.managementPosition, ok: candidate.ok })), [
+    { userId: 1, title: 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa', ok: true },
+  ], 'API xếp lịch dùng chức danh chuyên môn Bác sĩ nhưng vẫn trả chức vụ Chủ nhiệm khoa để nhận biết đúng người');
 
   // Một ca KHÁC có giờ chồng vẫn không được nới lỏng.
   const overlappingDifferentShift = await core.getSlot(3, db.db as any);

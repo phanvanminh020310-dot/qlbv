@@ -101,7 +101,7 @@ export const dutyRoles = pgTable(
     id: serial('id').primaryKey(),
     code: text('code').notNull(),
     name: text('name').notNull(),
-    /** Chức danh người được xếp vào vai trò này (rỗng = không yêu cầu). Khớp với users.title */
+    /** Chức danh chuyên môn người được xếp vào vai trò này (rỗng = không yêu cầu). Khớp với users.title; chức vụ kiêm nhiệm không ảnh hưởng điều kiện. */
     requiredTitle: text('required_title').default('').notNull(),
     sortOrder: integer('sort_order').default(0).notNull(),
     active: boolean('active').default(true).notNull(),

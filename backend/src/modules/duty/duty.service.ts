@@ -1367,7 +1367,7 @@ export class DutyService {
       conds.push(or(ilike(users.fullName, like), ilike(users.username, like)) as SQL);
     }
     const rows = await this.db.db
-      .select({ id: users.id, fullName: users.fullName, title: users.title, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt, departmentName: departments.name })
+      .select({ id: users.id, fullName: users.fullName, title: users.title, managementPosition: users.managementPosition, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt, departmentName: departments.name })
       .from(users)
       .leftJoin(departments, eq(departments.id, users.departmentId))
       .where(and(...conds))
@@ -1377,6 +1377,7 @@ export class DutyService {
       id: r.id,
       fullName: r.fullName,
       title: r.title ?? '',
+      managementPosition: r.managementPosition ?? '',
       departmentId: r.departmentId,
       active: !!r.active && !r.deletedAt,
       departmentName: r.departmentName ?? '',
@@ -1397,6 +1398,7 @@ export class DutyService {
         userId: u.id,
         fullName: u.fullName,
         title: u.title,
+        managementPosition: u.managementPosition,
         departmentId: u.departmentId,
         departmentName: u.departmentName,
         // Với vai trò xếp lịch khoa, giá trị này thể hiện đúng phạm vi nhân sự

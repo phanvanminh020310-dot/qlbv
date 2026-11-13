@@ -54,6 +54,7 @@ export interface ImportPreviewRow {
   usernameGenerated: boolean;
   fullName: string;
   title: string;
+  managementPosition: string;
   department: string;
   email: string;
   phone: string;
@@ -118,7 +119,8 @@ export class UserImportService {
   async importJson(rows: Record<string, unknown>[], opts: ImportOptions, actor?: AccessContext) {
     if (rows.length > IMPORT_MAX_ROWS) throw new BadRequestException(`Tối đa ${IMPORT_MAX_ROWS} dòng mỗi lần nhập`);
     const FIELD_KEYS: Record<string, ImportField> = {
-      username: 'username', fullname: 'fullName', title: 'title', departmentcode: 'department',
+      username: 'username', fullname: 'fullName', title: 'title', managementposition: 'managementPosition',
+      position: 'managementPosition', chucvu: 'managementPosition', chucvukiemnhiem: 'managementPosition', departmentcode: 'department',
       department: 'department', email: 'email', phone: 'phone', note: 'note', roles: 'roles', password: 'password',
       manv: 'employeeCode', employeecode: 'employeeCode', employeeid: 'employeeCode',
     };
@@ -139,7 +141,7 @@ export class UserImportService {
     const map: Record<string, ImportField> = {
       tendangnhap: 'username', taikhoan: 'username', hoten: 'fullName', hovaten: 'fullName',
       manhanvien: 'employeeCode', manv: 'employeeCode', macanbo: 'employeeCode', macb: 'employeeCode', employeecode: 'employeeCode', employeeid: 'employeeCode', sohieu: 'employeeCode',
-      chucdanh: 'title', makhoa: 'department', khoa: 'department', dienthoai: 'phone', sdt: 'phone',
+      chucdanh: 'title', chucdanhchuyenmon: 'title', chucvu: 'managementPosition', chucvukiemnhiem: 'managementPosition', chucvuquanly: 'managementPosition', makhoa: 'department', khoa: 'department', dienthoai: 'phone', sdt: 'phone',
       email: 'email', thudientu: 'email', ghichu: 'note', vaitro: 'roles', matkhau: 'password',
     };
     return map[k] ?? null;
@@ -237,6 +239,7 @@ export class UserImportService {
         usernameGenerated: false,
         fullName,
         title: '',
+        managementPosition: '',
         department: '',
         email: '',
         phone: '',
@@ -339,6 +342,13 @@ export class UserImportService {
               : { level: 'warning', text: `Chức danh "${titleRaw}" chưa có trong danh mục (vẫn lưu)` },
           );
         }
+      }
+
+      // Chức vụ quản lý/kiêm nhiệm: giữ độc lập với chức danh chuyên môn để Bác sĩ kiêm Chủ nhiệm khoa vẫn được xếp lịch khám.
+      const managementPositionRaw = (v.managementPosition ?? '').trim();
+      if (managementPositionRaw) {
+        if (managementPositionRaw.length <= 128) row.managementPosition = managementPositionRaw;
+        else messages.push({ level: 'warning', text: `Chức vụ "${managementPositionRaw.slice(0, 40)}…" vượt quá 128 ký tự — bỏ qua` });
       }
 
       // Vai trò: mã hoặc tên, nhiều vai trò cách nhau bởi , ; |
@@ -465,6 +475,7 @@ export class UserImportService {
               passwordHash: r.password ? customHashes.get(r.password)! : defaultHash,
               fullName: r.fullName,
               title: r.title,
+              managementPosition: r.managementPosition,
               email: r.email,
               phone: r.phone,
               note: r.note,
@@ -481,6 +492,7 @@ export class UserImportService {
               fullName: r.fullName,
               ...(r.manvProvided ? { manv: r.manv } : {}),
               ...(r.title ? { title: r.title } : {}),
+              ...(r.managementPosition ? { managementPosition: r.managementPosition } : {}),
               ...(r.email ? { email: r.email } : {}),
               ...(r.phone ? { phone: r.phone } : {}),
               ...(r.note ? { note: r.note } : {}),
@@ -525,7 +537,8 @@ export class UserImportService {
       { header: 'Họ và tên', key: 'fullName', width: 28 },
       { header: 'MANV', key: 'employeeCode', width: 12 },
       { header: 'Tên đăng nhập', key: 'username', width: 18 },
-      { header: 'Chức danh', key: 'title', width: 18 },
+      { header: 'Chức danh chuyên môn', key: 'title', width: 22 },
+      { header: 'Chức vụ kiêm nhiệm', key: 'managementPosition', width: 24 },
       { header: 'Mã khoa', key: 'department', width: 14 },
       { header: 'Thư điện tử', key: 'email', width: 28 },
       { header: 'Điện thoại', key: 'phone', width: 16 },
@@ -543,8 +556,8 @@ export class UserImportService {
     const khoa = depts.filter((d) => d.kind === 'KHOA');
     const d1 = (khoa[0] ?? depts[0])?.code ?? '';
     const d2 = (khoa[1] ?? depts[1])?.code ?? d1;
-    ws.addRow({ fullName: 'Nguyễn Văn An', employeeCode: '', username: '', title: titles[0]?.name ?? 'Bác sĩ', department: d1, email: 'an.nv@benhvien.vn', phone: '0912345678', roles: '', note: 'Để trống MANV → lấy 4 ký tự đầu tên đăng nhập tự tạo "annv"' });
-    ws.addRow({ fullName: 'Trần Thị Bình', employeeCode: 'bint', username: 'binhtt', title: titles[1]?.name ?? 'Điều dưỡng', department: d2, email: '', phone: '', roles: '', note: '' });
+    ws.addRow({ fullName: 'Nguyễn Văn An', employeeCode: '', username: '', title: titles.find((item) => isDoctorTitle(item.name))?.name ?? 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa', department: d1, email: 'an.nv@benhvien.vn', phone: '0912345678', roles: '', note: 'Chức danh chuyên môn Bác sĩ và chức vụ kiêm nhiệm được lưu riêng' });
+    ws.addRow({ fullName: 'Trần Thị Bình', employeeCode: 'bint', username: 'binhtt', title: titles[1]?.name ?? 'Điều dưỡng', managementPosition: '', department: d2, email: '', phone: '', roles: '', note: '' });
     ws.getRow(2).font = { italic: true, color: { argb: 'FF6B7280' } };
     ws.getRow(3).font = { italic: true, color: { argb: 'FF6B7280' } };
     if (titles.length) {
@@ -563,7 +576,8 @@ export class UserImportService {
       { header: 'Hướng dẫn', key: 'a', width: 70 },
       { header: '', key: 'gap', width: 3 },
       { header: 'Mã khoa', key: 'deptCode', width: 14 },
-      { header: 'Chức danh', key: 'title', width: 24 },
+      { header: 'Chức danh chuyên môn', key: 'title', width: 24 },
+      { header: 'Chức vụ kiêm nhiệm', key: 'managementPosition', width: 26 },
       { header: 'Mã vai trò', key: 'roleCode', width: 16 },
       { header: 'Tên vai trò', key: 'roleName', width: 30 },
       { header: 'Tên khoa', key: 'deptName', width: 40 },
@@ -572,11 +586,11 @@ export class UserImportService {
     const notes = [
       'Nhập dữ liệu ở trang "Nhân viên", mỗi người một dòng. Có thể xoá 2 dòng ví dụ.',
       'Bắt buộc: Họ và tên.',
-      'Không bắt buộc: MANV, Tên đăng nhập, Chức danh, Mã khoa, Thư điện tử, Điện thoại, Vai trò, Ghi chú.',
+      'Không bắt buộc: MANV, Tên đăng nhập, Chức danh chuyên môn, Chức vụ kiêm nhiệm, Mã khoa, Thư điện tử, Điện thoại, Vai trò, Ghi chú.',
       'MANV: nếu để trống, hệ thống lấy 4 ký tự đầu Tên đăng nhập; nếu có nhập, hệ thống giữ nguyên mã liên thông đã cung cấp.',
       'Tên đăng nhập để trống → tự tạo từ họ tên: "Nguyễn Văn An" → annv (trùng thì annv2…).',
       'Mã khoa: nhập mã hoặc tên khoa (xem cột bên phải).',
-      'Chức danh: chọn theo danh mục; chức danh mới có thể tự thêm vào danh mục khi nhập.',
+      'Chức danh chuyên môn: chọn theo danh mục; nhập “Bác sĩ” để được xét lịch khám. Chức vụ kiêm nhiệm (ví dụ Chủ nhiệm khoa) được lưu riêng, không thay thế chức danh chuyên môn.',
       'Vai trò: mã vai trò, nhiều vai trò cách nhau bởi dấu phẩy.',
       `Tài khoản mới dùng mật khẩu mặc định ${DEFAULT_IMPORT_PASSWORD} và phải đổi khi đăng nhập lần đầu.`,
       'Có thể thêm cột "Mật khẩu" nếu muốn đặt riêng (tối thiểu 6 ký tự).',

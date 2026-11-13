@@ -31,8 +31,10 @@ export const users = pgTable(
     username: text('username').notNull(),
     passwordHash: text('password_hash').notNull(),
     fullName: text('full_name').notNull(),
-    /** Chức danh: Bác sĩ, Điều dưỡng, Kế toán… */
+    /** Chức danh chuyên môn: Bác sĩ, Điều dưỡng, Kế toán… Dùng để xét điều kiện vai trò khám. */
     title: text('title').default('').notNull(),
+    /** Chức vụ quản lý/kiêm nhiệm: Chủ nhiệm khoa, Phó chủ nhiệm…; độc lập với chức danh chuyên môn. */
+    managementPosition: text('management_position').default('').notNull(),
     email: text('email').default('').notNull(),
     phone: text('phone').default('').notNull(),
     /** Khoa công tác chính */

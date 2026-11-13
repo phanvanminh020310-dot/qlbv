@@ -62,12 +62,19 @@ export class CreateUserDto {
   @MinLength(1, { message: 'Vui lòng nhập mật khẩu' })
   password?: string;
 
-  @ApiPropertyOptional({ example: 'Bác sĩ' })
+  @ApiPropertyOptional({ example: 'Bác sĩ', description: 'Chức danh chuyên môn; dùng để xét điều kiện xếp lịch khám.' })
   @Transform(trimString)
   @IsOptional()
   @IsString()
   @MaxLength(64)
   title?: string;
+
+  @ApiPropertyOptional({ example: 'Chủ nhiệm khoa', description: 'Chức vụ quản lý hoặc kiêm nhiệm; độc lập với chức danh chuyên môn.' })
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  managementPosition?: string;
 
   @ApiPropertyOptional({ description: 'Không bắt buộc' })
   @Transform(trimString)
