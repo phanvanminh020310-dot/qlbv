@@ -69,12 +69,20 @@ export class CreateUserDto {
   @MaxLength(64)
   title?: string;
 
-  @ApiPropertyOptional({ example: 'Chủ nhiệm khoa', description: 'Chức vụ quản lý hoặc kiêm nhiệm; độc lập với chức danh chuyên môn.' })
+  /** Tương thích API/tệp cũ: tên chức vụ sẽ được đưa vào danh mục và liên kết chuẩn. */
+  @ApiPropertyOptional({ example: 'Chủ nhiệm khoa', description: 'Tên chức vụ quản lý/kiêm nhiệm theo API cũ; ưu tiên managementPositionIds cho API mới.' })
   @Transform(trimString)
   @IsOptional()
   @IsString()
-  @MaxLength(128)
+  @MaxLength(512)
   managementPosition?: string;
+
+  @ApiPropertyOptional({ example: [1, 2], description: 'Danh sách chức vụ quản lý/kiêm nhiệm từ danh mục; một người có thể kiêm nhiều chức vụ.' })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  managementPositionIds?: number[];
 
   @ApiPropertyOptional({ description: 'Không bắt buộc' })
   @Transform(trimString)

@@ -31,7 +31,7 @@ test('query phạm vi khoa nhận đúng một hoặc nhiều departmentIds từ
 
 async function setup() {
   const pg = await PGlite.create();
-  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql']) await pg.exec(migration(file));
+  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql']) await pg.exec(migration(file));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true), (12, 'C', 'Khoa C', true);
     -- ID 1 có sort_order 90, ID 2 có sort_order 10: bảng phải theo sort_order, không theo ID danh mục.

@@ -19,14 +19,17 @@ export interface NationalWorkdayCandidate { date: string; name: string; note: st
 export interface NationalHolidayProposal { plan: NationalHolidayPlan; lunarNewYear: string; candidates: NationalHolidayCandidate[]; workdayCandidates: NationalWorkdayCandidate[]; warnings: string[]; saved: boolean; added?: number; updated?: number; removed?: number; preservedHospital?: number; unchanged?: number; addedWorkdays?: number; updatedWorkdays?: number; removedWorkdays?: number; unchangedWorkdays?: number; templateConflicts?: number }
 export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+export type AttendanceStaffOrderMode = 'PROFESSIONAL' | 'MANAGEMENT_THEN_PROFESSIONAL';
 export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string; workdayName: string; isWorkingOverride: boolean }
-export interface AttendanceStaff { stt: number; id: number; key: string; departmentId: number; departmentName: string; fullName: string; title: string; /** job_titles.sort_order; null khi title là dữ liệu cũ/chưa có trong danh mục. */ titleSortOrder: number | null; manv: string; username: string }
+export interface AttendanceStaff { stt: number; id: number; key: string; departmentId: number; departmentName: string; fullName: string; title: string; /** job_titles.sort_order; null khi title là dữ liệu cũ/chưa có trong danh mục. */ titleSortOrder: number | null; managementPosition: string; /** management_positions.sort_order nhỏ nhất của các chức vụ; null khi không kiêm nhiệm. */ managementPositionSortOrder: number | null; managementPositions: Array<{ id: number; code: string; name: string; sortOrder: number }>; manv: string; username: string }
 export interface AttendanceDepartment { id: number; name: string; code: string; shortName: string }
 export interface AttendanceDepartmentScope { canSelect: boolean; items: AttendanceDepartment[] }
 export interface AttendanceMonth {
   month: string;
   today: string;
   lockPolicy: AttendanceLockPolicy;
+  /** Quy tắc ưu tiên thứ tự nhân sự được cấu hình tại Quản trị → Cấu hình hệ thống. */
+  staffOrderMode: AttendanceStaffOrderMode;
   /** Cột tự nhập đại diện cho cả tháng, nên có khóa riêng theo tháng/năm. */
   manualLocked: boolean;
   department: { id: number; name: string; hospital: string };

@@ -13,6 +13,7 @@ import { CreateUserDto, UpdateUserDto } from '../src/modules/users/dto/user.dto'
 import { parseImportFile } from '../src/modules/users/user-import.parser';
 import { UserImportService } from '../src/modules/users/user-import.service';
 import { UsersService } from '../src/modules/users/users.service';
+import { ManagementPositionsService } from '../src/modules/management-positions/management-positions.service';
 
 const migration = (...parts: string[]) => readFileSync(resolve(__dirname, '..', 'drizzle', ...parts), 'utf8');
 
@@ -38,6 +39,7 @@ async function setup() {
   await pg.exec(migration('0013_telegram_link.sql'));
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
   await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
+  await pg.exec(migration('0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'));
   const db = drizzle(pg, { schema });
   const dbService = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
   const auth = {
@@ -99,6 +101,26 @@ test('migration tách chức danh chuyên môn và chức vụ giữ nguyên tit
   assert.deepEqual(rows.rows, [{ title: 'Chủ nhiệm khoa', management_position: '' }], 'migration chỉ thêm trường mới, không tự đổi title hay tự gán Bác sĩ sai cho dữ liệu cũ');
 });
 
+test('migration danh mục chức vụ giữ title chuyên môn, chuyển chức vụ cũ sang bảng nối và chạy lặp an toàn', async (t) => {
+  const pg = await PGlite.create();
+  t.after(() => pg.close());
+  await pg.exec(migration('0000_init_khoi_tao.sql'));
+  await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
+  await pg.exec("INSERT INTO users (id, username, password_hash, full_name, title, management_position) VALUES (1, 'doctor-chief', 'hash', 'Bác sĩ kiêm nhiệm', 'Bác sĩ', 'Chủ nhiệm khoa')");
+  await pg.exec(migration('0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'));
+  await pg.exec(migration('0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'));
+  const linked = await pg.query<{ title: string; name: string; sort_order: number }>(`
+    SELECT u.title, mp.name, mp.sort_order
+    FROM users u
+    JOIN user_management_positions ump ON ump.user_id = u.id
+    JOIN management_positions mp ON mp.id = ump.management_position_id
+    WHERE u.id = 1
+  `);
+  assert.deepEqual(linked.rows, [{ title: 'Bác sĩ', name: 'Chủ nhiệm khoa', sort_order: 1 }]);
+  const count = await pg.query<{ n: number }>('SELECT count(*)::int AS n FROM user_management_positions WHERE user_id = 1');
+  assert.equal(count.rows[0]?.n, 1, 'migration chạy lại không nhân đôi liên kết chức vụ');
+});
+
 test('DTO API yêu cầu MANV khi thêm mới, kiểm tra định dạng và cho phép sửa từng phần', async () => {
   const valid = plainToInstance(CreateUserDto, { username: 'nhan.vien', manv: 'NV-001', fullName: 'Nhân viên', title: 'Bác sĩ', managementPosition: 'Chủ nhiệm khoa' });
   assert.equal((await validate(valid)).length, 0);
@@ -115,31 +137,56 @@ test('DTO API yêu cầu MANV khi thêm mới, kiểm tra định dạng và cho
 test('API người dùng trả/lưu MANV khi tạo, sửa, tìm kiếm và sắp xếp', async (t) => {
   const fixture = await setup();
   t.after(() => fixture.pg.close());
-  await fixture.pg.exec("INSERT INTO roles (code, name) VALUES ('NHAN_VIEN_TRUC', 'Nhân viên trực khám')");
+  await fixture.pg.exec(`
+    INSERT INTO roles (code, name) VALUES ('NHAN_VIEN_TRUC', 'Nhân viên trực khám');
+    INSERT INTO management_positions (code, name, sort_order) VALUES
+      ('CNK', 'Chủ nhiệm khoa', 10),
+      ('PCNK', 'Phó chủ nhiệm khoa', 20);
+  `);
 
   const created = await fixture.users.create({
     manv: 'EXT-01',
     username: 'New.Staff',
     fullName: 'Nhân viên mới',
     title: 'Bác sĩ',
-    managementPosition: 'Chủ nhiệm khoa',
+    managementPositionIds: [1, 2],
     active: true,
   } as never, actor);
   assert.equal(created.manv, 'EXT-01');
   assert.equal(created.username, 'new.staff', 'tên đăng nhập vẫn là định danh đăng nhập riêng');
   assert.equal(created.title, 'Bác sĩ');
-  assert.equal(created.managementPosition, 'Chủ nhiệm khoa');
+  assert.equal(created.managementPosition, 'Chủ nhiệm khoa; Phó chủ nhiệm khoa');
+  assert.deepEqual(created.managementPositionIds, [1, 2], 'một người có thể chọn nhiều chức vụ theo danh mục');
   assert.ok(created.roles.some((role: { code: string }) => role.code === 'NHAN_VIEN_TRUC'), 'Bác sĩ kiêm Chủ nhiệm vẫn tự có quyền xem lịch trực');
 
   const listed = await fixture.users.list({ page: 1, pageSize: 10, limit: 10, offset: 0, q: 'EXT-01', sortBy: 'manv', sortDir: 'asc' } as never);
   assert.equal(listed.total, 1);
   assert.equal(listed.items[0]?.manv, 'EXT-01');
 
-  const updated = await fixture.users.update(created.id as number, { manv: 'EXT-02', managementPosition: 'Phó chủ nhiệm khoa' } as never, actor);
+  const updated = await fixture.users.update(created.id as number, { manv: 'EXT-02', managementPositionIds: [2] } as never, actor);
   assert.equal(updated.manv, 'EXT-02');
   assert.equal(updated.managementPosition, 'Phó chủ nhiệm khoa');
+  assert.deepEqual(updated.managementPositionIds, [2]);
   assert.equal(updated.title, 'Bác sĩ', 'sửa chức vụ kiêm nhiệm không làm mất chức danh chuyên môn');
   assert.equal(updated.username, 'new.staff', 'sửa MANV không thay đổi username hoặc ID');
+});
+
+test('danh mục chức vụ có thứ tự riêng, đổi tên đồng bộ chuỗi tương thích và không được xoá khi còn người kiêm nhiệm', async (t) => {
+  const fixture = await setup();
+  t.after(() => fixture.pg.close());
+  const catalog = new ManagementPositionsService(fixture.dbService);
+  const position = await catalog.create({ code: 'CNK', name: 'Chủ nhiệm khoa', sortOrder: 7, active: true });
+  const created = await fixture.users.create({ manv: 'CV-01', username: 'position.user', fullName: 'Người kiêm nhiệm', managementPositionIds: [position.id] } as never, actor);
+  assert.equal(created.managementPosition, 'Chủ nhiệm khoa');
+  assert.equal((await catalog.options())[0]?.sortOrder, 7);
+
+  await catalog.update(position.id, { name: 'Chủ nhiệm khoa mới', sortOrder: 3 });
+  const refreshed = await fixture.users.findOne(created.id);
+  assert.equal(refreshed.managementPosition, 'Chủ nhiệm khoa mới', 'đổi tên/thứ tự danh mục đồng bộ dữ liệu hiển thị API cũ');
+  await assert.rejects(catalog.remove(position.id), /Đang có 1 người dùng/);
+  await fixture.users.update(created.id, { managementPositionIds: [] } as never, actor);
+  await catalog.remove(position.id);
+  assert.equal((await catalog.list({ page: 1, pageSize: 20 } as never)).total, 0);
 });
 
 test('nhập MANV từ JSON/tệp: lưu mã cung cấp, tự sinh khi trống và không ghi đè mã cũ nếu tệp không có MANV', async (t) => {

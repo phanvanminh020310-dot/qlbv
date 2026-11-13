@@ -17,6 +17,8 @@ import {
   dutyAttendanceWorkdayOverrides,
   dutyAttendanceValidations,
   jobTitles,
+  managementPositions,
+  userManagementPositions,
   users,
   type DutyAttendanceColumnType,
 } from '../../db/schema';
@@ -45,18 +47,31 @@ const YMD = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const COLUMN_KEY = /^[A-Z][A-Z0-9_]{0,31}$/;
 const NUMBER = /^-?\d+(?:[.,]\d+)?$/;
+export const ATTENDANCE_STAFF_ORDER_MODES = ['PROFESSIONAL', 'MANAGEMENT_THEN_PROFESSIONAL'] as const;
+export type AttendanceStaffOrderMode = (typeof ATTENDANCE_STAFF_ORDER_MODES)[number];
+
+/** Dữ liệu chưa có danh mục luôn xếp sau; không bao giờ dùng ID danh mục làm thứ tự. */
+const compareCatalogSortOrder = (left: number | null, right: number | null) => {
+  if (left === null && right !== null) return 1;
+  if (left !== null && right === null) return -1;
+  return (left ?? 0) - (right ?? 0);
+};
+
 /**
- * Ưu tiên đúng sort_order của danh mục chức danh. Dữ liệu cũ có title trống/
- * không còn trong danh mục được giữ nguyên và xếp sau, với users.id là thứ tự phụ ổn định.
- * Tuyệt đối không dùng job_titles.id làm tiêu chí sắp xếp.
+ * Có thể cấu hình ưu tiên chức danh chuyên môn hoặc chức vụ quản lý trước.
+ * Chức danh luôn là tiêu chí kế tiếp và users.id là thứ tự phụ ổn định.
  */
-const compareByJobTitleSortOrder = (
-  a: { id: number; titleSortOrder: number | null },
-  b: { id: number; titleSortOrder: number | null },
+const compareByAttendanceStaffOrder = (
+  a: { id: number; titleSortOrder: number | null; managementPositionSortOrder: number | null },
+  b: { id: number; titleSortOrder: number | null; managementPositionSortOrder: number | null },
+  mode: AttendanceStaffOrderMode,
 ) => {
-  if (a.titleSortOrder === null && b.titleSortOrder !== null) return 1;
-  if (a.titleSortOrder !== null && b.titleSortOrder === null) return -1;
-  return (a.titleSortOrder ?? 0) - (b.titleSortOrder ?? 0) || a.id - b.id;
+  if (mode === 'MANAGEMENT_THEN_PROFESSIONAL') {
+    const management = compareCatalogSortOrder(a.managementPositionSortOrder, b.managementPositionSortOrder);
+    if (management) return management;
+  }
+  const title = compareCatalogSortOrder(a.titleSortOrder, b.titleSortOrder);
+  return title || a.id - b.id;
 };
 export const ATTENDANCE_LOCK_POLICIES = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const;
 export type AttendanceLockPolicy = (typeof ATTENDANCE_LOCK_POLICIES)[number];
@@ -69,6 +84,10 @@ const vnWeekday = (ymd: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][ne
 const lockPolicyOf = (value: unknown): AttendanceLockPolicy => {
   const candidate = String(value ?? '').trim().toUpperCase();
   return (ATTENDANCE_LOCK_POLICIES as readonly string[]).includes(candidate) ? candidate as AttendanceLockPolicy : 'DAILY';
+};
+const staffOrderModeOf = (value: unknown): AttendanceStaffOrderMode => {
+  const candidate = String(value ?? '').trim().toUpperCase();
+  return (ATTENDANCE_STAFF_ORDER_MODES as readonly string[]).includes(candidate) ? candidate as AttendanceStaffOrderMode : 'PROFESSIONAL';
 };
 /** Thứ Hai của tuần chứa ngày, theo tuần ISO để tuần đã qua được khóa nhất quán. */
 const mondayOf = (ymd: string) => {
@@ -114,6 +133,10 @@ export class DutyAttendanceService {
 
   private async attendanceLockPolicy(): Promise<AttendanceLockPolicy> {
     return lockPolicyOf(this.settings ? await this.settings.get<string>('dutyAttendance.lockPolicy', 'DAILY') : 'DAILY');
+  }
+
+  private async attendanceStaffOrderMode(): Promise<AttendanceStaffOrderMode> {
+    return staffOrderModeOf(this.settings ? await this.settings.get<string>('dutyAttendance.staffOrderMode', 'PROFESSIONAL') : 'PROFESSIONAL');
   }
 
   /** Chỉ dò một khoảng hợp lý để không ghép nhầm nghỉ bù với ca trực đã quá xa trong lịch sử. */
@@ -255,7 +278,7 @@ export class DutyAttendanceService {
   /** Xây dựng bảng của một khoa, bao gồm mốc chuyển khoa và dữ liệu lịch sử đã ghi. */
   private async buildSingleBoard(departmentId: number, month: string, overrides = new Map<string, string | null>(), entryOverrides = new Map<string, { code: string | null; note?: string }>()) {
     this.assertMonth(month);
-    const [lockPolicy, restPairLookbackDays] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays()]);
+    const [lockPolicy, restPairLookbackDays, staffOrderMode] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays(), this.attendanceStaffOrderMode()]);
     const { from, to } = monthBounds(month);
     const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
@@ -287,25 +310,46 @@ export class DutyAttendanceService {
     ])];
     const people = candidateIds.length
       ? await this.db.db
-        .select({ id: users.id, fullName: users.fullName, title: users.title, manv: users.manv, username: users.username, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt, titleSortOrder: jobTitles.sortOrder })
+        .select({ id: users.id, fullName: users.fullName, title: users.title, managementPosition: users.managementPosition, manv: users.manv, username: users.username, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt, titleSortOrder: jobTitles.sortOrder })
         .from(users)
         // users.title lưu tên; bỏ khoảng trắng thừa và không phân biệt hoa/thường để dữ liệu cũ vẫn lấy đúng thứ tự danh mục.
         .leftJoin(jobTitles, sql`lower(btrim(${jobTitles.name})) = lower(btrim(${users.title}))`)
         .where(inArray(users.id, candidateIds))
       : [];
+    const managementPositionRows = candidateIds.length
+      ? await this.db.db
+        .select({ userId: userManagementPositions.userId, id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder })
+        .from(userManagementPositions)
+        .innerJoin(managementPositions, eq(managementPositions.id, userManagementPositions.managementPositionId))
+        .where(inArray(userManagementPositions.userId, candidateIds))
+        .orderBy(asc(userManagementPositions.userId), asc(managementPositions.sortOrder), asc(managementPositions.name))
+      : [];
+    const managementByUser = new Map<number, Array<{ id: number; code: string; name: string; sortOrder: number }>>();
+    for (const position of managementPositionRows) {
+      managementByUser.set(position.userId, [...(managementByUser.get(position.userId) ?? []), { id: position.id, code: position.code, name: position.name, sortOrder: position.sortOrder }]);
+    }
+    const peopleWithManagement = people.map((person) => {
+      const positions = managementByUser.get(person.id) ?? [];
+      return {
+        ...person,
+        managementPositions: positions,
+        managementPosition: positions.map((position) => position.name).join('; ') || person.managementPosition,
+        managementPositionSortOrder: positions[0]?.sortOrder ?? null,
+      };
+    });
     const assignmentRows = candidateIds.length
       ? await this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, candidateIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom))
       : [];
     const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
     for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), { departmentId: assignment.departmentId, effectiveFrom: assignment.effectiveFrom }]);
     const retainedIds = new Set([...records.map((row) => row.userId), ...previousRecords.map((row) => row.userId), ...manualRows.map((row) => row.userId)]);
-    const staff = people
+    const staff = peopleWithManagement
       .filter((person) => {
         if (person.deletedAt) return false;
         const assignedHere = this.assignedToDepartmentInMonth(assignmentsByUser.get(person.id) ?? [], person.departmentId, departmentId, month);
         return retainedIds.has(person.id) || (person.active && assignedHere);
       })
-      .sort(compareByJobTitleSortOrder);
+      .sort((left, right) => compareByAttendanceStaffOrder(left, right, staffOrderMode));
 
     const today = bangkokToday();
     const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
@@ -379,12 +423,12 @@ export class DutyAttendanceService {
       }
     }
     return {
-      month, today, lockPolicy, manualLocked: isManualMonthLocked(month, today, lockPolicy),
+      month, today, lockPolicy, staffOrderMode, manualLocked: isManualMonthLocked(month, today, lockPolicy),
       department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital },
       departments: [{ id: currentDepartment.id, name: currentDepartment.name }], multiDepartment: false,
       dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations,
       systemMetrics: ATTENDANCE_SYSTEM_METRICS, restPairLookbackDays,
-      staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, titleSortOrder: person.titleSortOrder, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
+      staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, titleSortOrder: person.titleSortOrder, managementPosition: person.managementPosition, managementPositionSortOrder: person.managementPositionSortOrder, managementPositions: person.managementPositions, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
       entries, manualValues, manualViolations, calculationWarnings, rowValues, holidays, workdayOverrides,
     };
   }
@@ -409,7 +453,7 @@ export class DutyAttendanceService {
       for (const [key, value] of Object.entries(board.calculationWarnings)) calculationWarnings[`${prefix}${key}`] = value;
       for (const [key, value] of Object.entries(board.rowValues)) rowValues[`${prefix}${key}`] = value;
     }
-    const staff = mergedStaff.sort((a, b) => compareByJobTitleSortOrder(a, b) || a.departmentId - b.departmentId).map((person, index) => ({ ...person, stt: index + 1 }));
+    const staff = mergedStaff.sort((a, b) => compareByAttendanceStaffOrder(a, b, first.staffOrderMode) || a.departmentId - b.departmentId).map((person, index) => ({ ...person, stt: index + 1 }));
     return {
       ...first,
       department: { id: 0, name: `${boards.length} khoa/phòng đã chọn`, hospital: first.department.hospital },
@@ -705,7 +749,7 @@ export class DutyAttendanceService {
     const columns: DisplayColumn[] = [];
     for (const section of data.sections) {
       if (section.kind === 'ADMIN') columns.push(...[
-        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh', source: 'ADMIN', section },
+        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh / chức vụ', source: 'ADMIN', section },
         ...(data.multiDepartment ? [{ key: 'DEPARTMENT', name: 'Khoa/Phòng', source: 'ADMIN' as const, section }] : []),
       ] as DisplayColumn[]);
       if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
@@ -718,7 +762,7 @@ export class DutyAttendanceService {
   private cellValue(person: Board['staff'][number], column: DisplayColumn, data: Board) {
     if (column.source === 'DAY') return data.entries[`${person.key}:${column.day!.date}`]?.code ?? '';
     if (column.source === 'VALUE') return data.rowValues[person.key]?.[column.key] ?? '';
-    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.title; if (column.key === 'DEPARTMENT') return person.departmentName; return person.manv;
+    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return [person.title, person.managementPosition].filter(Boolean).join(' · '); if (column.key === 'DEPARTMENT') return person.departmentName; return person.manv;
   }
   private matrix(data: Board) { const columns = this.displayColumns(data); return data.staff.map((person) => columns.map((column) => this.cellValue(person, column, data))); }
   private async exportData(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]) { return this.month(user, { month, departmentId, departmentIds }); }

@@ -196,6 +196,10 @@ export class SettingsService implements OnModuleInit {
       const policy = String(value ?? '').trim().toUpperCase();
       return ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(policy) ? policy : 'DAILY';
     }
+    if (key === 'dutyAttendance.staffOrderMode') {
+      const mode = String(value ?? '').trim().toUpperCase();
+      return ['PROFESSIONAL', 'MANAGEMENT_THEN_PROFESSIONAL'].includes(mode) ? mode : 'PROFESSIONAL';
+    }
     const policy = policies[key];
     if (!policy) return value;
     const numeric = Number(value);
@@ -310,6 +314,14 @@ export function defaultSettings(): SettingItem[] {
       label: 'Số ngày dò ca trước khi tính nghỉ bù',
       description: 'Ký hiệu nghỉ bù sẽ ghép với ca Trực/Tăng cường phù hợp gần nhất trước đó trong số ngày này. Giới hạn giúp không ghép nhầm với một ca quá xa trong lịch sử.',
       valueType: 'number',
+    },
+    {
+      key: 'dutyAttendance.staffOrderMode',
+      value: 'PROFESSIONAL',
+      group: 'attendance',
+      label: 'Thứ tự nhân sự bảng chấm công',
+      description: 'Chọn ưu tiên chức danh chuyên môn hoặc chức vụ quản lý/kiêm nhiệm trước chức danh chuyên môn. Mọi thứ tự đều lấy từ cột Thứ tự của danh mục; dữ liệu cũ chưa có danh mục xếp sau.',
+      valueType: 'attendance-staff-order',
     },
 
     // Kiosk phòng khám & Điểm danh

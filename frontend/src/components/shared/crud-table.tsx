@@ -23,7 +23,7 @@ export interface CrudOption {
 export interface CrudField {
   name: string;
   label: string;
-  type?: 'text' | 'number' | 'password' | 'textarea' | 'select' | 'switch' | 'date' | 'time' | 'datetime' | 'email' | 'tags' | 'color';
+  type?: 'text' | 'number' | 'password' | 'textarea' | 'select' | 'multi-select' | 'switch' | 'date' | 'time' | 'datetime' | 'email' | 'tags' | 'color';
   options?: CrudOption[];
   /** Bảng màu cho kiểu 'color' (chọn bằng ô màu, không cần gõ mã) */
   palette?: { value: string; label: string }[];
@@ -160,6 +160,10 @@ export function CrudTable({
             const found = f.options.find((o) => String(o.value) === String(value));
             if (found) return found.label;
           }
+          if (f.type === 'multi-select' && f.options && Array.isArray(value)) {
+            const labels = value.map((item) => f.options?.find((option) => String(option.value) === String(item))?.label ?? String(item));
+            if (labels.length) return labels.join('; ');
+          }
           if (value === null || value === undefined || value === '') return <span className="text-[var(--muted-foreground)]">—</span>;
           return String(value);
         },
@@ -199,7 +203,7 @@ export function CrudTable({
 
   const openCreate = (): void => {
     const initial: Record<string, unknown> = {};
-    for (const f of fields) initial[f.name] = f.defaultValue ?? (f.type === 'switch' ? true : '');
+    for (const f of fields) initial[f.name] = f.defaultValue ?? (f.type === 'switch' ? true : f.type === 'multi-select' ? [] : '');
     setForm(initial);
     setCreating(true);
     setEditing(null);
@@ -442,7 +446,7 @@ export function CrudTable({
         <form id="crud-form" onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           {fields.map((f) => {
             if (editing && f.createOnly) return null;
-            const span = f.span === 2 || f.type === 'textarea' || f.type === 'tags' ? 'sm:col-span-2' : '';
+            const span = f.span === 2 || f.type === 'textarea' || f.type === 'tags' || f.type === 'multi-select' ? 'sm:col-span-2' : '';
             return (
               <div key={f.name} className={cn('space-y-1.5', span)}>
                 <Label htmlFor={`f-${f.name}`}>
@@ -491,6 +495,24 @@ export function CrudTable({
                       </option>
                     ))}
                   </Select>
+                ) : f.type === 'multi-select' ? (
+                  <select
+                    id={`f-${f.name}`}
+                    multiple
+                    value={Array.isArray(form[f.name]) ? (form[f.name] as unknown[]).map((value) => String(value)) : []}
+                    onChange={(event) => {
+                      const values = Array.from(event.currentTarget.selectedOptions).map((option) => {
+                        const found = f.options?.find((item) => String(item.value) === option.value);
+                        return found ? found.value : option.value;
+                      });
+                      setForm((state) => ({ ...state, [f.name]: values }));
+                    }}
+                    className="min-h-28 w-full rounded-md border bg-background px-3 py-2 text-sm shadow-sm outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  >
+                    {f.options?.map((option) => (
+                      <option key={String(option.value)} value={String(option.value)}>{option.label}</option>
+                    ))}
+                  </select>
                 ) : f.type === 'color' ? (
                   <ColorPicker
                     id={`f-${f.name}`}

@@ -130,7 +130,8 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: FolderTree,
         children: [
           { href: '/quan-tri/khoa-phong', label: 'Khoa phòng', icon: Building2, permission: 'department.view' },
-          { href: '/quan-tri/chuc-danh', label: 'Chức danh', icon: BadgeCheck, permission: 'job_title.view' },
+          { href: '/quan-tri/chuc-danh', label: 'Chức danh chuyên môn', icon: BadgeCheck, permission: 'job_title.view' },
+          { href: '/quan-tri/chuc-vu', label: 'Chức vụ kiêm nhiệm', icon: BadgeCheck, permission: 'management_position.view' },
         ],
       },
       { href: '/quan-tri/nguoi-dung', label: 'Người dùng', icon: Users, permission: 'user.view' },

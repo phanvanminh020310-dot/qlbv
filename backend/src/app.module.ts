@@ -20,6 +20,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { JobTitlesModule } from './modules/job-titles/job-titles.module';
+import { ManagementPositionsModule } from './modules/management-positions/management-positions.module';
 import { HealthModule } from './modules/health/health.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -68,6 +69,7 @@ const envFile = [
     RolesModule,
     DepartmentsModule,
     JobTitlesModule,
+    ManagementPositionsModule,
     SettingsModule,
     UtilitiesModule,
     BackupsModule,

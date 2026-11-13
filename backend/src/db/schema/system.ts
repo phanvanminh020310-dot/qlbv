@@ -18,7 +18,7 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { departments } from './org';
+import { departments, managementPositions } from './org';
 import type { DataScope } from './types';
 
 /* --------------------------------------------------------------------------- Người dùng */
@@ -33,7 +33,7 @@ export const users = pgTable(
     fullName: text('full_name').notNull(),
     /** Chức danh chuyên môn: Bác sĩ, Điều dưỡng, Kế toán… Dùng để xét điều kiện vai trò khám. */
     title: text('title').default('').notNull(),
-    /** Chức vụ quản lý/kiêm nhiệm: Chủ nhiệm khoa, Phó chủ nhiệm…; độc lập với chức danh chuyên môn. */
+    /** Chuỗi hiển thị tương thích các chức vụ kiêm nhiệm; dữ liệu chuẩn nằm ở userManagementPositions. */
     managementPosition: text('management_position').default('').notNull(),
     email: text('email').default('').notNull(),
     phone: text('phone').default('').notNull(),
@@ -178,6 +178,24 @@ export const userDepartmentScopes = pgTable(
   (t) => [
     primaryKey({ columns: [t.userId, t.departmentId] }),
     index('user_dept_scopes_dept_idx').on(t.departmentId),
+  ],
+);
+
+/** Một nhân sự có thể kiêm nhiều chức vụ; không thay đổi users.title là chức danh chuyên môn. */
+export const userManagementPositions = pgTable(
+  'user_management_positions',
+  {
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    managementPositionId: integer('management_position_id')
+      .notNull()
+      .references(() => managementPositions.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.managementPositionId] }),
+    index('user_management_positions_position_idx').on(t.managementPositionId),
   ],
 );
 

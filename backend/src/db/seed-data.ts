@@ -48,6 +48,12 @@ export const PERMISSIONS: PermissionSeed[] = [
   P('job_title', 'update', 'Sửa chức danh'),
   P('job_title', 'delete', 'Xoá chức danh'),
 
+  // Danh mục chức vụ quản lý / kiêm nhiệm
+  P('management_position', 'view', 'Xem danh mục chức vụ'),
+  P('management_position', 'create', 'Thêm chức vụ'),
+  P('management_position', 'update', 'Sửa chức vụ'),
+  P('management_position', 'delete', 'Xoá chức vụ'),
+
   // Người dùng
   P('user', 'view', 'Xem danh sách người dùng'),
   P('user', 'create', 'Thêm người dùng'),
@@ -237,6 +243,7 @@ export const ROLES: RoleSeed[] = [
       // Quản trị tổ chức
       'department.view', 'department.create', 'department.update', 'department.delete',
       'job_title.view', 'job_title.create', 'job_title.update', 'job_title.delete',
+      'management_position.view', 'management_position.create', 'management_position.update', 'management_position.delete',
       'user.view', 'user.create', 'user.update', 'user.delete',
       'user.reset-password', 'user.assign-role', 'user.import', 'user.export',
       'role.view', 'role.create', 'role.update', 'role.delete',

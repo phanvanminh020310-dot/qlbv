@@ -283,6 +283,20 @@ export default function SettingsPage() {
         </select>
       );
     }
+    if (type === "attendance-staff-order") {
+      return (
+        <select
+          aria-label={item.label ?? item.key}
+          disabled={!can("setting.update")}
+          value={String(value ?? "PROFESSIONAL")}
+          onChange={(event) => setDraft((state) => ({ ...state, [item.key]: event.target.value }))}
+          className="h-9 w-full rounded-md border bg-background px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <option value="PROFESSIONAL">Chức danh chuyên môn trước</option>
+          <option value="MANAGEMENT_THEN_PROFESSIONAL">Chức vụ kiêm nhiệm trước, rồi chức danh chuyên môn</option>
+        </select>
+      );
+    }
     if (type === "boolean") {
       const checked = isTruthy(value);
       return (

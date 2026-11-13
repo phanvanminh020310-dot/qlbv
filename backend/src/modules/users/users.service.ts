@@ -17,10 +17,12 @@ import {
   departments,
   dutyAttendanceDepartmentAssignments,
   loginLogs,
+  managementPositions,
   permissions,
   rolePermissions,
   roles,
   userDepartmentScopes,
+  userManagementPositions,
   userRoles,
   users,
 } from '../../db/schema';
@@ -159,6 +161,19 @@ export class UsersService {
       .limit(query.limit)
       .offset(query.offset);
 
+    const managementRows = rows.length
+      ? await this.db.db
+        .select({ userId: userManagementPositions.userId, id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder })
+        .from(userManagementPositions)
+        .innerJoin(managementPositions, eq(managementPositions.id, userManagementPositions.managementPositionId))
+        .where(inArray(userManagementPositions.userId, rows.map((row) => row.id)))
+        .orderBy(asc(userManagementPositions.userId), asc(managementPositions.sortOrder), asc(managementPositions.name))
+      : [];
+    const managementByUser = new Map<number, Array<{ id: number; code: string; name: string; sortOrder: number }>>();
+    for (const position of managementRows) {
+      managementByUser.set(position.userId, [...(managementByUser.get(position.userId) ?? []), { id: position.id, code: position.code, name: position.name, sortOrder: position.sortOrder }]);
+    }
+
     const items = rows.map((r) => {
       const roleList = r.roles
         ? r.roles.split(';;').map((chunk) => {
@@ -167,7 +182,14 @@ export class UsersService {
           })
         : [];
       const { roles: _raw, ...rest } = r;
-      return { ...rest, roles: roleList };
+      const managementPositions = managementByUser.get(r.id) ?? [];
+      return {
+        ...rest,
+        managementPosition: managementPositions.map((position) => position.name).join('; ') || r.managementPosition,
+        managementPositionIds: managementPositions.map((position) => position.id),
+        managementPositions,
+        roles: roleList,
+      };
     });
 
     return buildPage(items, countRow?.total ?? 0, query.page, query.pageSize);
@@ -228,7 +250,22 @@ export class UsersService {
       .orderBy(desc(loginLogs.createdAt))
       .limit(10);
 
-    return { ...user, roles: userRoleList, departmentScopes: scopes, recentLogins };
+    const managementPositionList = await this.db.db
+      .select({ id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder })
+      .from(userManagementPositions)
+      .innerJoin(managementPositions, eq(managementPositions.id, userManagementPositions.managementPositionId))
+      .where(eq(userManagementPositions.userId, id))
+      .orderBy(asc(managementPositions.sortOrder), asc(managementPositions.name));
+
+    return {
+      ...user,
+      managementPosition: managementPositionList.map((position) => position.name).join('; ') || user.managementPosition,
+      managementPositionIds: managementPositionList.map((position) => position.id),
+      managementPositions: managementPositionList,
+      roles: userRoleList,
+      departmentScopes: scopes,
+      recentLogins,
+    };
   }
 
   private async resolveRoleIds(codes: string[]): Promise<number[]> {
@@ -241,6 +278,60 @@ export class UsersService {
     const missing = codes.filter((c) => !found.has(c));
     if (missing.length > 0) throw new BadRequestException(`Vai trò không tồn tại: ${missing.join(', ')}`);
     return rows.map((r) => r.id);
+  }
+
+  /** Nhận tệp/API cũ có một chuỗi; dấu chấm phẩy, xuống dòng hoặc dấu phẩy biểu diễn nhiều chức vụ. */
+  private splitLegacyManagementPositions(value: string | undefined): string[] {
+    return [...new Map(
+      String(value ?? '')
+        .split(/[;,\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => [item.toLocaleLowerCase('vi-VN'), item] as const),
+    ).values()];
+  }
+
+  /** Tạo danh mục còn thiếu cho API/import cũ, rồi trả về ID theo thứ tự danh mục. */
+  private async positionIdsFromLegacyNames(tx: any, names: string[]): Promise<number[]> {
+    if (!names.length) return [];
+    const existing = await tx
+      .select({ id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder })
+      .from(managementPositions);
+    type ManagementPositionRow = { id: number; code: string; name: string; sortOrder: number };
+    const byName = new Map<string, ManagementPositionRow>(existing.map((position: ManagementPositionRow) => [position.name.toLocaleLowerCase('vi-VN').trim(), position]));
+    const codes = new Set(existing.map((position: ManagementPositionRow) => position.code.toUpperCase()));
+    let sortOrder = Math.max(0, ...existing.map((position: ManagementPositionRow) => position.sortOrder));
+    let sequence = existing.length;
+    for (const name of names) {
+      if (byName.has(name.toLocaleLowerCase('vi-VN'))) continue;
+      let code: string;
+      do code = `CV${String(++sequence).padStart(3, '0')}`;
+      while (codes.has(code));
+      codes.add(code);
+      const [created] = await tx
+        .insert(managementPositions)
+        .values({ code, name, sortOrder: ++sortOrder })
+        .returning({ id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder });
+      if (created) byName.set(name.toLocaleLowerCase('vi-VN'), created as ManagementPositionRow);
+    }
+    return names.map((name) => byName.get(name.toLocaleLowerCase('vi-VN'))?.id).filter((id): id is number => id !== undefined);
+  }
+
+  /** Ghi bảng nối chuẩn, đồng thời đồng bộ chuỗi tương thích users.management_position. */
+  private async syncManagementPositions(tx: any, userId: number, positionIds?: number[], legacyValue?: string): Promise<void> {
+    if (positionIds === undefined && legacyValue === undefined) return;
+    const ids = positionIds !== undefined
+      ? [...new Set(positionIds.map(Number).filter(Number.isInteger))]
+      : await this.positionIdsFromLegacyNames(tx, this.splitLegacyManagementPositions(legacyValue));
+    const selected = ids.length
+      ? await tx.select({ id: managementPositions.id, name: managementPositions.name, sortOrder: managementPositions.sortOrder }).from(managementPositions).where(inArray(managementPositions.id, ids)).orderBy(asc(managementPositions.sortOrder), asc(managementPositions.name))
+      : [];
+    if (selected.length !== ids.length) throw new BadRequestException('Có chức vụ không tồn tại hoặc đã bị xoá');
+    await tx.delete(userManagementPositions).where(eq(userManagementPositions.userId, userId));
+    if (selected.length) {
+      await tx.insert(userManagementPositions).values(selected.map((position: { id: number }) => ({ userId, managementPositionId: position.id })));
+    }
+    await tx.update(users).set({ managementPosition: selected.map((position: { name: string }) => position.name).join('; '), updatedAt: new Date() }).where(eq(users.id, userId));
   }
 
   async create(dto: CreateUserDto, actor: AccessContext) {
@@ -284,6 +375,10 @@ export class UsersService {
         active: dto.active ?? true,
       })
       .returning();
+
+    if (dto.managementPositionIds !== undefined || dto.managementPosition !== undefined) {
+      await this.db.db.transaction((tx) => this.syncManagementPositions(tx, created.id, dto.managementPositionIds, dto.managementPosition));
+    }
 
     if (roleCodes.length) {
       const ids = await this.resolveRoleIds(roleCodes);
@@ -365,7 +460,6 @@ export class UsersService {
           ...(dto.username !== undefined ? { username: dto.username.trim().toLowerCase() } : {}),
           ...(dto.fullName !== undefined ? { fullName: dto.fullName.trim() } : {}),
           ...(dto.title !== undefined ? { title: dto.title } : {}),
-          ...(dto.managementPosition !== undefined ? { managementPosition: dto.managementPosition } : {}),
           ...(dto.email !== undefined ? { email: dto.email } : {}),
           ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
           ...(dto.departmentId !== undefined ? { departmentId: dto.departmentId ?? null } : {}),
@@ -376,6 +470,9 @@ export class UsersService {
           updatedAt: new Date(),
         })
         .where(eq(users.id, id));
+      if (dto.managementPositionIds !== undefined || dto.managementPosition !== undefined) {
+        await this.syncManagementPositions(tx, id, dto.managementPositionIds, dto.managementPosition);
+      }
     });
 
     if (dto.roleCodes) await this.setRoles(id, { roleCodes: dto.roleCodes, replace: true }, actor);

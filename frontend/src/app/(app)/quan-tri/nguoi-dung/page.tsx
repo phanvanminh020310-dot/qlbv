@@ -203,6 +203,13 @@ export default function UsersPage() {
     refetchOnMount: 'always',
   });
 
+  const { data: managementPositions } = useQuery({
+    queryKey: ['management-positions-options'],
+    queryFn: () => apiFetch<{ id: number; code: string; name: string; sortOrder: number }[]>('/management-positions/options'),
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+
   const fields: CrudField[] = [
     { name: 'manv', label: 'MANV', required: true, placeholder: 'bsng', help: 'Mã nhân viên liên thông. Dữ liệu cũ được lấy từ 4 ký tự đầu tên đăng nhập.' },
     { name: 'username', label: 'Tên đăng nhập', required: true, createOnly: true, placeholder: 'bs.nguyenvana' },
@@ -215,10 +222,11 @@ export default function UsersPage() {
       help: 'Dùng để xét điều kiện lịch khám. Chọn Bác sĩ sẽ tự thêm vai trò Nhân viên trực khám. Hồ sơ cũ ghi Chủ nhiệm khoa cần chuyển sang Bác sĩ và nhập chức vụ ở ô bên dưới.',
     },
     {
-      name: 'managementPosition',
+      name: 'managementPositionIds',
       label: 'Chức vụ quản lý / kiêm nhiệm',
-      placeholder: 'Ví dụ: Chủ nhiệm khoa',
-      help: 'Lưu riêng với chức danh chuyên môn; Bác sĩ kiêm Chủ nhiệm khoa vẫn được xếp lịch với chức danh Bác sĩ.',
+      type: 'multi-select',
+      options: (managementPositions ?? []).map((position) => ({ value: position.id, label: `${position.sortOrder}. ${position.name}` })),
+      help: 'Có thể chọn nhiều chức vụ. Giữ Ctrl/Cmd để chọn nhiều mục; chức vụ được lưu riêng và không thay thế chức danh Bác sĩ khi xếp lịch.',
     },
     { name: 'departmentId', label: 'Khoa công tác', type: 'select', options: (departments ?? []).map((d) => ({ value: d.id, label: `${'— '.repeat(Math.max(0, d.level - 1))}${d.name}` })) },
     { name: 'departmentEffectiveFrom', label: 'Áp dụng chuyển khoa từ ngày', type: 'date', hideInTable: true, help: 'Chỉ dùng khi đổi khoa công tác; để trống sẽ lấy ngày hiện tại. Mốc này giữ nguyên dữ liệu chấm công ở khoa cũ.' },
@@ -350,7 +358,7 @@ export default function UsersPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl bg-[var(--muted)]/45 px-3 py-2.5 text-xs">
-                <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Chức danh</div><div className="mt-0.5 truncate font-medium">{String(row.title || '—')}</div></div>
+                <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Chức danh / chức vụ</div><div className="mt-0.5 truncate font-medium">{String(row.title || '—')}{row.managementPosition ? ` · ${String(row.managementPosition)}` : ''}</div></div>
                 <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Khoa</div><div className="mt-0.5 truncate font-medium">{String(row.departmentName || '—')}</div></div>
                 <div className="col-span-2 min-w-0">
                   <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Vai trò</div>
@@ -373,7 +381,8 @@ export default function UsersPage() {
           { key: 'manv', label: 'MANV', className: 'font-mono text-xs font-semibold' },
           { key: 'username', label: 'Tài khoản' },
           { key: 'fullName', label: 'Họ và tên' },
-          { key: 'title', label: 'Chức danh' },
+          { key: 'title', label: 'Chức danh chuyên môn' },
+          { key: 'managementPosition', label: 'Chức vụ kiêm nhiệm' },
           { key: 'departmentName', label: 'Khoa' },
           {
             key: 'roles',

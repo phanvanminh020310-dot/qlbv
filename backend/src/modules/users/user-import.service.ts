@@ -15,7 +15,7 @@ import type { Request } from 'express';
 import * as ExcelJS from 'exceljs';
 import { DbService } from '../../db/db.service';
 import { SettingsService } from '../settings/settings.service';
-import { departments, jobTitles, roles, userRoles, users } from '../../db/schema';
+import { departments, jobTitles, managementPositions, roles, userManagementPositions, userRoles, users } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
@@ -37,6 +37,10 @@ const USERNAME_RE = /^[a-z0-9._-]+$/;
 const MANV_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[0-9+().\-\s/,;]+$/;
+/** Một ô import có thể khai báo nhiều chức vụ bằng dấu chấm phẩy, dấu phẩy hoặc xuống dòng. */
+const splitManagementPositions = (value: string) => [...new Map(
+  value.split(/[;,\n]+/).map((item) => item.trim()).filter(Boolean).map((item) => [item.toLocaleLowerCase('vi-VN'), item] as const),
+).values()];
 
 export interface ImportOptions {
   dryRun?: boolean;
@@ -443,6 +447,9 @@ export class UserImportService {
     }
     const touched: number[] = [];
     const added: string[] = [];
+    const managementNames = [...new Map(
+      rows.flatMap((row) => splitManagementPositions(row.managementPosition)).map((name) => [name.toLocaleLowerCase('vi-VN'), name] as const),
+    ).values()];
 
     await this.db.db.transaction(async (tx) => {
       if (titlesToAdd.length) {
@@ -464,6 +471,35 @@ export class UserImportService {
         }
       }
 
+      // Chức vụ kiêm nhiệm là danh mục riêng. Tệp cũ vẫn có thể nhập tên tự do;
+      // tên mới được thêm an toàn, sau đó liên kết nhiều-nhiều theo từng nhân sự.
+      const existingManagementPositions = await tx
+        .select({ id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder })
+        .from(managementPositions);
+      const managementByName = new Map(existingManagementPositions.map((position) => [position.name.toLocaleLowerCase('vi-VN').trim(), position]));
+      const managementCodes = new Set(existingManagementPositions.map((position) => position.code.toUpperCase()));
+      let managementSort = Math.max(0, ...existingManagementPositions.map((position) => position.sortOrder));
+      let managementSequence = existingManagementPositions.length;
+      for (const name of managementNames) {
+        const key = name.toLocaleLowerCase('vi-VN');
+        if (managementByName.has(key)) continue;
+        let code: string;
+        do code = `CV${String(++managementSequence).padStart(3, '0')}`;
+        while (managementCodes.has(code));
+        managementCodes.add(code);
+        const [created] = await tx.insert(managementPositions).values({ code, name, sortOrder: ++managementSort }).returning({ id: managementPositions.id, code: managementPositions.code, name: managementPositions.name, sortOrder: managementPositions.sortOrder });
+        if (created) managementByName.set(key, created);
+      }
+      const syncManagementPositions = async (userId: number, value: string) => {
+        const positions = splitManagementPositions(value)
+          .map((name) => managementByName.get(name.toLocaleLowerCase('vi-VN')))
+          .filter((position): position is { id: number; code: string; name: string; sortOrder: number } => !!position)
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'vi'));
+        await tx.delete(userManagementPositions).where(eq(userManagementPositions.userId, userId));
+        if (positions.length) await tx.insert(userManagementPositions).values(positions.map((position) => ({ userId, managementPositionId: position.id })));
+        await tx.update(users).set({ managementPosition: positions.map((position) => position.name).join('; '), updatedAt: new Date() }).where(eq(users.id, userId));
+      };
+
       const roleLinks: { userId: number; roleId: number }[] = [];
       for (const r of rows) {
         if (r.action === 'create') {
@@ -483,6 +519,7 @@ export class UserImportService {
               mustChangePassword: true,
             })
             .returning({ id: users.id });
+          if (r.managementPosition) await syncManagementPositions(created!.id, r.managementPosition);
           r.roleIds.forEach((roleId) => roleLinks.push({ userId: created!.id, roleId }));
         } else if (r.action === 'update' && r.existingId) {
           // Chỉ ghi các ô có giá trị — ô trống trong tệp giữ nguyên dữ liệu cũ
@@ -500,6 +537,7 @@ export class UserImportService {
               updatedAt: new Date(),
             })
             .where(eq(users.id, r.existingId));
+          if (r.managementPosition) await syncManagementPositions(r.existingId, r.managementPosition);
           touched.push(r.existingId);
           r.roleIds.forEach((roleId) => roleLinks.push({ userId: r.existingId!, roleId }));
         }
@@ -516,7 +554,7 @@ export class UserImportService {
   /* ------------------------------------------------------------ Tệp mẫu */
 
   async template(): Promise<Buffer> {
-    const [depts, titles, roleRows] = await Promise.all([
+    const [depts, titles, managementPositionRows, roleRows] = await Promise.all([
       this.db.db
         .select({ code: departments.code, name: departments.name, kind: departments.kind })
         .from(departments)
@@ -527,6 +565,11 @@ export class UserImportService {
         .from(jobTitles)
         .where(eq(jobTitles.active, true))
         .orderBy(jobTitles.sortOrder, jobTitles.name),
+      this.db.db
+        .select({ name: managementPositions.name })
+        .from(managementPositions)
+        .where(eq(managementPositions.active, true))
+        .orderBy(managementPositions.sortOrder, managementPositions.name),
       this.db.db.select({ code: roles.code, name: roles.name }).from(roles).orderBy(roles.sortOrder),
     ]);
 
@@ -570,6 +613,16 @@ export class UserImportService {
         };
       }
     }
+    if (managementPositionRows.length) {
+      for (let r = 2; r <= 500; r++) {
+        ws.getCell(`E${r}`).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          showErrorMessage: false,
+          formulae: [`'Hướng dẫn'!$E$2:$E$${managementPositionRows.length + 1}`],
+        };
+      }
+    }
 
     const guide = wb.addWorksheet('Hướng dẫn');
     guide.columns = [
@@ -590,19 +643,20 @@ export class UserImportService {
       'MANV: nếu để trống, hệ thống lấy 4 ký tự đầu Tên đăng nhập; nếu có nhập, hệ thống giữ nguyên mã liên thông đã cung cấp.',
       'Tên đăng nhập để trống → tự tạo từ họ tên: "Nguyễn Văn An" → annv (trùng thì annv2…).',
       'Mã khoa: nhập mã hoặc tên khoa (xem cột bên phải).',
-      'Chức danh chuyên môn: chọn theo danh mục; nhập “Bác sĩ” để được xét lịch khám. Chức vụ kiêm nhiệm (ví dụ Chủ nhiệm khoa) được lưu riêng, không thay thế chức danh chuyên môn.',
+      'Chức danh chuyên môn: chọn theo danh mục; nhập “Bác sĩ” để được xét lịch khám. Chức vụ kiêm nhiệm (ví dụ Chủ nhiệm khoa) được lưu riêng, không thay thế chức danh chuyên môn; có thể ghi nhiều chức vụ, cách nhau bằng dấu chấm phẩy (;).',
       'Vai trò: mã vai trò, nhiều vai trò cách nhau bởi dấu phẩy.',
       `Tài khoản mới dùng mật khẩu mặc định ${DEFAULT_IMPORT_PASSWORD} và phải đổi khi đăng nhập lần đầu.`,
       'Có thể thêm cột "Mật khẩu" nếu muốn đặt riêng (tối thiểu 6 ký tự).',
       'Cũng nhận tệp CSV/TXT (UTF-8, phân cách bằng dấu phẩy, chấm phẩy hoặc Tab) với cùng tên cột.',
     ];
-    const n = Math.max(notes.length, depts.length, titles.length, roleRows.length);
+    const n = Math.max(notes.length, depts.length, titles.length, managementPositionRows.length, roleRows.length);
     for (let i = 0; i < n; i++) {
       guide.addRow({
         a: notes[i] ?? '',
         deptCode: depts[i]?.code ?? '',
         deptName: depts[i]?.name ?? '',
         title: titles[i]?.name ?? '',
+        managementPosition: managementPositionRows[i]?.name ?? '',
         roleCode: roleRows[i]?.code ?? '',
         roleName: roleRows[i]?.name ?? '',
       });

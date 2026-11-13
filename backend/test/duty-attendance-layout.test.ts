@@ -29,6 +29,7 @@ async function setup(lockPolicy?: string) {
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0034_ma_nhan_vien_lien_thong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES
@@ -50,6 +51,14 @@ test('cấu hình mặc định có chế độ khóa bảng chấm công an to�
     label: 'Chế độ khóa bảng chấm công',
     description: 'Chọn thời điểm dữ liệu chấm công không còn được sửa: qua ngày, hết tuần, hết tháng hoặc hết năm. Số liệu tự nhập theo tháng được khóa khi tháng/kỳ năm đã qua.',
     valueType: 'attendance-lock-policy',
+  });
+  assert.deepEqual(defaultSettings().find((item) => item.key === 'dutyAttendance.staffOrderMode'), {
+    key: 'dutyAttendance.staffOrderMode',
+    value: 'PROFESSIONAL',
+    group: 'attendance',
+    label: 'Thứ tự nhân sự bảng chấm công',
+    description: 'Chọn ưu tiên chức danh chuyên môn hoặc chức vụ quản lý/kiêm nhiệm trước chức danh chuyên môn. Mọi thứ tự đều lấy từ cột Thứ tự của danh mục; dữ liệu cũ chưa có danh mục xếp sau.',
+    valueType: 'attendance-staff-order',
   });
 });
 
@@ -138,7 +147,7 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
 });
 
 test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức danh và vẫn giữ dữ liệu title cũ', async (t) => {
-  const { pg, service } = await setup(); t.after(() => pg.close());
+  const { pg, service, dbService } = await setup(); t.after(() => pg.close());
   // ID danh mục được tạo theo thứ tự ngược với thứ tự cần hiển thị để chặn hồi quy sắp xếp theo job_titles.id.
   await pg.exec(`
     INSERT INTO job_titles (code, name, sort_order) VALUES
@@ -149,6 +158,8 @@ test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức 
       (3, 'NV03', 'legacy_first', 'hash', 'Nhân viên title cũ A', 'Chức danh cũ chưa khai báo', 10, true),
       (4, 'NV04', 'sort_low', 'hash', 'Nhân viên chức danh trước', '  BAC SI XEP TRUOC  ', 10, true),
       (5, 'NV05', 'legacy_second', 'hash', 'Nhân viên title cũ B', 'Chức danh cũ chưa khai báo', 10, true);
+    INSERT INTO management_positions (code, name, sort_order) VALUES ('CNK', 'Chủ nhiệm khoa', 1);
+    INSERT INTO user_management_positions (user_id, management_position_id) VALUES (2, (SELECT id FROM management_positions WHERE code = 'CNK'));
   `);
   const titleRows = await pg.query<{ id: number; sort_order: number }>("SELECT id, sort_order FROM job_titles WHERE code IN ('CD_HIGH_ID_LOW', 'CD_LOW_ID_HIGH') ORDER BY id");
   assert.deepEqual(titleRows.rows.map((row) => row.sort_order), [90, 5], 'ID danh mục nhỏ có sort_order lớn hơn để chứng minh không dùng ID');
@@ -157,7 +168,16 @@ test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức 
   const added = board.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
   assert.deepEqual(added.map((person) => person.id), [4, 2, 3, 5]);
   assert.deepEqual(added.map((person) => person.titleSortOrder), [5, 90, null, null]);
+  assert.equal(added.find((person) => person.id === 2)?.managementPosition, 'Chủ nhiệm khoa');
   assert.ok(board.staff.some((person) => person.id === 1 && person.titleSortOrder === null), 'nhân viên dữ liệu cũ không có danh mục chức danh vẫn được giữ trên bảng');
+
+  const managementFirst = new DutyAttendanceService(dbService, {
+    get: async (key: string, fallback: unknown) => key === 'dutyAttendance.staffOrderMode' ? 'MANAGEMENT_THEN_PROFESSIONAL' : fallback,
+  } as any);
+  const managementFirstBoard = await managementFirst.month(actor(), { departmentId: 10, month: '2026-10' });
+  const managementFirstAdded = managementFirstBoard.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
+  assert.equal(managementFirstBoard.staffOrderMode, 'MANAGEMENT_THEN_PROFESSIONAL');
+  assert.deepEqual(managementFirstAdded.map((person) => person.id), [2, 4, 3, 5], 'khi cấu hình ưu tiên chức vụ, management_positions.sort_order đứng trước job_titles.sort_order');
 });
 
 test('chế độ khóa bảng chấm công áp dụng đúng cho ngày và số liệu tự nhập theo kỳ', async (t) => {

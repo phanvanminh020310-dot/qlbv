@@ -84,3 +84,27 @@ export const jobTitles = pgTable(
     index('job_titles_sort_idx').on(t.sortOrder, t.name),
   ],
 );
+
+/**
+ * Danh mục chức vụ quản lý/kiêm nhiệm (Chủ nhiệm khoa, Phó chủ nhiệm…).
+ * Khác với job_titles: một người có thể được gán nhiều chức vụ qua user_management_positions.
+ */
+export const managementPositions = pgTable(
+  'management_positions',
+  {
+    id: serial('id').primaryKey(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    /** Thứ tự hiển thị và thứ tự ưu tiên khi cấu hình bảng chấm công ưu tiên chức vụ. */
+    sortOrder: integer('sort_order').default(0).notNull(),
+    active: boolean('active').default(true).notNull(),
+    note: text('note').default('').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('management_positions_code_uq').on(t.code),
+    uniqueIndex('management_positions_name_uq').on(sql`lower(${t.name})`),
+    index('management_positions_sort_idx').on(t.sortOrder, t.name),
+  ],
+);

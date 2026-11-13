@@ -11,7 +11,9 @@
 export const TABLE_COMMENTS: Record<string, string> = {
   'integration_keys': 'Khoá API cho máy hệ thống (chỉ đọc lịch trực). Chỉ lưu băm, có thể thu hồi',
   'departments': 'Cây đơn vị tổ chức của viện (Viện → Khối → Khoa → Phòng/Ban/Tổ), hỗ trợ nhiều cấp không giới hạn',
-  'job_titles': 'Danh mục chức danh (bác sĩ, điều dưỡng trưởng…) dùng khi khai báo người dùng/chữ ký',
+  'job_titles': 'Danh mục chức danh chuyên môn (bác sĩ, điều dưỡng…) dùng khi khai báo người dùng/chữ ký và sắp xếp chấm công',
+  'management_positions': 'Danh mục chức vụ quản lý/kiêm nhiệm (Chủ nhiệm khoa, Phó chủ nhiệm…) có thứ tự độc lập',
+  'user_management_positions': 'Bảng gán nhiều chức vụ kiêm nhiệm cho một người dùng',
   'users': 'Tài khoản người dùng hệ thống',
   'roles': 'Vai trò = nhóm quyền gán cho người dùng (kèm phạm vi dữ liệu OWN/DEPT/ALL)',
   'permissions': 'Danh mục quyền chi tiết theo dạng <mô-đun>.<hành-động>',
@@ -372,6 +374,16 @@ export const COLUMN_COMMENTS: Record<string, Record<string, string>> = {
     'role_id': 'Vai trò (roles)',
     'granted_by': 'Người gán quyền',
   },
+  'management_positions': {
+    'code': 'Mã chức vụ duy nhất',
+    'name': 'Tên chức vụ quản lý/kiêm nhiệm',
+    'sort_order': 'Thứ tự hiển thị và ưu tiên khi bảng chấm công cấu hình ưu tiên chức vụ',
+    'active': 'Còn cho phép chọn gán mới hay không',
+  },
+  'user_management_positions': {
+    'user_id': 'Người dùng được gán chức vụ',
+    'management_position_id': 'Chức vụ từ danh mục management_positions',
+  },
   'users': {
     'password_hash': 'Mật khẩu đã băm (bcrypt)',
     'email': 'Thư điện tử',
@@ -380,7 +392,7 @@ export const COLUMN_COMMENTS: Record<string, Record<string, string>> = {
     'locked_until': 'Khoá đăng nhập đến thời điểm này (sai mật khẩu nhiều lần)',
     'last_login_at': 'Lần đăng nhập gần nhất',
     'title': 'Chức danh chuyên môn: Bác sĩ, Điều dưỡng, Kế toán…; dùng để xét điều kiện vai trò khám.',
-    'management_position': 'Chức vụ quản lý/kiêm nhiệm: Chủ nhiệm khoa, Phó chủ nhiệm…; độc lập với chức danh chuyên môn.',
+    'management_position': 'Chuỗi hiển thị tương thích các chức vụ quản lý/kiêm nhiệm; dữ liệu chuẩn là bảng user_management_positions, độc lập với chức danh chuyên môn.',
     'department_id': 'Khoa công tác chính',
     'avatar': 'Ảnh đại diện (đường dẫn tương đối trong storage)',
     'signature_image': 'Chữ ký số dạng ảnh (base64/đường dẫn) để chèn vào bản in',
