@@ -10,13 +10,13 @@
  * Tác dụng (idempotent — chạy lặp lại an toàn):
  *  - Tạo vai trò hệ thống còn thiếu (vd LANH_DAO).
  *  - Cập nhật tên/mô tả/phạm vi/ưu tiên/màu của vai trò hệ thống theo chuẩn.
- *  - Thay tập quyền của vai trò hệ thống bằng tập chuẩn mới (báo trước mọi
- *    quyền bị GỠ — kể cả quyền quản trị thường đã thêm bằng tay).
+ *  - Bổ sung các quyền chuẩn còn thiếu cho vai trò hệ thống, nhưng GIỮ NGUYÊN
+ *    mọi quyền mà quản trị viên đã tự gán. Script này không bao giờ gỡ quyền.
  *  - SUPER_ADMIN: không động vào (toàn quyền ngầm).
  *  - Vai trò do đơn vị TỰ TẠO (isSystem=false): không hề bị đụng.
  */
 import 'dotenv/config';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { permissions, rolePermissions, roles } from '../src/db/schema';
@@ -121,26 +121,22 @@ async function main(): Promise<void> {
         )
       : new Set<string>();
 
-    const toAdd = [...want].filter((c) => !current.has(c));
-    const toRemove = [...current].filter((c) => !want.has(c));
-    if (toAdd.length === 0 && toRemove.length === 0) {
-      console.log(`  ${seed.code}: quyền đã chuẩn (${want.size}/${want.size})`);
+    // Vai trò hệ thống vẫn có thể được đơn vị tinh chỉnh qua giao diện. Vì vậy chỉ
+    // bổ sung quyền seed mới; tuyệt đối không delete-and-replace hoặc gỡ quyền cũ.
+    const toAdd = [...want].filter((code) => !current.has(code));
+    const preservedCustom = [...current].filter((code) => !want.has(code));
+    if (toAdd.length === 0) {
+      console.log(`  ${seed.code}: đã có ${current.size} quyền chuẩn${preservedCustom.length ? ` · giữ ${preservedCustom.length} quyền tùy chỉnh` : ''}`);
       continue;
     }
-    console.log(
-      `  ${seed.code}: hiện ${current.size} quyền → chuẩn ${want.size} · THÊM ${toAdd.length} · GỠ ${toRemove.length}`,
-    );
-    if (toRemove.length > 0) {
-      console.log(`    ⚠ sẽ GỠ: ${toRemove.join(', ')}`);
-    }
+    console.log(`  ${seed.code}: hiện ${current.size} quyền · bổ sung ${toAdd.length} quyền chuẩn${preservedCustom.length ? ` · giữ nguyên ${preservedCustom.length} quyền tùy chỉnh` : ''}`);
     if (APPLY && roleRow) {
-      await db.delete(rolePermissions).where(eq(rolePermissions.roleId, roleRow.id));
-      if (wantCodes.length > 0) {
-        const ids = wantCodes
-          .map((c) => permidByCode.get(c))
-          .filter((x): x is number => typeof x === 'number');
-        const skipped = wantCodes.filter((c) => !permidByCode.has(c));
-        if (skipped.length > 0) console.log(`    (bỏ qua mã chưa có trong danh mục: ${skipped.join(', ')})`);
+      const ids = toAdd
+        .map((code) => permidByCode.get(code))
+        .filter((id): id is number => typeof id === 'number');
+      const skipped = toAdd.filter((code) => !permidByCode.has(code));
+      if (skipped.length > 0) console.log(`    (bỏ qua mã chưa có trong danh mục: ${skipped.join(', ')})`);
+      if (ids.length > 0) {
         await db
           .insert(rolePermissions)
           .values(ids.map((permissionId) => ({ roleId: roleRow.id, permissionId })))

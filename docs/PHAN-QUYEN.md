@@ -146,16 +146,17 @@ Toàn bộ quyền ngầm — không cần liệt kê; chỉ Quản trị tối 
 phạm vi dữ liệu thực tế, danh sách khoa, và với từng quyền biết rõ **đến từ vai trò nào**.
 
 ### Đồng bộ vai trò hệ thống sau khi nâng cấp phiên bản
-Khi bản seed mới thay đổi ma trận chuẩn, API container sẽ tự chạy đồng bộ sau migration/seed trước khi khởi động.
-Việc này chỉ cập nhật **vai trò hệ thống**; vai trò do đơn vị tự tạo giữ nguyên. Có thể kiểm tra thủ công:
+Mỗi lần nâng cấp, API chỉ chạy migration và seed theo cơ chế **bổ sung**. Phân quyền đã cấu hình trên cả vai trò hệ thống lẫn vai trò do đơn vị tạo luôn được giữ nguyên; không có bước nào thay toàn bộ tập quyền.
+
+Khi cần kiểm tra/bổ sung thủ công các quyền chuẩn mới cho vai trò hệ thống:
 
 ```bash
 cd backend
-npx tsx scripts/sync-system-roles.ts            # xem trước thay đổi
-npx tsx scripts/sync-system-roles.ts --apply    # áp dụng ngay khi không chạy bằng container
+npx tsx scripts/sync-system-roles.ts            # xem trước các quyền chuẩn còn thiếu
+npx tsx scripts/sync-system-roles.ts --apply    # chỉ bổ sung quyền chuẩn còn thiếu
 ```
 
-Mọi quyền bị gỡ vẫn được script in ra trong log để kiểm soát.
+Script không bao giờ gỡ quyền đang có, kể cả quyền quản trị viên đã gán thủ công.
 
 ## 7. Tái sinh mục 3–4 khi seed thay đổi
 

@@ -516,7 +516,7 @@ export class DutyAttendanceService {
         }
         const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
         if (existing) {
-          await tx.update(dutyAttendanceEntries).set({ codeId, note: entry.note?.trim() ?? '', updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existing.id));
+          await tx.update(dutyAttendanceEntries).set({ codeId, ...(entry.note !== undefined ? { note: entry.note.trim() } : {}), updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existing.id));
         } else {
           await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id });
         }
@@ -749,7 +749,7 @@ export class DutyAttendanceService {
     const columns: DisplayColumn[] = [];
     for (const section of data.sections) {
       if (section.kind === 'ADMIN') columns.push(...[
-        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức danh / chức vụ', source: 'ADMIN', section },
+        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức vụ', source: 'ADMIN', section },
         ...(data.multiDepartment ? [{ key: 'DEPARTMENT', name: 'Khoa/Phòng', source: 'ADMIN' as const, section }] : []),
       ] as DisplayColumn[]);
       if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
@@ -762,7 +762,7 @@ export class DutyAttendanceService {
   private cellValue(person: Board['staff'][number], column: DisplayColumn, data: Board) {
     if (column.source === 'DAY') return data.entries[`${person.key}:${column.day!.date}`]?.code ?? '';
     if (column.source === 'VALUE') return data.rowValues[person.key]?.[column.key] ?? '';
-    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return [person.title, person.managementPosition].filter(Boolean).join(' · '); if (column.key === 'DEPARTMENT') return person.departmentName; return person.manv;
+    if (column.key === 'STT') return person.stt; if (column.key === 'FULL_NAME') return person.fullName; if (column.key === 'TITLE') return person.managementPosition || person.title; if (column.key === 'DEPARTMENT') return person.departmentName; return person.manv;
   }
   private matrix(data: Board) { const columns = this.displayColumns(data); return data.staff.map((person) => columns.map((column) => this.cellValue(person, column, data))); }
   private async exportData(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]) { return this.month(user, { month, departmentId, departmentIds }); }

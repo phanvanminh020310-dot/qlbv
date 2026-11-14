@@ -14,9 +14,11 @@ import {
   Search,
   ShieldAlert,
   TableProperties,
+  Network,
   Terminal,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -26,15 +28,13 @@ import { Input, Label, Textarea } from '@/components/ui/input';
 import { TableWrap, Td, Th, Tr } from '@/components/ui/table';
 import { apiFetch, downloadFile } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { SQL_KEYWORDS, type SqlSchemaResponse } from '@/lib/sql-schema';
 
 const WRITE_CONFIRM_TEXT = 'THUC THI';
 const INITIAL_SQL = `select id, username, full_name, active, created_at\nfrom users\norder by id\nlimit 100`;
 const STORAGE_KEY = 'qlbs.sql-console.history.v1';
 
 type ExportFormat = 'xlsx' | 'csv' | 'json';
-interface SchemaColumn { name: string; type: string; nullable: boolean; default: string | null }
-interface SchemaTable { name: string; columns: SchemaColumn[] }
-interface SchemaResponse { tables: SchemaTable[] }
 interface QueryResult {
   operation: string;
   columns: string[];
@@ -82,6 +82,8 @@ export default function SqlConsolePage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showSchema, setShowSchema] = useState(true);
   const [resultFilter, setResultFilter] = useState('');
+  const [caret, setCaret] = useState(0);
+  const sqlInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     try {
@@ -104,7 +106,7 @@ export default function SqlConsolePage() {
 
   const schema = useQuery({
     queryKey: ['sql-console-schema'],
-    queryFn: () => apiFetch<SchemaResponse>('/admin/sql/schema'),
+    queryFn: () => apiFetch<SqlSchemaResponse>('/admin/sql/schema'),
     enabled: isAdmin,
     staleTime: 5 * 60_000,
   });
@@ -161,6 +163,25 @@ export default function SqlConsolePage() {
   };
 
   const schemaTables = useMemo(() => schema.data?.tables ?? [], [schema.data]);
+  const currentToken = statement.slice(0, caret).match(/[A-Za-z_][A-Za-z0-9_.]*$/)?.[0] ?? '';
+  const suggestionItems = useMemo(() => {
+    const typed = currentToken.toLocaleLowerCase('en-US');
+    const matches = (value: string) => !typed || value.toLocaleLowerCase('en-US').includes(typed);
+    const selectedTable = statement.slice(0, caret).match(/(?:from|join|update|into)\s+([a-z_][a-z0-9_]*)/ig)?.at(-1)?.replace(/^(?:from|join|update|into)\s+/i, '');
+    const nearbyColumns = schemaTables.find((table) => table.name === selectedTable)?.columns ?? schemaTables.flatMap((table) => table.columns.map((column) => ({ ...column, name: `${table.name}.${column.name}` })));
+    return [
+      ...SQL_KEYWORDS.map((value) => ({ value, kind: 'SQL' })),
+      ...schemaTables.map((table) => ({ value: table.name, kind: 'Bảng' })),
+      ...nearbyColumns.map((column) => ({ value: column.name, kind: 'Cột' })),
+    ].filter((item, index, list) => matches(item.value) && list.findIndex((candidate) => candidate.value === item.value) === index).slice(0, 10);
+  }, [caret, currentToken, schemaTables, statement]);
+  const insertSuggestion = (value: string) => {
+    const tokenStart = caret - currentToken.length;
+    const next = `${statement.slice(0, tokenStart)}${value}${statement.slice(caret)}`;
+    const nextCaret = tokenStart + value.length;
+    setStatement(next); setCaret(nextCaret);
+    requestAnimationFrame(() => { sqlInputRef.current?.focus(); sqlInputRef.current?.setSelectionRange(nextCaret, nextCaret); });
+  };
 
   if (!isAdmin) {
     return (
@@ -184,6 +205,7 @@ export default function SqlConsolePage() {
             <Button variant="outline" onClick={() => setShowSchema((value) => !value)}>
               <TableProperties /> {showSchema ? 'Ẩn schema' : `Schema (${tableCount})`}
             </Button>
+            <Link href="/quan-tri/so-do-csdl"><Button variant="outline"><Network /> Sơ đồ quan hệ</Button></Link>
           </>
         }
       />
@@ -208,12 +230,20 @@ export default function SqlConsolePage() {
             <CardBody className="space-y-3">
               <Textarea
                 aria-label="Câu lệnh SQL"
+                ref={sqlInputRef}
                 value={statement}
-                onChange={(event) => setStatement(event.target.value)}
+                onChange={(event) => { setStatement(event.target.value); setCaret(event.target.selectionStart); }}
+                onFocus={(event) => setCaret(event.currentTarget.selectionStart)}
+                onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+                onKeyDown={(event) => { if (event.key === 'Tab' && suggestionItems[0]) { event.preventDefault(); insertSuggestion(suggestionItems[0].value); } }}
                 rows={12}
                 spellCheck={false}
                 className="min-h-[260px] resize-y font-mono text-sm leading-6"
               />
+              <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5">
+                <div className="mb-2 flex items-center justify-between gap-3"><p className="text-xs font-semibold text-sky-950">Gợi ý theo schema đang mở</p><span className="text-[11px] text-sky-800">Tab để chèn gợi ý đầu tiên</span></div>
+                <div className="flex flex-wrap gap-1.5">{suggestionItems.length ? suggestionItems.map((item) => <button key={`${item.kind}:${item.value}`} type="button" onClick={() => insertSuggestion(item.value)} className="rounded-md border border-sky-200 bg-white px-2 py-1 font-mono text-xs text-slate-800 hover:border-sky-500 hover:bg-sky-100"><span className="mr-1 font-sans text-[10px] text-sky-700">{item.kind}</span>{item.value}</button>) : <span className="text-xs text-slate-500">Không có gợi ý khớp. Hãy làm mới schema nếu vừa thay đổi cấu trúc.</span>}</div>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {snippets.map((item) => (
                   <Button key={item.label} size="sm" variant="outline" onClick={() => setStatement(item.sql)}>{item.label}</Button>
@@ -296,8 +326,9 @@ export default function SqlConsolePage() {
                   <details key={table.name} className="rounded-lg border p-2" open={table.name === 'users'}>
                     <summary className="cursor-pointer font-mono text-sm font-semibold">{table.name} <span className="text-xs font-normal text-[var(--muted-foreground)]">({table.columns.length})</span></summary>
                     <div className="mt-2 space-y-1 border-t pt-2">
-                      {table.columns.map((column) => <div key={column.name} className="font-mono text-[11px]"><b>{column.name}</b> <span className="text-[var(--muted-foreground)]">{column.type}{column.nullable ? '' : ' · not null'}</span></div>)}
-                      <Button size="sm" variant="ghost" className="mt-1" onClick={() => setStatement(`select *\nfrom ${table.name}\nlimit 100`)}><Database /> Xem 100 dòng</Button>
+                      {table.columns.map((column) => <div key={column.name} className="font-mono text-[11px]"><b className={column.primaryKey ? 'text-amber-700' : ''}>{column.primaryKey ? 'PK · ' : ''}{column.name}</b> <span className="text-[var(--muted-foreground)]">{column.type}{column.nullable ? '' : ' · not null'}</span></div>)}
+                      {table.foreignKeys.map((foreignKey) => <div key={`${foreignKey.name}:${foreignKey.column}`} className="rounded bg-violet-50 px-1.5 py-1 font-mono text-[10px] text-violet-900">FK · {foreignKey.column} → {foreignKey.referencedTable}.{foreignKey.referencedColumn}</div>)}
+                      <div className="mt-1 flex flex-wrap gap-1"><Button size="sm" variant="ghost" onClick={() => setStatement(`select *\nfrom ${table.name}\nlimit 100`)}><Database /> Xem 100 dòng</Button><Button size="sm" variant="ghost" onClick={() => insertSuggestion(table.name)}>Chèn tên bảng</Button></div>
                     </div>
                   </details>
                 ))}

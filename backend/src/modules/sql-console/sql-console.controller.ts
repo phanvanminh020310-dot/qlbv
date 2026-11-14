@@ -36,7 +36,7 @@ export class SqlConsoleController {
   constructor(private readonly service: SqlConsoleService) {}
 
   @Get('schema')
-  @ApiOperation({ summary: 'Danh sách bảng/cột public cho SQL Console (ADMIN/SUPER_ADMIN)' })
+  @ApiOperation({ summary: 'Danh sách bảng/cột/PK/FK public cho SQL Console và sơ đồ quan hệ (ADMIN/SUPER_ADMIN)' })
   schema(@CurrentUser() user: AccessContext) {
     return this.service.schema(user);
   }

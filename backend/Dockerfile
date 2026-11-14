@@ -52,5 +52,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s \
   CMD node -e "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["/sbin/tini", "--"]
-# Chạy migration + dữ liệu nền rồi mới khởi động API (idempotent, an toàn khi chạy lại)
-CMD ["sh", "-c", "npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts && npx tsx scripts/sync-system-roles.ts --apply && node dist/main.js"]
+# Chạy migration + dữ liệu nền rồi mới khởi động API. seed chỉ bổ sung quyền/danh mục thiếu,
+# tuyệt đối không thay tập quyền mà quản trị viên đã tùy chỉnh trên các vai trò hệ thống.
+CMD ["sh", "-c", "npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts && node dist/main.js"]

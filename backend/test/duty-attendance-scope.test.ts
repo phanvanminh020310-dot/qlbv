@@ -78,9 +78,12 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   assert.equal(coordinatorSheet.department.id, 11, 'KHTH can select and view a department other than its own');
 
   const today = bangkokToday();
-  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'T' }] });
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'T', note: 'Theo dõi bàn giao ca' }] });
+  // Đổi ký hiệu theo luồng cũ (không gửi note) không được làm mất ghi chú đã nhập.
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'P' }] });
   const updatedSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
-  assert.equal(updatedSheet.entries[`101:${today}`]?.code, 'T', 'KHTH can update an allowed all-hospital department without changing staff ownership');
+  assert.equal(updatedSheet.entries[`101:${today}`]?.code, 'P', 'KHTH can update an allowed all-hospital department without changing staff ownership');
+  assert.equal(updatedSheet.entries[`101:${today}`]?.note, 'Theo dõi bàn giao ca', 'đổi ký hiệu phải giữ ghi chú tự do của ô chấm công');
 });
 
 

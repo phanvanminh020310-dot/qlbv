@@ -111,10 +111,11 @@ export class SqlConsoleService {
     });
   }
 
+  /** Danh mục bảng/cột cùng khóa PK/FK cho trợ giúp SQL và sơ đồ quan hệ. */
   async schema(user: AccessContext) {
     this.assertAdmin(user);
     const data = await this.db.withClient(async (client) => {
-      const [tables, columns] = await Promise.all([
+      const [tables, columns, constraints] = await Promise.all([
         client.query(
           `select table_name as name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by table_name`,
         ),
@@ -124,9 +125,54 @@ export class SqlConsoleService {
             where table_schema = 'public'
             order by table_name, ordinal_position`,
         ),
+        // pg_constraint pairs each local FK column with the corresponding target
+        // column, including composite keys. information_schema alone loses that pairing.
+        client.query(
+          `select source_table.relname as table_name,
+                  con.conname as constraint_name,
+                  con.contype as constraint_type,
+                  source_column.attname as column_name,
+                  source_keys.ordinality as ordinal_position,
+                  target_table.relname as foreign_table_name,
+                  target_column.attname as foreign_column_name,
+                  case con.confupdtype when 'a' then 'NO ACTION' when 'r' then 'RESTRICT' when 'c' then 'CASCADE' when 'n' then 'SET NULL' when 'd' then 'SET DEFAULT' end as update_rule,
+                  case con.confdeltype when 'a' then 'NO ACTION' when 'r' then 'RESTRICT' when 'c' then 'CASCADE' when 'n' then 'SET NULL' when 'd' then 'SET DEFAULT' end as delete_rule
+             from pg_constraint con
+             inner join pg_class source_table on source_table.oid = con.conrelid
+             inner join pg_namespace source_schema on source_schema.oid = source_table.relnamespace
+             inner join lateral unnest(con.conkey) with ordinality as source_keys(attnum, ordinality) on true
+             inner join pg_attribute source_column on source_column.attrelid = con.conrelid and source_column.attnum = source_keys.attnum
+             left join pg_class target_table on target_table.oid = con.confrelid
+             left join lateral unnest(con.confkey) with ordinality as target_keys(attnum, ordinality) on target_keys.ordinality = source_keys.ordinality
+             left join pg_attribute target_column on target_column.attrelid = con.confrelid and target_column.attnum = target_keys.attnum
+            where source_schema.nspname = 'public' and con.contype in ('p', 'f')
+            order by source_table.relname, con.conname, source_keys.ordinality`,
+        ),
       ]);
-      return { tables: tables.rows as Record<string, unknown>[], columns: columns.rows as Record<string, unknown>[] };
+      return {
+        tables: tables.rows as Record<string, unknown>[],
+        columns: columns.rows as Record<string, unknown>[],
+        constraints: constraints.rows as Record<string, unknown>[],
+      };
     });
+    const primaryByTable = new Map<string, Set<string>>();
+    const foreignByTable = new Map<string, Array<{ name: string; column: string; referencedTable: string; referencedColumn: string; onUpdate: string; onDelete: string }>>();
+    for (const constraint of data.constraints) {
+      const table = String(constraint.table_name ?? '');
+      const column = String(constraint.column_name ?? '');
+      if (!table || !column) continue;
+      if (constraint.constraint_type === 'p') {
+        const keys = primaryByTable.get(table) ?? new Set<string>(); keys.add(column); primaryByTable.set(table, keys);
+      } else if (constraint.constraint_type === 'f' && constraint.foreign_table_name && constraint.foreign_column_name) {
+        const foreignKeys = foreignByTable.get(table) ?? [];
+        foreignKeys.push({
+          name: String(constraint.constraint_name ?? ''), column,
+          referencedTable: String(constraint.foreign_table_name), referencedColumn: String(constraint.foreign_column_name),
+          onUpdate: String(constraint.update_rule ?? 'NO ACTION'), onDelete: String(constraint.delete_rule ?? 'NO ACTION'),
+        });
+        foreignByTable.set(table, foreignKeys);
+      }
+    }
     const byTable = new Map<string, Array<Record<string, unknown>>>();
     for (const column of data.columns) {
       const table = String(column.table_name ?? '');
@@ -136,13 +182,19 @@ export class SqlConsoleService {
         type: String(column.data_type ?? ''),
         nullable: String(column.is_nullable ?? '') === 'YES',
         default: column.column_default ? String(column.column_default) : null,
+        primaryKey: primaryByTable.get(table)?.has(String(column.column_name ?? '')) ?? false,
       });
       byTable.set(table, list);
     }
     return {
       tables: data.tables.map((table) => {
         const name = String(table.name ?? '');
-        return { name, columns: byTable.get(name) ?? [] };
+        return {
+          name,
+          columns: byTable.get(name) ?? [],
+          primaryKey: [...(primaryByTable.get(name) ?? [])],
+          foreignKeys: foreignByTable.get(name) ?? [],
+        };
       }),
     };
   }

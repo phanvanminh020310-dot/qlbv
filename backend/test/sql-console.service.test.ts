@@ -58,3 +58,28 @@ test('tài khoản không có ADMIN/SUPER_ADMIN bị chặn trước khi chạm 
   await assert.rejects(() => service.query(ordinary, 'select * from users', meta), ForbiddenException);
   assert.equal(calls.length, 0);
 });
+
+test('schema trả PK/FK theo từng cột để trợ giúp SQL và vẽ sơ đồ quan hệ', async () => {
+  const client = {
+    query: async (statement: string) => {
+      if (statement.includes('information_schema.tables')) return { rows: [{ name: 'departments' }, { name: 'users' }] };
+      if (statement.includes('information_schema.columns')) return { rows: [
+        { table_name: 'departments', column_name: 'id', data_type: 'integer', is_nullable: 'NO', column_default: null },
+        { table_name: 'users', column_name: 'id', data_type: 'integer', is_nullable: 'NO', column_default: null },
+        { table_name: 'users', column_name: 'department_id', data_type: 'integer', is_nullable: 'YES', column_default: null },
+      ] };
+      if (statement.includes('from pg_constraint')) return { rows: [
+        { table_name: 'departments', constraint_name: 'departments_pkey', constraint_type: 'p', column_name: 'id' },
+        { table_name: 'users', constraint_name: 'users_pkey', constraint_type: 'p', column_name: 'id' },
+        { table_name: 'users', constraint_name: 'users_department_id_departments_id_fk', constraint_type: 'f', column_name: 'department_id', foreign_table_name: 'departments', foreign_column_name: 'id', update_rule: 'CASCADE', delete_rule: 'SET NULL' },
+      ] };
+      return { rows: [] };
+    },
+  };
+  const service = new SqlConsoleService({ withClient: async <T>(fn: (c: typeof client) => Promise<T>) => fn(client) } as never, { log: async () => undefined } as never);
+  const schema = await service.schema(admin);
+  const users = schema.tables.find((table) => table.name === 'users');
+  assert.deepEqual(users?.primaryKey, ['id']);
+  assert.equal(users?.columns.find((column) => column.name === 'id')?.primaryKey, true);
+  assert.deepEqual(users?.foreignKeys, [{ name: 'users_department_id_departments_id_fk', column: 'department_id', referencedTable: 'departments', referencedColumn: 'id', onUpdate: 'CASCADE', onDelete: 'SET NULL' }]);
+});
