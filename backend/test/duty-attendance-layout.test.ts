@@ -30,6 +30,7 @@ async function setup(lockPolicy?: string) {
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0034_ma_nhan_vien_lien_thong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0038_uu_tien_chuc_vu_khi_sap_xep_cham_cong.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES
@@ -54,7 +55,7 @@ test('cấu hình mặc định có chế độ khóa bảng chấm công an to�
   });
   assert.deepEqual(defaultSettings().find((item) => item.key === 'dutyAttendance.staffOrderMode'), {
     key: 'dutyAttendance.staffOrderMode',
-    value: 'PROFESSIONAL',
+    value: 'MANAGEMENT_THEN_PROFESSIONAL',
     group: 'attendance',
     label: 'Thứ tự nhân sự bảng chấm công',
     description: 'Chọn ưu tiên chức danh chuyên môn hoặc chức vụ quản lý/kiêm nhiệm trước chức danh chuyên môn. Mọi thứ tự đều lấy từ cột Thứ tự của danh mục; dữ liệu cũ chưa có danh mục xếp sau.',
@@ -146,8 +147,10 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(formula.columnType, 'FORMULA');
 });
 
-test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức danh và vẫn giữ dữ liệu title cũ', async (t) => {
+test('bảng một khoa mặc định ưu tiên chức vụ, rồi job_titles.sort_order và vẫn giữ dữ liệu title cũ', async (t) => {
   const { pg, service, dbService } = await setup(); t.after(() => pg.close());
+  const persistedOrderMode = await pg.query<{ value: string }>("SELECT value::text AS value FROM settings WHERE key = 'dutyAttendance.staffOrderMode'");
+  assert.equal(persistedOrderMode.rows[0]?.value, '"MANAGEMENT_THEN_PROFESSIONAL"', 'migration nâng cấu hình mặc định cũ sang ưu tiên chức vụ mà không thay dữ liệu danh mục');
   // ID danh mục được tạo theo thứ tự ngược với thứ tự cần hiển thị để chặn hồi quy sắp xếp theo job_titles.id.
   await pg.exec(`
     INSERT INTO job_titles (code, name, sort_order) VALUES
@@ -166,18 +169,19 @@ test('bảng một khoa xếp theo job_titles.sort_order, không theo ID chức 
 
   const board = await service.month(actor(), { departmentId: 10, month: '2026-10' });
   const added = board.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
-  assert.deepEqual(added.map((person) => person.id), [4, 2, 3, 5]);
-  assert.deepEqual(added.map((person) => person.titleSortOrder), [5, 90, null, null]);
+  assert.deepEqual(added.map((person) => person.id), [2, 4, 3, 5], 'mặc định ưu tiên chức vụ theo thứ tự danh mục, rồi mới đến chức danh');
+  assert.deepEqual(added.map((person) => person.titleSortOrder), [90, 5, null, null]);
   assert.equal(added.find((person) => person.id === 2)?.managementPosition, 'Chủ nhiệm khoa');
   assert.ok(board.staff.some((person) => person.id === 1 && person.titleSortOrder === null), 'nhân viên dữ liệu cũ không có danh mục chức danh vẫn được giữ trên bảng');
 
-  const managementFirst = new DutyAttendanceService(dbService, {
-    get: async (key: string, fallback: unknown) => key === 'dutyAttendance.staffOrderMode' ? 'MANAGEMENT_THEN_PROFESSIONAL' : fallback,
+  assert.equal(board.staffOrderMode, 'MANAGEMENT_THEN_PROFESSIONAL');
+  const professionalFirst = new DutyAttendanceService(dbService, {
+    get: async (key: string, fallback: unknown) => key === 'dutyAttendance.staffOrderMode' ? 'PROFESSIONAL' : fallback,
   } as any);
-  const managementFirstBoard = await managementFirst.month(actor(), { departmentId: 10, month: '2026-10' });
-  const managementFirstAdded = managementFirstBoard.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
-  assert.equal(managementFirstBoard.staffOrderMode, 'MANAGEMENT_THEN_PROFESSIONAL');
-  assert.deepEqual(managementFirstAdded.map((person) => person.id), [2, 4, 3, 5], 'khi cấu hình ưu tiên chức vụ, management_positions.sort_order đứng trước job_titles.sort_order');
+  const professionalFirstBoard = await professionalFirst.month(actor(), { departmentId: 10, month: '2026-10' });
+  const professionalFirstAdded = professionalFirstBoard.staff.filter((person) => [2, 3, 4, 5].includes(person.id));
+  assert.equal(professionalFirstBoard.staffOrderMode, 'PROFESSIONAL');
+  assert.deepEqual(professionalFirstAdded.map((person) => person.id), [4, 2, 3, 5], 'cấu hình PROFESSIONAL vẫn cho phép đơn vị ưu tiên chức danh chuyên môn nếu cần');
 });
 
 test('chế độ khóa bảng chấm công áp dụng đúng cho ngày và số liệu tự nhập theo kỳ', async (t) => {

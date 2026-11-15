@@ -101,8 +101,10 @@ export const dutyAttendanceApi = {
   saveNationalHolidayPlan: (body: NationalHolidayPlan) => put<NationalHolidayProposal>('/duty-attendance/holidays/national-plan', body),
   applyNationalHolidayPlan: (body: NationalHolidayPlan) => post<NationalHolidayProposal>('/duty-attendance/holidays/national-plan/apply', body),
   saveHoliday: (body: { holidayDate: string; name: string; note?: string }) => post<AttendanceHoliday>('/duty-attendance/holidays', body),
+  updateHoliday: (id: number, body: { holidayDate: string; name: string; note?: string }) => put<AttendanceHoliday>(`/duty-attendance/holidays/${id}`, body),
   deleteHoliday: (id: number) => remove(`/duty-attendance/holidays/${id}`),
   saveWorkdayOverride: (body: { workDate: string; name: string; note?: string }) => post<AttendanceWorkdayOverride>('/duty-attendance/workday-overrides', body),
+  updateWorkdayOverride: (id: number, body: { workDate: string; name: string; note?: string }) => put<AttendanceWorkdayOverride>(`/duty-attendance/workday-overrides/${id}`, body),
   deleteWorkdayOverride: (id: number) => remove(`/duty-attendance/workday-overrides/${id}`),
 };
 /** Khóa cache luôn có ID tài khoản để không lộ bảng/tình trạng cũ khi đổi tài khoản không cần F5. */

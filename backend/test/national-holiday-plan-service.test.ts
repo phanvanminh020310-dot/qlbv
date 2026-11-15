@@ -16,7 +16,7 @@ const user: AccessContext = {
 
 async function setup() {
   const pg = await PGlite.create();
-  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql']) {
+  for (const file of ['0000_init_khoi_tao.sql', '0005_them_danh_muc_chuc_danh.sql', '0025_bang_cham_cong_truc.sql', '0029_cau_hinh_bo_cuc_bang_cham_cong.sql', '0030_nhom_ky_hieu_cham_cong.sql', '0031_cong_thuc_nghiep_vu_cham_cong.sql', '0032_lich_nghi_le_nha_nuoc_theo_nam.sql', '0033_ngay_lam_bu_va_dieu_chinh_lich_le.sql', '0034_ma_nhan_vien_lien_thong.sql', '0035_lich_su_chuyen_khoa_cham_cong.sql', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql', '0038_uu_tien_chuc_vu_khi_sap_xep_cham_cong.sql']) {
     await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', file), 'utf8'));
   }
   await pg.exec(`
@@ -50,6 +50,9 @@ test('lịch lễ Nhà nước chỉ xem trước khi chưa áp dụng, giữ ng
   const rerun = await service.applyNationalHolidayPlan(user, plan2026);
   assert.equal(rerun.added, 0, 'áp dụng cùng phương án lần hai không nhân bản ngày nghỉ');
   assert.ok(rerun.unchanged > 0);
+  const nationalMay = (await service.holidays({ month: '2026-05' })).find((holiday) => holiday.holidayDate === '2026-05-01')!;
+  await assert.rejects(() => service.updateHoliday(user, nationalMay.id, { holidayDate: '2026-05-02', name: 'Không sửa trực tiếp', note: '' }), /phương án năm/);
+  await assert.rejects(() => service.deleteHoliday(nationalMay.id), /phương án năm/);
 
   // Khi cán bộ sửa một ngày sinh tự động, ngày đó thành cấu hình bệnh viện và các lần sinh sau không ghi đè.
   await service.saveHoliday(user, { holidayDate: '2026-05-01', name: 'Lịch trực bệnh viện nghỉ riêng', note: 'Đã chốt nội bộ' });
@@ -57,6 +60,12 @@ test('lịch lễ Nhà nước chỉ xem trước khi chưa áp dụng, giữ ng
   assert.ok(afterOverride.preservedHospital >= 2);
   assert.ok((afterOverride.removed ?? 0) >= 1, 'đổi phương án phải gỡ dòng lịch mẫu Quốc khánh cũ không còn thuộc dự thảo');
   assert.equal((await service.holidays({ month: '2026-05' })).find((holiday) => holiday.holidayDate === '2026-05-01')?.name, 'Lịch trực bệnh viện nghỉ riêng');
+  const hospitalHoliday = (await service.holidays({ month: '2026-05' })).find((holiday) => holiday.holidayDate === '2026-05-01')!;
+  const editedHoliday = await service.updateHoliday(user, hospitalHoliday.id, { holidayDate: '2026-05-02', name: 'Nghỉ nội bộ đã điều chỉnh', note: 'Sửa từ danh sách' });
+  assert.deepEqual({ date: editedHoliday.holidayDate, name: editedHoliday.name, source: editedHoliday.source }, { date: '2026-05-02', name: 'Nghỉ nội bộ đã điều chỉnh', source: 'HOSPITAL' });
+  assert.equal((await service.holidays({ month: '2026-05' })).some((holiday) => holiday.id === hospitalHoliday.id && holiday.holidayDate === '2026-05-02'), true, 'dòng bệnh viện vẫn xuất hiện để rà soát sau khi sửa');
+  await service.deleteHoliday(editedHoliday.id);
+  assert.equal((await service.holidays({ month: '2026-05' })).some((holiday) => holiday.id === editedHoliday.id), false, 'ngày nghỉ bệnh viện có thể xóa khỏi danh sách');
   const september = await service.holidays({ month: '2026-09' });
   assert.equal(september.some((holiday) => holiday.holidayDate === '2026-09-03'), false, 'chỉ dòng NATIONAL_TEMPLATE cũ 03/09 được gỡ');
   assert.equal(september.find((holiday) => holiday.holidayDate === '2026-09-01')?.source, 'NATIONAL_TEMPLATE');
@@ -86,7 +95,10 @@ test('phương án năm có ngày nghỉ bổ sung và ngày làm bù, có thể
 
   const first = await service.applyNationalHolidayPlan(user, adjustedPlan);
   assert.equal(first.addedWorkdays, 1);
-  assert.equal((await service.workdayOverrides({ month: '2026-02' })).find((item) => item.workDate === '2026-02-21')?.source, 'NATIONAL_TEMPLATE');
+  const nationalWorkday = (await service.workdayOverrides({ month: '2026-02' })).find((item) => item.workDate === '2026-02-21')!;
+  assert.equal(nationalWorkday.source, 'NATIONAL_TEMPLATE');
+  await assert.rejects(() => service.updateWorkdayOverride(user, nationalWorkday.id, { workDate: '2026-02-22', name: 'Không sửa trực tiếp', note: '' }), /phương án năm/);
+  await assert.rejects(() => service.deleteWorkdayOverride(nationalWorkday.id), /phương án năm/);
   await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: '2026-02-21', code: 'T' }] });
   const february = await service.month(user, { departmentId: 10, month: '2026-02' });
   assert.equal(february.dates.find((day) => day.date === '2026-02-21')?.isWorkingOverride, true);
@@ -98,6 +110,12 @@ test('phương án năm có ngày nghỉ bổ sung và ngày làm bù, có thể
   assert.equal(reconciled.removedWorkdays, 1, 'bỏ ngày làm bù chỉ gỡ dòng NATIONAL_TEMPLATE cũ');
   assert.equal((await service.workdayOverrides({ month: '2026-02' })).some((item) => item.workDate === '2026-02-21'), false);
 
+  await service.saveWorkdayOverride(user, { workDate: '2026-03-08', name: 'Làm việc thay ngày nghỉ nội bộ', note: 'Kế hoạch khoa' });
+  const hospitalWorkday = (await service.workdayOverrides({ month: '2026-03' })).find((item) => item.workDate === '2026-03-08')!;
+  const editedWorkday = await service.updateWorkdayOverride(user, hospitalWorkday.id, { workDate: '2026-03-15', name: 'Làm việc nội bộ đã điều chỉnh', note: 'Sửa từ danh sách' });
+  assert.equal((await service.workdayOverrides({ month: '2026-03' })).some((item) => item.id === editedWorkday.id && item.workDate === '2026-03-15'), true, 'dòng ngày làm việc bệnh viện vẫn xuất hiện để rà soát sau khi sửa');
+  await service.deleteWorkdayOverride(editedWorkday.id);
+  assert.equal((await service.workdayOverrides({ month: '2026-03' })).some((item) => item.id === editedWorkday.id), false, 'ngày làm việc bệnh viện có thể xóa khỏi danh sách');
   await service.saveWorkdayOverride(user, { workDate: '2026-03-08', name: 'Làm việc thay ngày nghỉ nội bộ', note: 'Kế hoạch khoa' });
   await assert.rejects(() => service.saveHoliday(user, { holidayDate: '2026-03-08', name: 'Không được ghi đè âm thầm', note: '' }), /ngày làm việc do bệnh viện khai báo/);
   const march = await service.month(user, { departmentId: 10, month: '2026-03' });

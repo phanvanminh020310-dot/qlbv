@@ -91,10 +91,14 @@ export class DutyAttendanceController {
   applyNationalHolidayPlan(@CurrentUser() user: AccessContext, @Body() dto: NationalHolidayPlanDto) { return this.service.applyNationalHolidayPlan(user, dto); }
   @Post('holidays') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_holidays', description: 'Khai báo ngày nghỉ/lễ của bệnh viện' })
   saveHoliday(@CurrentUser() user: AccessContext, @Body() dto: AttendanceHolidayDto) { return this.service.saveHoliday(user, dto); }
+  @Put('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_holidays', description: 'Sửa ngày nghỉ/lễ riêng của bệnh viện' })
+  updateHoliday(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceHolidayDto) { return this.service.updateHoliday(user, id, dto); }
   @Delete('holidays/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_holidays', description: 'Xóa ngày nghỉ/lễ đã khai báo' })
   deleteHoliday(@Param('id', ParseIntPipe) id: number) { return this.service.deleteHoliday(id); }
   @Post('workday-overrides') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_workday_overrides', description: 'Khai báo ngày làm việc hoán đổi của bệnh viện' })
   saveWorkdayOverride(@CurrentUser() user: AccessContext, @Body() dto: AttendanceWorkdayOverrideDto) { return this.service.saveWorkdayOverride(user, dto); }
+  @Put('workday-overrides/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_workday_overrides', description: 'Sửa ngày làm việc hoán đổi riêng của bệnh viện' })
+  updateWorkdayOverride(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceWorkdayOverrideDto) { return this.service.updateWorkdayOverride(user, id, dto); }
   @Delete('workday-overrides/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_workday_overrides', description: 'Xóa ngày làm việc hoán đổi' })
   deleteWorkdayOverride(@Param('id', ParseIntPipe) id: number) { return this.service.deleteWorkdayOverride(id); }
 }

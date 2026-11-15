@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import * as ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import { DbService } from '../../db/db.service';
@@ -87,7 +87,7 @@ const lockPolicyOf = (value: unknown): AttendanceLockPolicy => {
 };
 const staffOrderModeOf = (value: unknown): AttendanceStaffOrderMode => {
   const candidate = String(value ?? '').trim().toUpperCase();
-  return (ATTENDANCE_STAFF_ORDER_MODES as readonly string[]).includes(candidate) ? candidate as AttendanceStaffOrderMode : 'PROFESSIONAL';
+  return (ATTENDANCE_STAFF_ORDER_MODES as readonly string[]).includes(candidate) ? candidate as AttendanceStaffOrderMode : 'MANAGEMENT_THEN_PROFESSIONAL';
 };
 /** Thứ Hai của tuần chứa ngày, theo tuần ISO để tuần đã qua được khóa nhất quán. */
 const mondayOf = (ymd: string) => {
@@ -136,7 +136,7 @@ export class DutyAttendanceService {
   }
 
   private async attendanceStaffOrderMode(): Promise<AttendanceStaffOrderMode> {
-    return staffOrderModeOf(this.settings ? await this.settings.get<string>('dutyAttendance.staffOrderMode', 'PROFESSIONAL') : 'PROFESSIONAL');
+    return staffOrderModeOf(this.settings ? await this.settings.get<string>('dutyAttendance.staffOrderMode', 'MANAGEMENT_THEN_PROFESSIONAL') : 'MANAGEMENT_THEN_PROFESSIONAL');
   }
 
   /** Chỉ dò một khoảng hợp lý để không ghép nhầm nghỉ bù với ca trực đã quá xa trong lịch sử. */
@@ -671,7 +671,23 @@ export class DutyAttendanceService {
       const [item] = await tx.insert(dutyAttendanceHolidays).values({ holidayDate: dto.holidayDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', holidayYear: Number.isInteger(holidayYear) ? holidayYear : null, createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceHolidays.holidayDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', holidayYear: Number.isInteger(holidayYear) ? holidayYear : null } }).returning(); return item;
     });
   }
-  async deleteHoliday(id: number) { const [item] = await this.db.db.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ngày nghỉ'); return { deleted: true }; }
+  /** Sửa khai báo riêng bệnh viện, gồm cả đổi ngày; không cho biến lịch mẫu Nhà nước thành dữ liệu tự do một cách âm thầm. */
+  async updateHoliday(user: AccessContext, id: number, dto: AttendanceHolidayDto) {
+    this.assertCalendarDate(dto.holidayDate, 'Ngày nghỉ/lễ'); const holidayYear = Number(dto.holidayDate.slice(0, 4));
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id));
+      if (!current) throw new NotFoundException('Không tìm thấy ngày nghỉ/lễ');
+      if (current.source !== 'HOSPITAL') throw new BadRequestException('Ngày lễ từ lịch Nhà nước phải được điều chỉnh trong phương án năm; không sửa trực tiếp tại danh sách bệnh viện');
+      const [sameDate] = await tx.select({ id: dutyAttendanceHolidays.id }).from(dutyAttendanceHolidays).where(and(eq(dutyAttendanceHolidays.holidayDate, dto.holidayDate), ne(dutyAttendanceHolidays.id, id))).limit(1);
+      if (sameDate) throw new ConflictException('Đã có một ngày nghỉ/lễ khác vào ngày này; hãy gộp hoặc xóa ngày trùng trước');
+      const [workday] = await tx.select().from(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.workDate, dto.holidayDate));
+      if (workday?.source === 'HOSPITAL') throw new ConflictException('Ngày này đang là ngày làm việc do bệnh viện khai báo. Hãy xóa hoặc điều chỉnh ngày làm việc trước.');
+      if (workday) await tx.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, workday.id));
+      const [item] = await tx.update(dutyAttendanceHolidays).set({ holidayDate: dto.holidayDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', holidayYear: Number.isInteger(holidayYear) ? holidayYear : null }).where(eq(dutyAttendanceHolidays.id, id)).returning();
+      return item;
+    });
+  }
+  async deleteHoliday(id: number) { const [current] = await this.db.db.select().from(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)); if (!current) throw new NotFoundException('Không tìm thấy ngày nghỉ'); if (current.source !== 'HOSPITAL') throw new BadRequestException('Ngày lễ từ lịch Nhà nước phải được điều chỉnh trong phương án năm; không xóa trực tiếp tại danh sách bệnh viện'); await this.db.db.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, id)); return { deleted: true }; }
   /** Khai báo ngày làm việc thay thế của bệnh viện. Nếu thay thế lịch mẫu, chỉ lịch mẫu được gỡ bỏ; dữ liệu bệnh viện luôn phải được xử lý rõ ràng. */
   async saveWorkdayOverride(user: AccessContext, dto: AttendanceWorkdayOverrideDto) {
     this.assertCalendarDate(dto.workDate, 'Ngày làm việc'); const workdayYear = Number(dto.workDate.slice(0, 4));
@@ -682,7 +698,22 @@ export class DutyAttendanceService {
       const [item] = await tx.insert(dutyAttendanceWorkdayOverrides).values({ workDate: dto.workDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', workdayYear: Number.isInteger(workdayYear) ? workdayYear : null, createdBy: user.id }).onConflictDoUpdate({ target: dutyAttendanceWorkdayOverrides.workDate, set: { name: dto.name.trim(), note: dto.note?.trim() ?? '', source: 'HOSPITAL', ruleKey: '', workdayYear: Number.isInteger(workdayYear) ? workdayYear : null } }).returning(); return item;
     });
   }
-  async deleteWorkdayOverride(id: number) { const [item] = await this.db.db.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, id)).returning(); if (!item) throw new NotFoundException('Không tìm thấy ngày làm việc hoán đổi'); return { deleted: true }; }
+  async updateWorkdayOverride(user: AccessContext, id: number, dto: AttendanceWorkdayOverrideDto) {
+    this.assertCalendarDate(dto.workDate, 'Ngày làm việc'); const workdayYear = Number(dto.workDate.slice(0, 4));
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, id));
+      if (!current) throw new NotFoundException('Không tìm thấy ngày làm việc hoán đổi');
+      if (current.source !== 'HOSPITAL') throw new BadRequestException('Ngày làm bù từ lịch Nhà nước phải được điều chỉnh trong phương án năm; không sửa trực tiếp tại danh sách bệnh viện');
+      const [sameDate] = await tx.select({ id: dutyAttendanceWorkdayOverrides.id }).from(dutyAttendanceWorkdayOverrides).where(and(eq(dutyAttendanceWorkdayOverrides.workDate, dto.workDate), ne(dutyAttendanceWorkdayOverrides.id, id))).limit(1);
+      if (sameDate) throw new ConflictException('Đã có một ngày làm việc khác vào ngày này; hãy gộp hoặc xóa ngày trùng trước');
+      const [holiday] = await tx.select().from(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.holidayDate, dto.workDate));
+      if (holiday?.source === 'HOSPITAL') throw new ConflictException('Ngày này đang là ngày nghỉ/lễ do bệnh viện khai báo. Hãy xóa hoặc điều chỉnh ngày nghỉ trước.');
+      if (holiday) await tx.delete(dutyAttendanceHolidays).where(eq(dutyAttendanceHolidays.id, holiday.id));
+      const [item] = await tx.update(dutyAttendanceWorkdayOverrides).set({ workDate: dto.workDate, name: dto.name.trim(), note: dto.note?.trim() ?? '', workdayYear: Number.isInteger(workdayYear) ? workdayYear : null }).where(eq(dutyAttendanceWorkdayOverrides.id, id)).returning();
+      return item;
+    });
+  }
+  async deleteWorkdayOverride(id: number) { const [current] = await this.db.db.select().from(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, id)); if (!current) throw new NotFoundException('Không tìm thấy ngày làm việc hoán đổi'); if (current.source !== 'HOSPITAL') throw new BadRequestException('Ngày làm bù từ lịch Nhà nước phải được điều chỉnh trong phương án năm; không xóa trực tiếp tại danh sách bệnh viện'); await this.db.db.delete(dutyAttendanceWorkdayOverrides).where(eq(dutyAttendanceWorkdayOverrides.id, id)); return { deleted: true }; }
 
   private nationalHolidayConfig(dto: NationalHolidayPlanDto): NationalHolidayPlanConfig {
     return { year: dto.year, tetStartOffset: dto.tetStartOffset, tetDayCount: dto.tetDayCount, nationalDayAdjacent: dto.nationalDayAdjacent, compensateWeeklyRest: dto.compensateWeeklyRest, additionalRestDays: dto.additionalRestDays ?? [], compensatoryWorkdays: dto.compensatoryWorkdays ?? [], note: dto.note?.trim() ?? '' };

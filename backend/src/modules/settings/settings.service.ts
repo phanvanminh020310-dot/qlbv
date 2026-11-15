@@ -198,7 +198,7 @@ export class SettingsService implements OnModuleInit {
     }
     if (key === 'dutyAttendance.staffOrderMode') {
       const mode = String(value ?? '').trim().toUpperCase();
-      return ['PROFESSIONAL', 'MANAGEMENT_THEN_PROFESSIONAL'].includes(mode) ? mode : 'PROFESSIONAL';
+      return ['PROFESSIONAL', 'MANAGEMENT_THEN_PROFESSIONAL'].includes(mode) ? mode : 'MANAGEMENT_THEN_PROFESSIONAL';
     }
     const policy = policies[key];
     if (!policy) return value;
@@ -317,7 +317,7 @@ export function defaultSettings(): SettingItem[] {
     },
     {
       key: 'dutyAttendance.staffOrderMode',
-      value: 'PROFESSIONAL',
+      value: 'MANAGEMENT_THEN_PROFESSIONAL',
       group: 'attendance',
       label: 'Thứ tự nhân sự bảng chấm công',
       description: 'Chọn ưu tiên chức danh chuyên môn hoặc chức vụ quản lý/kiêm nhiệm trước chức danh chuyên môn. Mọi thứ tự đều lấy từ cột Thứ tự của danh mục; dữ liệu cũ chưa có danh mục xếp sau.',
