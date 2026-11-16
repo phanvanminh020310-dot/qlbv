@@ -46,6 +46,7 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0040_nhieu_ky_hieu_cham_cong_trong_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES
@@ -83,19 +84,36 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   // Đổi ký hiệu theo luồng cũ (không gửi note) không được làm mất ghi chú đã nhập.
   await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'P' }] });
   const updatedSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
-  assert.equal(updatedSheet.entries[`101:${today}`]?.code, 'P', 'KHTH can update an allowed all-hospital department without changing staff ownership');
+  assert.equal(updatedSheet.entries[`101:${today}`]?.code, 'P', 'API cũ một code vẫn cập nhật được đúng ký hiệu');
+  assert.deepEqual(updatedSheet.entries[`101:${today}`]?.codes, ['P'], 'API mới luôn trả danh sách ký hiệu đầy đủ');
   assert.equal(updatedSheet.entries[`101:${today}`]?.note, 'Theo dõi bàn giao ca', 'đổi ký hiệu phải giữ ghi chú tự do của ô chấm công');
 
+  // Danh sách codes thay thế chính xác các ô tick: cùng ngày có thể đồng thời có Trực và Phép.
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, codes: ['P', 'T'] }] });
+  const multiCodeSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
+  assert.deepEqual(multiCodeSheet.entries[`101:${today}`]?.codes, ['T', 'P'], 'nhiều ký hiệu được lưu, trả theo thứ tự cấu hình và không mất ghi chú');
+  assert.equal(multiCodeSheet.entries[`101:${today}`]?.code, 'T, P', 'chuỗi code cũ vẫn có nội dung hiển thị tương thích');
+  assert.equal(multiCodeSheet.rowValues['101']?.T, 1, 'tổng ký hiệu thứ nhất vẫn được tính');
+  assert.equal(multiCodeSheet.rowValues['101']?.P, 1, 'tổng ký hiệu thứ hai cùng ngày cũng được tính');
+
   // Ghi chú là dữ liệu theo ngày, không còn bị buộc phải có ký hiệu.
-  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: null, note: 'Ghi chú ngày không có ký hiệu' }] });
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, codes: [], note: 'Ghi chú ngày không có ký hiệu' }] });
   const noteOnlySheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
-  assert.deepEqual(noteOnlySheet.entries[`101:${today}`], { code: '', note: 'Ghi chú ngày không có ký hiệu' }, 'xóa ký hiệu không được xóa ghi chú cùng ngày');
+  assert.deepEqual(noteOnlySheet.entries[`101:${today}`], { code: '', codes: [], note: 'Ghi chú ngày không có ký hiệu' }, 'xóa mọi ký hiệu không được xóa ghi chú cùng ngày');
   await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'T' }] });
   const codeRestoredSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
-  assert.deepEqual(codeRestoredSheet.entries[`101:${today}`], { code: 'T', note: 'Ghi chú ngày không có ký hiệu' }, 'nhập lại ký hiệu không được biến ghi chú thành thuộc tính của ký hiệu');
+  assert.deepEqual(codeRestoredSheet.entries[`101:${today}`], { code: 'T', codes: ['T'], note: 'Ghi chú ngày không có ký hiệu' }, 'nhập lại ký hiệu không được biến ghi chú thành thuộc tính của ký hiệu');
   await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, note: '' }] });
   const noteClearedSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
-  assert.deepEqual(noteClearedSheet.entries[`101:${today}`], { code: 'T', note: '' }, 'xóa ghi chú không làm mất ký hiệu đang có');
+  assert.deepEqual(noteClearedSheet.entries[`101:${today}`], { code: 'T', codes: ['T'], note: '' }, 'xóa ghi chú không làm mất ký hiệu đang có');
+
+  // Ký hiệu đã ngừng không được chọn mới, nhưng một ô lịch sử đang có vẫn phải giữ/bỏ được an toàn.
+  const dutyCode = (await service.codes()).find((item) => item.code === 'T'); assert.ok(dutyCode);
+  await service.updateCode(dutyCode.id, { active: false });
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, codes: ['T', 'P'] }] });
+  const retainedRetiredCode = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
+  assert.deepEqual(retainedRetiredCode.entries[`101:${today}`]?.codes, ['T', 'P'], 'ký hiệu lịch sử đã ngừng vẫn được giữ khi tick thêm mã đang dùng');
+  await assert.rejects(service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: '2099-01-01', codes: ['T'] }] }), /đã ngừng sử dụng/, 'không được thêm mới ký hiệu đã ngừng vào ngày khác');
 });
 
 
@@ -113,6 +131,7 @@ test('ngày cuối tuần được đánh dấu riêng; ngày đã qua khóa ở
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0040_nhieu_ky_hieu_cham_cong_trong_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES

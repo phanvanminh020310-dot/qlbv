@@ -32,6 +32,7 @@ async function setup(lockPolicy?: string) {
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0038_uu_tien_chuc_vu_khi_sap_xep_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0040_nhieu_ky_hieu_cham_cong_trong_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES

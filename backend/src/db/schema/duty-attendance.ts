@@ -212,3 +212,22 @@ export const dutyAttendanceEntries = pgTable('duty_attendance_entries', {
   index('duty_attendance_entries_dept_month_idx').on(t.departmentId, t.workDate),
   index('duty_attendance_entries_code_idx').on(t.codeId),
 ]);
+
+/**
+ * Ký hiệu theo ngày dạng nhiều lựa chọn. dutyAttendanceEntries vẫn được giữ làm
+ * dòng tương thích một ký hiệu, còn bảng này là nguồn đầy đủ khi cùng ngày có nhiều mã.
+ */
+export const dutyAttendanceEntryCodes = pgTable('duty_attendance_entry_codes', {
+  id: serial('id').primaryKey(),
+  departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  workDate: date('work_date').notNull(),
+  codeId: integer('code_id').notNull().references(() => dutyAttendanceCodes.id, { onDelete: 'restrict' }),
+  updatedBy: integer('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('duty_attendance_entry_codes_user_day_code_uq').on(t.userId, t.workDate, t.codeId),
+  index('duty_attendance_entry_codes_dept_month_idx').on(t.departmentId, t.workDate, t.userId),
+  index('duty_attendance_entry_codes_code_idx').on(t.codeId),
+]);

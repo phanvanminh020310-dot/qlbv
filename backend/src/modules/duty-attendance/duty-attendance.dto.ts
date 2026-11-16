@@ -20,8 +20,10 @@ export class AttendanceMonthQueryDto {
 export class AttendanceEntryDto {
   @IsInt() userId!: number;
   @IsDateString() workDate!: string;
-  /** Gửi rỗng/null để xóa ký hiệu; bỏ hẳn trường code để chỉ lưu ghi chú ngày. */
+  /** Tương thích API cũ: một mã; gửi rỗng/null để xóa khi không truyền codes. */
   @IsOptional() @IsString() @MaxLength(16) code?: string | null;
+  /** Danh sách mã ký hiệu của cùng một ngày; truyền [] để bỏ tất cả ký hiệu. */
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) @MaxLength(16, { each: true }) codes?: string[];
   /** Ghi chú độc lập của nhân viên trong ngày; có thể tồn tại khi không có ký hiệu. */
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }

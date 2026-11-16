@@ -44,7 +44,8 @@ export interface AttendanceMonth {
   /** Khoảng truy ca trực trước đó để phân loại nghỉ bù. */
   restPairLookbackDays: number;
   staff: AttendanceStaff[];
-  entries: Record<string, { code: string; note: string }>;
+  /** code là chuỗi hiển thị tương thích; codes là danh sách ký hiệu đầy đủ của ngày. */
+  entries: Record<string, { code: string; codes: string[]; note: string }>;
   /** Giá trị cột tự nhập đang có, dùng khóa staffKey:columnId. */
   manualValues: Record<string, string>;
   /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập staffKey:columnId. */
@@ -73,8 +74,8 @@ const attendanceScopeParams = (month: string, departmentIds: number[]) => {
 export const dutyAttendanceApi = {
   departments: () => get<AttendanceDepartmentScope>('/duty-attendance/departments'),
   month: (month: string, departmentIds: number[]) => get<AttendanceMonth>(`/duty-attendance/month?${attendanceScopeParams(month, departmentIds)}`),
-  /** code và note độc lập: bỏ code để chỉ lưu ghi chú ngày; code rỗng/null để xóa ký hiệu. */
-  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, departmentId }),
+  /** codes thay thế toàn bộ danh sách tick của ngày; code đơn vẫn được giữ cho ứng dụng khách cũ. Ghi chú độc lập với ký hiệu. */
+  save: (entries: Array<{ userId: number; workDate: string; code?: string | null; codes?: string[]; note?: string }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, departmentId }),
   saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, departmentId }),
   exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentIds: number[], includeDailyNotes = false) => { const params = attendanceScopeParams(month, departmentIds); if (format === 'xlsx' && includeDailyNotes) params.set('includeDailyNotes', 'true'); return `/duty-attendance/export/${format}?${params}`; },
   codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),

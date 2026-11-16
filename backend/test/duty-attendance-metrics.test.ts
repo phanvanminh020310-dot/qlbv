@@ -38,6 +38,30 @@ test('biến nghiệp vụ tính Ngày công theo ngày làm việc, lễ ưu ti
   assert.equal(result.values.SYS_TANG_CUONG_NGAY_NGHI, 1);
 });
 
+test('nhiều ký hiệu cùng ngày đều được cộng, và nghỉ bù không bao giờ ghép ca cùng ngày', () => {
+  const result = calculateAttendanceMetrics({
+    monthDates: ['2026-08-03', '2026-08-04'],
+    holidayDates: [],
+    codes,
+    restPairLookbackDays: 14,
+    entries: [
+      // Cùng ngày vừa Trực, vừa Tăng cường và nghỉ phép: cả ba phải tính độc lập.
+      { date: '2026-08-03', code: 'T' },
+      { date: '2026-08-03', code: 'TC' },
+      { date: '2026-08-03', code: 'P' },
+      // ND chỉ được ghép nguồn Trực của ngày trước, không nhầm nguồn TC gần đó.
+      { date: '2026-08-04', code: 'ND' },
+      // N cùng ngày với cả Trực/TC không được tự ghép chính ngày đó.
+      { date: '2026-08-03', code: 'N' },
+    ],
+  });
+  assert.equal(result.values.SYS_TRUC_NGAY_THUONG, 1);
+  assert.equal(result.values.SYS_TANG_CUONG_NGAY_THUONG, 1);
+  assert.equal(result.values.SYS_NGHI_TRUC_NGAY_THUONG, 1, 'ND 04/08 ghép ca Trực 03/08');
+  assert.equal(result.values.SYS_NGHI_BU_CHUA_GAN, 1, 'N 03/08 không được ghép T/TC cùng ngày');
+  assert.equal(result.values.SYS_NGAY_CONG, 0, 'P và ND trừ từng ngày công riêng; N cùng ngày không làm âm thêm');
+});
+
 test('nghỉ bù lấy loại ngày của ca gần nhất trước đó; trực và tăng cường được tách riêng', () => {
   const result = calculateAttendanceMetrics({
     monthDates: ['2026-08-02', '2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07'],

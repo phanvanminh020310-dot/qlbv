@@ -77,18 +77,20 @@ export function calculateAttendanceMetrics(input: {
   const warnings: string[] = [];
   const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
   const currentDates = new Set(input.monthDates);
-  const currentEntries = new Map(input.entries.filter((entry) => currentDates.has(entry.date)).map((entry) => [entry.date, entry]));
+  const currentEntries = input.entries.filter((entry) => currentDates.has(entry.date));
 
   for (const date of input.monthDates) {
     const kind = attendanceDayClass(date, holidaySet, workdaySet);
     if (kind === 'WEEKDAY') values.SYS_NGAY_CONG += 1;
-    const entry = currentEntries.get(date);
-    const code = entry ? codes.get(entry.code.toUpperCase()) : undefined;
-    if (!code) continue;
-    const value = count(code.countValue);
-    if (kind === 'WEEKDAY' && code.deductsWorkday) values.SYS_NGAY_CONG -= value;
-    if (code.calculationRole === 'DUTY') values[metricKey('SYS_TRUC', kind)] += value;
-    if (code.calculationRole === 'REINFORCEMENT') values[metricKey('SYS_TANG_CUONG', kind)] += value;
+    // Một ngày có thể có nhiều ký hiệu; từng ký hiệu vẫn được tính theo cấu hình riêng.
+    for (const entry of currentEntries.filter((item) => item.date === date)) {
+      const code = codes.get(entry.code.toUpperCase());
+      if (!code) continue;
+      const value = count(code.countValue);
+      if (kind === 'WEEKDAY' && code.deductsWorkday) values.SYS_NGAY_CONG -= value;
+      if (code.calculationRole === 'DUTY') values[metricKey('SYS_TRUC', kind)] += value;
+      if (code.calculationRole === 'REINFORCEMENT') values[metricKey('SYS_TANG_CUONG', kind)] += value;
+    }
   }
   values.SYS_NGAY_CONG = Math.max(0, values.SYS_NGAY_CONG);
 
@@ -104,6 +106,8 @@ export function calculateAttendanceMetrics(input: {
     let matched: MetricEntry | undefined;
     for (let previous = index - 1; previous >= 0; previous -= 1) {
       const candidate = timeline[previous];
+      // Nghỉ bù luôn phải dò một ngày trực trước đó, không ghép hai ký hiệu cùng ngày.
+      if (candidate.date >= rest.date) continue;
       const gap = Math.round((toDate(rest.date).getTime() - toDate(candidate.date).getTime()) / 86_400_000);
       if (gap > pairLimit) break;
       const dutyCode = codes.get(candidate.code.toUpperCase());
