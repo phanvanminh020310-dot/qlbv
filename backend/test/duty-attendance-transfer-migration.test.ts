@@ -17,9 +17,12 @@ test('migration lịch sử chuyển khoa chỉ thêm mốc nền và không s�
   `);
   const transfer = migration('0035_lich_su_chuyen_khoa_cham_cong.sql');
   await pg.exec(transfer); await pg.exec(transfer);
+  await pg.exec(migration('0039_ghi_chu_cham_cong_theo_ngay.sql'));
   const assignments = await pg.query<{ user_id: number; department_id: number; effective_from: string }>('SELECT user_id, department_id, effective_from::text FROM duty_attendance_department_assignments ORDER BY user_id, effective_from');
   assert.deepEqual(assignments.rows, [{ user_id: 1, department_id: 11, effective_from: '1900-01-01' }]);
   const entry = await pg.query<{ department_id: number; note: string }>('SELECT department_id, note FROM duty_attendance_entries WHERE user_id = 1 AND work_date = \'2026-10-01\'');
   assert.deepEqual(entry.rows, [{ department_id: 10, note: 'dữ liệu cũ' }], 'migration không đổi khoa/nội dung dòng chấm công lịch sử');
+  const dailyNote = await pg.query<{ department_id: number; note: string }>('SELECT department_id, note FROM duty_attendance_daily_notes WHERE user_id = 1 AND work_date = \'2026-10-01\'');
+  assert.deepEqual(dailyNote.rows, [{ department_id: 10, note: 'dữ liệu cũ' }], 'migration sao chép ghi chú cũ sang dữ liệu ghi chú theo ngày, không làm mất lịch sử');
   await assert.rejects(pg.exec(`INSERT INTO duty_attendance_entries (department_id, user_id, work_date, code_id) VALUES (11, 1, '2026-10-01', (SELECT id FROM duty_attendance_codes WHERE code = 'T'))`), /unique|duplicate/i, 'giữ nguyên chính sách một nhân viên-một ngày, không nhân đôi dữ liệu qua khoa');
 });

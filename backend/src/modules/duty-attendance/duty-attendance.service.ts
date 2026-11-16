@@ -8,6 +8,7 @@ import {
   dutyAttendanceCodeGroups,
   dutyAttendanceCodes,
   dutyAttendanceColumns,
+  dutyAttendanceDailyNotes,
   dutyAttendanceDepartmentAssignments,
   dutyAttendanceEntries,
   dutyAttendanceHolidays,
@@ -282,7 +283,7 @@ export class DutyAttendanceService {
     const { from, to } = monthBounds(month);
     const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
-    const [department, allCodes, metricHolidayRows, metricWorkdayRows, records, previousRecords, manualRows, departmentAssignmentRows, currentDepartmentUsers] = await Promise.all([
+    const [department, allCodes, metricHolidayRows, metricWorkdayRows, records, dailyNotes, previousRecords, manualRows, departmentAssignmentRows, currentDepartmentUsers] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
       // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
       // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
@@ -290,6 +291,7 @@ export class DutyAttendanceService {
       this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, lookbackFrom), lt(dutyAttendanceHolidays.holidayDate, to))),
       this.db.db.select().from(dutyAttendanceWorkdayOverrides).where(and(gte(dutyAttendanceWorkdayOverrides.workDate, lookbackFrom), lt(dutyAttendanceWorkdayOverrides.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
+      this.db.db.select({ userId: dutyAttendanceDailyNotes.userId, workDate: dutyAttendanceDailyNotes.workDate, note: dutyAttendanceDailyNotes.note }).from(dutyAttendanceDailyNotes).where(and(eq(dutyAttendanceDailyNotes.departmentId, departmentId), gte(dutyAttendanceDailyNotes.workDate, from), lt(dutyAttendanceDailyNotes.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, lookbackFrom), lt(dutyAttendanceEntries.workDate, from))),
       this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId, value: dutyAttendanceManualValues.value }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, month))),
       this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId }).from(dutyAttendanceDepartmentAssignments).where(and(eq(dutyAttendanceDepartmentAssignments.departmentId, departmentId), lt(dutyAttendanceDepartmentAssignments.effectiveFrom, to))),
@@ -305,6 +307,7 @@ export class DutyAttendanceService {
       ...departmentAssignmentRows.map((row) => row.userId),
       ...currentDepartmentUsers.map((row) => row.id),
       ...records.map((row) => row.userId),
+      ...dailyNotes.map((row) => row.userId),
       ...previousRecords.map((row) => row.userId),
       ...manualRows.map((row) => row.userId),
     ])];
@@ -342,7 +345,7 @@ export class DutyAttendanceService {
       : [];
     const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
     for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), { departmentId: assignment.departmentId, effectiveFrom: assignment.effectiveFrom }]);
-    const retainedIds = new Set([...records.map((row) => row.userId), ...previousRecords.map((row) => row.userId), ...manualRows.map((row) => row.userId)]);
+    const retainedIds = new Set([...records.map((row) => row.userId), ...dailyNotes.map((row) => row.userId), ...previousRecords.map((row) => row.userId), ...manualRows.map((row) => row.userId)]);
     const staff = peopleWithManagement
       .filter((person) => {
         if (person.deletedAt) return false;
@@ -360,8 +363,18 @@ export class DutyAttendanceService {
       const date = `${month}-${String(index + 1).padStart(2, '0')}`; const dow = new Date(`${date}T00:00:00`).getDay(); const isWeekend = dow === 0 || dow === 6; const holiday = holidays.find((item) => item.holidayDate === date); const workday = workdayOverrides.find((item) => item.workDate === date);
       return { date, day: index + 1, weekday: vnWeekday(date), isWeekend, isPast: date < today, isLocked: isDateLocked(date, today, lockPolicy), isRest: holiday ? true : isWeekend && !workday, holidayName: holiday?.name ?? '', workdayName: !holiday ? workday?.name ?? '' : '', isWorkingOverride: !!workday && !holiday };
     });
-    const entryByCell = new Map(records.map((record) => [`${record.userId}:${record.workDate}`, { code: record.code, note: record.note }]));
-    for (const [cell, entry] of entryOverrides) { if (!entry.code) entryByCell.delete(cell); else entryByCell.set(cell, { code: entry.code, note: entry.note ?? '' }); }
+    // daily_notes là nguồn ghi chú chính; record.note chỉ là dữ liệu tương thích của phiên bản cũ.
+    const noteByCell = new Map(dailyNotes.map((item) => [`${item.userId}:${item.workDate}`, item.note]));
+    const entryByCell = new Map(records.map((record) => {
+      const cell = `${record.userId}:${record.workDate}`;
+      return [cell, { code: record.code, note: noteByCell.get(cell) ?? record.note }];
+    }));
+    // Ghi chú không cần ký hiệu vẫn được trả về bảng với code rỗng.
+    for (const [cell, note] of noteByCell) if (!entryByCell.has(cell)) entryByCell.set(cell, { code: '', note });
+    for (const [cell, entry] of entryOverrides) {
+      const current = entryByCell.get(cell); const code = entry.code ?? current?.code ?? ''; const note = entry.note ?? current?.note ?? '';
+      if (!code && !note) entryByCell.delete(cell); else entryByCell.set(cell, { code, note });
+    }
     const entries = Object.fromEntries(entryByCell);
     const manualColumns = layout.columns.filter((column) => column.columnType === 'MANUAL');
     const formulaColumns = layout.columns.filter((column) => column.columnType === 'FORMULA');
@@ -385,7 +398,7 @@ export class DutyAttendanceService {
         monthDates: dates.map((date) => date.date), holidayDates, workdayDates, codes: allCodes,
         entries: [
           ...previousRecords.filter((entry) => entry.userId === person.id).map((entry) => ({ date: entry.workDate, code: entry.code })),
-          ...dates.flatMap((date) => { const entry = entryByCell.get(`${person.id}:${date.date}`); return entry ? [{ date: date.date, code: entry.code }] : []; }),
+          ...dates.flatMap((date) => { const entry = entryByCell.get(`${person.id}:${date.date}`); return entry?.code ? [{ date: date.date, code: entry.code }] : []; }),
         ],
         restPairLookbackDays,
       });
@@ -467,6 +480,10 @@ export class DutyAttendanceService {
     return this.buildBoard(await this.deptIds(user, q.departmentId, q.departmentIds), q.month);
   }
 
+  /**
+   * Ký hiệu và ghi chú cùng thuộc một ngày nhưng được lưu độc lập: có thể ghi chú
+   * một ngày trống ký hiệu, xóa ký hiệu vẫn giữ ghi chú, và đổi ký hiệu không xóa ghi chú.
+   */
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
     const departmentId = await this.deptId(user, dto.departmentId);
     if (!dto.entries.length) return { saved: 0 };
@@ -478,47 +495,72 @@ export class DutyAttendanceService {
       if (isDateLocked(date, today, lockPolicy)) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} theo chế độ khóa bảng hiện tại`);
     }
     const personIds = [...new Set(dto.entries.map((entry) => entry.userId))];
-    const [people, activeCodes, existingEntries, assignmentRows] = await Promise.all([
+    const [people, activeCodes, existingEntries, existingNotes, assignmentRows] = await Promise.all([
       this.db.db.select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, personIds)),
       this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes).where(eq(dutyAttendanceCodes.active, true)),
-      this.db.db.select({ id: dutyAttendanceEntries.id, userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, departmentId: dutyAttendanceEntries.departmentId }).from(dutyAttendanceEntries).where(and(inArray(dutyAttendanceEntries.userId, personIds), inArray(dutyAttendanceEntries.workDate, dates))),
+      this.db.db.select({ id: dutyAttendanceEntries.id, userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, departmentId: dutyAttendanceEntries.departmentId, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).where(and(inArray(dutyAttendanceEntries.userId, personIds), inArray(dutyAttendanceEntries.workDate, dates))),
+      this.db.db.select({ id: dutyAttendanceDailyNotes.id, userId: dutyAttendanceDailyNotes.userId, workDate: dutyAttendanceDailyNotes.workDate, departmentId: dutyAttendanceDailyNotes.departmentId, note: dutyAttendanceDailyNotes.note }).from(dutyAttendanceDailyNotes).where(and(inArray(dutyAttendanceDailyNotes.userId, personIds), inArray(dutyAttendanceDailyNotes.workDate, dates))),
       this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId, departmentId: dutyAttendanceDepartmentAssignments.departmentId, effectiveFrom: dutyAttendanceDepartmentAssignments.effectiveFrom }).from(dutyAttendanceDepartmentAssignments).where(inArray(dutyAttendanceDepartmentAssignments.userId, personIds)).orderBy(asc(dutyAttendanceDepartmentAssignments.userId), asc(dutyAttendanceDepartmentAssignments.effectiveFrom)),
     ]);
     if (people.length !== personIds.length) throw new NotFoundException('Không tìm thấy nhân viên cần chấm công');
     const peopleById = new Map(people.map((person) => [person.id, person]));
     const assignmentsByUser = new Map<number, Array<{ departmentId: number; effectiveFrom: string }>>();
     for (const assignment of assignmentRows) assignmentsByUser.set(assignment.userId, [...(assignmentsByUser.get(assignment.userId) ?? []), assignment]);
-    const existingByCell = new Map(existingEntries.map((entry) => [`${entry.userId}:${entry.workDate}`, entry]));
+    const existingEntryByCell = new Map(existingEntries.map((entry) => [`${entry.userId}:${entry.workDate}`, entry]));
+    const existingNoteByCell = new Map(existingNotes.map((item) => [`${item.userId}:${item.workDate}`, item]));
     const byCode = new Map(activeCodes.map((code) => [code.code.toUpperCase(), code.id]));
+
     for (const entry of dto.entries) {
-      const code = entry.code?.trim().toUpperCase() || null;
+      const codeProvided = entry.code !== undefined;
+      const code = codeProvided ? entry.code?.trim().toUpperCase() || null : undefined;
+      const noteProvided = entry.note !== undefined;
+      const note = noteProvided ? entry.note!.trim() : undefined;
       if (code && !byCode.has(code)) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
       const person = peopleById.get(entry.userId)!;
-      const existing = existingByCell.get(`${entry.userId}:${entry.workDate}`);
-      // Một ngày có đúng một dòng chấm công xuyên khoa theo khóa lịch sử hiện hữu.
-      // Tuyệt đối không dùng upsert để đổi department_id của dòng đã ghi.
-      if (existing) {
-        if (existing.departmentId !== departmentId) throw new ConflictException('Dòng chấm công ngày này đã thuộc khoa/phòng khác; hệ thống giữ nguyên khoa lịch sử để tránh sai lệch dữ liệu');
-        continue;
-      }
-      if (!code) continue;
-      if (person.deletedAt || !person.active) throw new ForbiddenException('Chỉ được chấm công mới cho nhân viên đang hoạt động');
+      const existingEntry = existingEntryByCell.get(`${entry.userId}:${entry.workDate}`);
+      const existingNote = existingNoteByCell.get(`${entry.userId}:${entry.workDate}`);
+      // Cả ký hiệu và ghi chú đều mang khoa lịch sử: không được chuyển dữ liệu giữa khoa ngầm định.
+      if (existingEntry && existingEntry.departmentId !== departmentId) throw new ConflictException('Dòng chấm công ngày này đã thuộc khoa/phòng khác; hệ thống giữ nguyên khoa lịch sử để tránh sai lệch dữ liệu');
+      if (existingNote && existingNote.departmentId !== departmentId) throw new ConflictException('Ghi chú ngày này đã thuộc khoa/phòng khác; hệ thống giữ nguyên khoa lịch sử để tránh sai lệch dữ liệu');
+      const isNewCode = codeProvided && !!code && !existingEntry;
+      const isNewNote = noteProvided && !!note && !existingNote;
+      if (!isNewCode && !isNewNote) continue;
+      if (person.deletedAt || !person.active) throw new ForbiddenException('Chỉ được ghi dữ liệu mới cho nhân viên đang hoạt động');
       const actualDepartment = this.departmentAtDate(assignmentsByUser.get(person.id) ?? [], person.departmentId, entry.workDate);
       if (actualDepartment !== departmentId) throw new ForbiddenException(`Nhân viên không thuộc khoa/phòng này vào ngày ${fmtDate(entry.workDate)}`);
     }
+
     await this.db.transaction(async (tx) => {
       for (const entry of dto.entries) {
-        const existing = existingByCell.get(`${entry.userId}:${entry.workDate}`);
-        const code = entry.code?.trim().toUpperCase();
-        if (!code) {
-          if (existing) await tx.delete(dutyAttendanceEntries).where(eq(dutyAttendanceEntries.id, existing.id));
-          continue;
+        const cell = `${entry.userId}:${entry.workDate}`;
+        const existingEntry = existingEntryByCell.get(cell);
+        const existingNote = existingNoteByCell.get(cell);
+        const codeProvided = entry.code !== undefined;
+        const code = codeProvided ? entry.code?.trim().toUpperCase() || null : undefined;
+        const noteProvided = entry.note !== undefined;
+        const note = noteProvided ? entry.note!.trim() : undefined;
+
+        if (codeProvided) {
+          if (!code) {
+            if (existingEntry) await tx.delete(dutyAttendanceEntries).where(eq(dutyAttendanceEntries.id, existingEntry.id));
+          } else {
+            const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
+            if (existingEntry) {
+              await tx.update(dutyAttendanceEntries).set({ codeId, ...(noteProvided ? { note } : {}), updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existingEntry.id));
+            } else {
+              await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: noteProvided ? note! : existingNote?.note ?? '', updatedBy: user.id });
+            }
+          }
         }
-        const codeId = byCode.get(code); if (!codeId) throw new BadRequestException(`Ký hiệu “${code}” không tồn tại hoặc đã ngừng sử dụng`);
-        if (existing) {
-          await tx.update(dutyAttendanceEntries).set({ codeId, ...(entry.note !== undefined ? { note: entry.note.trim() } : {}), updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existing.id));
-        } else {
-          await tx.insert(dutyAttendanceEntries).values({ departmentId, userId: entry.userId, workDate: entry.workDate, codeId, note: entry.note?.trim() ?? '', updatedBy: user.id });
+
+        if (noteProvided) {
+          if (!note) {
+            if (existingNote) await tx.delete(dutyAttendanceDailyNotes).where(eq(dutyAttendanceDailyNotes.id, existingNote.id));
+          } else {
+            await tx.insert(dutyAttendanceDailyNotes).values({ departmentId, userId: entry.userId, workDate: entry.workDate, note, updatedBy: user.id }).onConflictDoUpdate({ target: [dutyAttendanceDailyNotes.userId, dutyAttendanceDailyNotes.workDate], set: { note, updatedBy: user.id, updatedAt: new Date() } });
+          }
+          // Cột note cũ được giữ đồng bộ cho bản sao lưu/tích hợp phiên bản cũ; nguồn đọc chính là daily_notes.
+          if (existingEntry && !codeProvided) await tx.update(dutyAttendanceEntries).set({ note: note ?? '', updatedBy: user.id, updatedAt: new Date() }).where(eq(dutyAttendanceEntries.id, existingEntry.id));
         }
       }
     });
@@ -798,13 +840,15 @@ export class DutyAttendanceService {
   private matrix(data: Board) { const columns = this.displayColumns(data); return data.staff.map((person) => columns.map((column) => this.cellValue(person, column, data))); }
   private async exportData(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]) { return this.month(user, { month, departmentId, departmentIds }); }
 
-  async exportExcel(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]): Promise<AttendanceExport> {
+  async exportExcel(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[], includeDailyNotes = false): Promise<AttendanceExport> {
     const data = await this.exportData(user, month, departmentId, departmentIds); const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('Cham cong'); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const total = columns.length;
     sheet.mergeCells(1, 1, 1, total); sheet.getCell('A1').value = data.department.hospital.toUpperCase(); sheet.getCell('A1').font = { name: 'Times New Roman', bold: true, size: 12 }; sheet.getCell('A1').alignment = { horizontal: 'center' };
     sheet.mergeCells(2, 1, 2, total); sheet.getCell('A2').value = 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC'; sheet.getCell('A2').font = { name: 'Times New Roman', bold: true, size: 15 }; sheet.getCell('A2').alignment = { horizontal: 'center' };
     sheet.mergeCells(3, 1, 3, total); sheet.getCell('A3').value = `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`; sheet.getCell('A3').alignment = { horizontal: 'center' };
     let start = 1; for (const group of groups) { const end = start + group.columns.length - 1; if (start !== end) sheet.mergeCells(4, start, 4, end); const cell = sheet.getCell(4, start); cell.value = group.section.name; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(group.section.color) } }; cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.alignment = { horizontal: 'center' }; start = end + 1; }
     sheet.addRow(columns.map((column) => column.name)); sheet.addRow(columns.map((column) => column.source === 'DAY' ? column.day!.weekday : ''));
+    const dailyNoteRows = new Set<number>();
+    const fullNameColumn = columns.findIndex((column) => column.key === 'FULL_NAME');
     for (const person of data.staff) {
       const row = sheet.addRow(columns.map((column) => this.cellValue(person, column, data)));
       // ExcelJS receives all persisted manual values as strings. Configured manual NUMBER values
@@ -814,11 +858,28 @@ export class DutyAttendanceService {
         const raw = String(this.cellValue(person, column, data) ?? '').trim(); if (!raw) return;
         const numeric = Number(raw.replace(',', '.')); if (Number.isFinite(numeric)) row.getCell(index + 1).value = numeric;
       });
+      // Tùy chọn Excel: mỗi nhân viên có ghi chú được thêm một dòng ngay dưới dòng chấm công,
+      // đặt ghi chú đúng cột ngày để không bị hiểu nhầm là ghi chú của ký hiệu.
+      if (includeDailyNotes) {
+        const notes = columns.map((column) => column.source === 'DAY' ? (data.entries[`${person.key}:${column.day!.date}`]?.note ?? '') : '');
+        if (notes.some((note) => note.trim())) {
+          if (fullNameColumn >= 0) notes[fullNameColumn] = 'Ghi chú ngày';
+          const noteRow = sheet.addRow(notes); dailyNoteRows.add(noteRow.number);
+        }
+      }
     }
     sheet.views = [{ state: 'frozen', xSplit: Math.min(4, total), ySplit: 6 }];
     columns.forEach((column, index) => { sheet.getColumn(index + 1).width = column.key === 'FULL_NAME' ? 28 : column.key === 'TITLE' ? 20 : column.key === 'USERNAME' ? 16 : column.source === 'DAY' ? 5 : 13; });
     [4, 5, 6].forEach((row) => sheet.getRow(row).eachCell((cell) => { cell.font = { ...(cell.font ?? {}), bold: true, name: 'Times New Roman', size: 9 }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }; if (row !== 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EAF2F8' } }; }));
-    for (let row = 7; row <= sheet.rowCount; row++) sheet.getRow(row).eachCell((cell) => { cell.alignment = { horizontal: Number(cell.col) > 4 ? 'center' : 'left', vertical: 'middle' }; cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }; });
+    for (let row = 7; row <= sheet.rowCount; row++) {
+      const isDailyNoteRow = dailyNoteRows.has(row); const excelRow = sheet.getRow(row);
+      if (isDailyNoteRow) excelRow.height = 30;
+      excelRow.eachCell((cell) => {
+        cell.alignment = { horizontal: isDailyNoteRow ? 'left' : Number(cell.col) > 4 ? 'center' : 'left', vertical: 'middle', wrapText: isDailyNoteRow };
+        cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+        if (isDailyNoteRow) { cell.font = { ...(cell.font ?? {}), italic: true, color: { argb: 'FF475569' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } }; }
+      });
+    }
     return { buffer: Buffer.from(await workbook.xlsx.writeBuffer()), fileName: `BANG_CHAM_CONG_${month}_${data.department.id}.xlsx`, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
   }
 

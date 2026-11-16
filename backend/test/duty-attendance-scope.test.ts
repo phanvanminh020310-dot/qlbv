@@ -45,6 +45,7 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0034_ma_nhan_vien_lien_thong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES
@@ -84,6 +85,17 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   const updatedSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
   assert.equal(updatedSheet.entries[`101:${today}`]?.code, 'P', 'KHTH can update an allowed all-hospital department without changing staff ownership');
   assert.equal(updatedSheet.entries[`101:${today}`]?.note, 'Theo dõi bàn giao ca', 'đổi ký hiệu phải giữ ghi chú tự do của ô chấm công');
+
+  // Ghi chú là dữ liệu theo ngày, không còn bị buộc phải có ký hiệu.
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: null, note: 'Ghi chú ngày không có ký hiệu' }] });
+  const noteOnlySheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
+  assert.deepEqual(noteOnlySheet.entries[`101:${today}`], { code: '', note: 'Ghi chú ngày không có ký hiệu' }, 'xóa ký hiệu không được xóa ghi chú cùng ngày');
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, code: 'T' }] });
+  const codeRestoredSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
+  assert.deepEqual(codeRestoredSheet.entries[`101:${today}`], { code: 'T', note: 'Ghi chú ngày không có ký hiệu' }, 'nhập lại ký hiệu không được biến ghi chú thành thuộc tính của ký hiệu');
+  await service.save(coordinator, { departmentId: 11, entries: [{ userId: 101, workDate: today, note: '' }] });
+  const noteClearedSheet = await service.month(coordinator, { month: today.slice(0, 7), departmentId: 11 });
+  assert.deepEqual(noteClearedSheet.entries[`101:${today}`], { code: 'T', note: '' }, 'xóa ghi chú không làm mất ký hiệu đang có');
 });
 
 
@@ -100,6 +112,7 @@ test('ngày cuối tuần được đánh dấu riêng; ngày đã qua khóa ở
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0034_ma_nhan_vien_lien_thong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES

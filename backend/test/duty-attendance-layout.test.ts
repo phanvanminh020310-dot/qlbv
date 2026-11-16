@@ -31,6 +31,7 @@ async function setup(lockPolicy?: string) {
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0035_lich_su_chuyen_khoa_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0038_uu_tien_chuc_vu_khi_sap_xep_cham_cong.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, manv, username, password_hash, full_name, title, department_id, active) VALUES
@@ -140,6 +141,15 @@ test('bố cục chấm công có 4 phần mặc định, MANV, tổng ký hiệ
   assert.equal(typeof sheet.getRow(7).getCell(numericIndex).value, 'number', 'cột NUMBER tự nhập phải là số thực trong Excel');
   assert.equal(sheet.getRow(7).getCell(numericIndex).value, 1);
   assert.equal(sheet.getRow(7).getCell(textIndex).value, 'Dòng một,\n  Dòng hai ', 'cột TEXT tự nhập giữ nguyên dấu phẩy, khoảng trắng và xuống dòng');
+
+  // Excel mặc định không bị nặng thêm; chỉ khi chọn tùy chọn mới có dòng ghi chú theo ngày.
+  await service.save(user, { departmentId: 10, entries: [{ userId: 1, workDate: today, code: null, note: 'Bàn giao hồ sơ lúc cuối ngày' }] });
+  const exportWithoutNotes = await service.exportExcel(user, month, 10, undefined, false); const workbookWithoutNotes = new ExcelJS.Workbook(); await workbookWithoutNotes.xlsx.load(exportWithoutNotes.buffer.buffer.slice(exportWithoutNotes.buffer.byteOffset, exportWithoutNotes.buffer.byteOffset + exportWithoutNotes.buffer.byteLength) as ArrayBuffer); const withoutNotesSheet = workbookWithoutNotes.getWorksheet('Cham cong'); assert.ok(withoutNotesSheet);
+  const exportWithNotes = await service.exportExcel(user, month, 10, undefined, true); const workbookWithNotes = new ExcelJS.Workbook(); await workbookWithNotes.xlsx.load(exportWithNotes.buffer.buffer.slice(exportWithNotes.buffer.byteOffset, exportWithNotes.buffer.byteOffset + exportWithNotes.buffer.byteLength) as ArrayBuffer); const withNotesSheet = workbookWithNotes.getWorksheet('Cham cong'); assert.ok(withNotesSheet);
+  const valuesOf = (source: ExcelJS.Worksheet) => { const values: string[] = []; source.eachRow((row) => row.eachCell((cell) => values.push(String(cell.value ?? '')))); return values; };
+  assert.equal(valuesOf(withoutNotesSheet).includes('Bàn giao hồ sơ lúc cuối ngày'), false, 'Excel không chọn ghi chú không được thêm dòng dữ liệu');
+  assert.ok(valuesOf(withNotesSheet).includes('Ghi chú ngày'));
+  assert.ok(valuesOf(withNotesSheet).includes('Bàn giao hồ sơ lúc cuối ngày'), 'Excel chọn ghi chú phải đặt nội dung ghi chú theo đúng ngày');
   await assert.rejects(
     service.createColumn({ sectionId: report.id, key: 'SAI', name: 'Sai', columnType: 'FORMULA', dataType: 'NUMBER', formula: '[KHONG_CO]', sortOrder: 50, active: true }),
     /chưa được khai báo/,

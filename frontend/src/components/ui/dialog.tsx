@@ -43,7 +43,7 @@ export function Dialog({
   };
 
   return (
-    <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
+    <div className="app-viewport-fixed app-safe-overlay fixed inset-x-0 top-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
       <div
         className={cn(
           'my-4 w-full rounded-[var(--radius-card)] border bg-[var(--card)] shadow-xl',

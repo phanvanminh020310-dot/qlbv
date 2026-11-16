@@ -73,9 +73,10 @@ const attendanceScopeParams = (month: string, departmentIds: number[]) => {
 export const dutyAttendanceApi = {
   departments: () => get<AttendanceDepartmentScope>('/duty-attendance/departments'),
   month: (month: string, departmentIds: number[]) => get<AttendanceMonth>(`/duty-attendance/month?${attendanceScopeParams(month, departmentIds)}`),
+  /** code và note độc lập: bỏ code để chỉ lưu ghi chú ngày; code rỗng/null để xóa ký hiệu. */
   save: (entries: Array<{ userId: number; workDate: string; code?: string | null; note?: string }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/entries', { entries, departmentId }),
   saveManualValues: (month: string, values: Array<{ userId: number; columnId: number; value?: string | null }>, departmentId: number) => put<{ saved: number }>('/duty-attendance/manual-values', { month, values, departmentId }),
-  exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentIds: number[]) => `/duty-attendance/export/${format}?${attendanceScopeParams(month, departmentIds)}`,
+  exportPath: (format: 'xlsx' | 'docx' | 'pdf', month: string, departmentIds: number[], includeDailyNotes = false) => { const params = attendanceScopeParams(month, departmentIds); if (format === 'xlsx' && includeDailyNotes) params.set('includeDailyNotes', 'true'); return `/duty-attendance/export/${format}?${params}`; },
   codeGroups: () => get<AttendanceCodeGroup[]>('/duty-attendance/code-groups'),
   createCodeGroup: (body: CodeGroupPayload) => post<AttendanceCodeGroup>('/duty-attendance/code-groups', body),
   updateCodeGroup: (id: number, body: CodeGroupPayload) => put<AttendanceCodeGroup>(`/duty-attendance/code-groups/${id}`, body),

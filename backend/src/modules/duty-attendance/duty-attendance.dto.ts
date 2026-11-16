@@ -13,12 +13,16 @@ export class AttendanceMonthQueryDto {
   /** Vai trò phạm vi Toàn viện có thể chọn một hay nhiều khoa; vai trò phạm vi khoa luôn bị ép về khoa được gán. */
   @IsOptional() @Transform(({ value }) => value === undefined ? undefined : (Array.isArray(value) ? value : [value]).map(Number)) @IsArray() @ArrayMaxSize(500) @IsInt({ each: true })
   departmentIds?: number[];
+  /** Chỉ dùng khi xuất Excel: thêm dòng ghi chú theo ngày cho nhân viên có ghi chú. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean()
+  includeDailyNotes?: boolean;
 }
 export class AttendanceEntryDto {
   @IsInt() userId!: number;
   @IsDateString() workDate!: string;
-  /** null hoặc rỗng: xóa ô chấm công */
+  /** Gửi rỗng/null để xóa ký hiệu; bỏ hẳn trường code để chỉ lưu ghi chú ngày. */
   @IsOptional() @IsString() @MaxLength(16) code?: string | null;
+  /** Ghi chú độc lập của nhân viên trong ngày; có thể tồn tại khi không có ký hiệu. */
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class SaveAttendanceEntriesDto {

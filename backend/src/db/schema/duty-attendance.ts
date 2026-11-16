@@ -178,6 +178,24 @@ export const dutyAttendanceWorkdayOverrides = pgTable('duty_attendance_workday_o
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [uniqueIndex('duty_attendance_workday_overrides_date_uq').on(t.workDate), index('duty_attendance_workday_overrides_source_year_idx').on(t.source, t.workdayYear)]);
 
+/**
+ * Ghi chú nghiệp vụ theo ngày. Bảng này tách khỏi ký hiệu để một ngày không có
+ * ký hiệu vẫn có thể được diễn giải, đồng thời đổi/xóa ký hiệu không làm mất ghi chú.
+ */
+export const dutyAttendanceDailyNotes = pgTable('duty_attendance_daily_notes', {
+  id: serial('id').primaryKey(),
+  departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  workDate: date('work_date').notNull(),
+  note: text('note').default('').notNull(),
+  updatedBy: integer('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('duty_attendance_daily_notes_user_date_uq').on(t.userId, t.workDate),
+  index('duty_attendance_daily_notes_dept_month_idx').on(t.departmentId, t.workDate, t.userId),
+]);
+
 /** Một nhân viên, một ngày, một ký hiệu thực tế. Lịch trực chỉ để đối chiếu, không tự chấm. */
 export const dutyAttendanceEntries = pgTable('duty_attendance_entries', {
   id: serial('id').primaryKey(),
