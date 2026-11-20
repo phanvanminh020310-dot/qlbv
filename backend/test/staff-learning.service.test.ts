@@ -63,7 +63,7 @@ test('vai trò đăng ký lịch học chỉ nhập nhân viên thuộc khoa đ�
   const coordinator = context(99, 10, 'ALL', [VIEW, EXPORT], ['DIEU_PHOI_TRUC']);
 
   const initial = await service.week(registrarA, { weekStart: '2026-11-16' });
-  assert.deepEqual(initial.days.map((day) => day.date), ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20']);
+  assert.deepEqual(initial.days.map((day) => day.date), ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22'], 'bảng tuần phải hiển thị đến Thứ 7 và Chủ nhật');
   assert.deepEqual(initial.departments.map((department) => department.id), [10]);
   assert.deepEqual(initial.staff.map((person) => person.userId), [1, 2, 99]);
   assert.equal(initial.viewer.canRegister, true);
@@ -76,12 +76,16 @@ test('vai trò đăng ký lịch học chỉ nhập nhân viên thuộc khoa đ�
   assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: false });
   assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: true }, 'mỗi nhân viên/ngày duy nhất');
   await service.register(registrarA, { userId: 1, studyDate: '2026-11-17' });
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21' }); // Thứ 7
+  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22' }); // Chủ nhật
   await service.register(registrarB, { userId: 3, studyDate: '2026-11-16' });
 
   const scoped = await service.week(registrarA, { weekStart: '2026-11-16' });
   assert.deepEqual(scoped.entries['10:2026-11-16']?.map((person) => person.fullName), ['Trần Bình']);
+  assert.deepEqual(scoped.entries['10:2026-11-21']?.map((person) => person.fullName), ['Trần Bình'], 'Thứ 7 được đăng ký và trả về đúng tuần');
+  assert.deepEqual(scoped.entries['10:2026-11-22']?.map((person) => person.fullName), ['Nguyễn An'], 'Chủ nhật được đăng ký và trả về đúng tuần');
   assert.equal(scoped.entries['11:2026-11-16'], undefined, 'vai trò khoa không lộ dữ liệu khoa ngoài phạm vi');
-  assert.equal(scoped.summary.registrations, 2);
+  assert.equal(scoped.summary.registrations, 4);
 
   const all = await service.week(coordinator, { weekStart: '2026-11-16' });
   assert.deepEqual(all.departments.map((department) => department.code), ['A1', 'B1']);
@@ -103,13 +107,15 @@ test('vai trò đăng ký lịch học chỉ nhập nhân viên thuộc khoa đ�
   assert.deepEqual(await service.remove(registrarA, 2, '2026-11-18'), { removed: true });
   await assert.rejects(service.register(registrarA, { userId: 2, studyDate: '2026-11-19' }), /không thuộc khoa\/phòng/i);
 
-  await assert.rejects(service.register(registrarA, { userId: 1, studyDate: '2026-11-21' }), /Thứ 2 đến Thứ 6/);
+  await assert.rejects(service.register(registrarA, { userId: 1, studyDate: '2026-11-31' }), /Ngày học không hợp lệ/);
 });
 
-test('xuất Excel có cột khoa/đơn vị và đủ năm cột ngày làm việc trong tuần', async (t) => {
+test('xuất Excel có cột khoa/đơn vị và đủ bảy cột ngày từ Thứ 2 đến Chủ nhật', async (t) => {
   const { pg, service } = await setup(); t.after(() => pg.close());
   const registrarA = context(1, 10);
   await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' });
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21' });
+  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22' });
   const exported = await service.exportExcel(registrarA, { weekStart: '2026-11-16' });
   assert.match(exported.fileName, /^LICH_HOC_CAN_BO_NHAN_VIEN_2026-11-16\.xlsx$/);
   assert.equal(exported.buffer.subarray(0, 2).toString('utf8'), 'PK', 'Excel XLSX phải là gói ZIP hợp lệ');
@@ -121,8 +127,12 @@ test('xuất Excel có cột khoa/đơn vị và đủ năm cột ngày làm vi�
   assert.equal(sheet.getCell('B3').value, 'Khoa / Đơn vị');
   assert.equal(sheet.getCell('C3').value, 'Thứ 2\n16/11');
   assert.equal(sheet.getCell('G3').value, 'Thứ 6\n20/11');
+  assert.equal(sheet.getCell('H3').value, 'Thứ 7\n21/11');
+  assert.equal(sheet.getCell('I3').value, 'Chủ nhật\n22/11');
   assert.equal(sheet.getCell('B5').value, 'A1');
   assert.equal(sheet.getCell('C5').value, 'Trần Bình', 'ô khoa/ngày phải ghi đúng nhân viên đã đăng ký');
+  assert.equal(sheet.getCell('H5').value, 'Trần Bình', 'Excel phải giữ lịch Thứ 7');
+  assert.equal(sheet.getCell('I5').value, 'Nguyễn An', 'Excel phải giữ lịch Chủ nhật');
 });
 
 test('migration lịch học chạy lặp an toàn, chặn trùng nhân viên-ngày và tạo vai trò/phân quyền mới', async (t) => {

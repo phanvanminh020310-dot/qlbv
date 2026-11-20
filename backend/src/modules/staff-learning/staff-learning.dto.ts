@@ -1,6 +1,6 @@
 import { IsDateString, IsInt, Matches, Min } from 'class-validator';
 
-/** Thứ Hai mở đầu tuần cần xem/xuất, giúp mỗi cột ngày cố định từ Thứ 2 đến Thứ 6. */
+/** Thứ Hai mở đầu tuần cần xem/xuất, giúp các cột ngày cố định từ Thứ 2 đến Chủ nhật. */
 export class StaffLearningWeekQueryDto {
   @Matches(/^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/, { message: 'Tuần phải bắt đầu bằng ngày có dạng YYYY-MM-DD' })
   weekStart!: string;

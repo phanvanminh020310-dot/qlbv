@@ -42,10 +42,9 @@ export class StaffLearningService {
     if (dateOf(weekStart).getUTCDay() !== 1) throw new BadRequestException('Vui lòng chọn Thứ 2 làm ngày đầu tuần');
   }
 
+  /** Lịch học đủ bảy ngày trong tuần, từ Thứ 2 đến Chủ nhật. */
   private assertStudyDate(studyDate: string) {
     if (!isCalendarDate(studyDate)) throw new BadRequestException('Ngày học không hợp lệ');
-    const weekday = dateOf(studyDate).getUTCDay();
-    if (weekday < 1 || weekday > 5) throw new BadRequestException('Lịch học tuần chỉ nhận ngày Thứ 2 đến Thứ 6');
   }
 
   private async visibleDepartments(user: AccessContext) {
@@ -114,11 +113,11 @@ export class StaffLearningService {
       .orderBy(asc(departments.sortOrder), asc(departments.name), asc(users.fullName), asc(users.id));
   }
 
-  /** Bảng tuần có 5 cột ngày làm việc; điều phối phạm vi ALL thấy toàn viện, khoa chỉ thấy khoa được gán. */
+  /** Bảng tuần có đủ 7 ngày; điều phối phạm vi ALL thấy toàn viện, khoa chỉ thấy khoa được gán. */
   async week(user: AccessContext, q: StaffLearningWeekQueryDto) {
     this.assertPermission(user, 'staff-learning.view');
     this.assertWeekStart(q.weekStart);
-    const days = Array.from({ length: 5 }, (_, index) => {
+    const days = Array.from({ length: 7 }, (_, index) => {
       const date = addDays(q.weekStart, index);
       return { date, weekday: WEEKDAY_NAMES[dateOf(date).getUTCDay()]!, label: `${WEEKDAY_NAMES[dateOf(date).getUTCDay()]}\n${dateLabel(date)}` };
     });

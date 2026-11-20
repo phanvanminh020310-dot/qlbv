@@ -273,7 +273,7 @@ export const dutyRequests = pgTable(
 );
 
 /**
- * Đăng ký lịch học của cán bộ nhân viên theo ngày làm việc trong tuần.
+ * Đăng ký lịch học của cán bộ nhân viên theo ngày trong tuần, gồm cả Thứ 7 và Chủ nhật.
  * departmentId là ảnh chụp đơn vị lúc đăng ký, giúp lịch sử không bị đổi khi nhân viên chuyển khoa.
  */
 export const staffLearningRegistrations = pgTable(
