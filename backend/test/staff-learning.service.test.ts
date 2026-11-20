@@ -45,6 +45,11 @@ test('cán bộ tự đăng ký lịch học tuần, danh sách được nhóm t
   assert.deepEqual(initial.days.map((day) => day.date), ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20']);
   assert.deepEqual(initial.departments.map((department) => department.id), [10]);
   assert.deepEqual(initial.myDates, []);
+  await assert.rejects(
+    service.register(context(1, 11), { studyDate: '2026-11-18' }),
+    /không thuộc phạm vi đăng ký/i,
+    'không thể lợi dụng phạm vi khoa khác để tự ghi đăng ký vào khoa hiện tại',
+  );
 
   assert.deepEqual(await service.register(a1, { studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: false });
   assert.deepEqual(await service.register(a1, { studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: true }, 'mỗi người/ngày duy nhất, bấm lại không tạo dữ liệu trùng');
@@ -83,7 +88,8 @@ test('xuất Excel có cột khoa/đơn vị và đủ năm cột ngày làm vi�
   assert.match(exported.fileName, /^LICH_HOC_CAN_BO_NHAN_VIEN_2026-11-16\.xlsx$/);
   assert.equal(exported.buffer.subarray(0, 2).toString('utf8'), 'PK', 'Excel XLSX phải là gói ZIP hợp lệ');
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(exported.buffer);
+  const xlsxBytes = exported.buffer.buffer.slice(exported.buffer.byteOffset, exported.buffer.byteOffset + exported.buffer.byteLength) as ArrayBuffer;
+  await workbook.xlsx.load(xlsxBytes);
   const sheet = workbook.getWorksheet('Lịch học');
   assert.ok(sheet, 'phải có sheet Lịch học');
   assert.equal(sheet.getCell('B3').value, 'Khoa / Đơn vị');

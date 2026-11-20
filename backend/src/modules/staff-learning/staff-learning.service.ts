@@ -122,6 +122,10 @@ export class StaffLearningService {
     this.assertStudyDate(dto.studyDate);
     const profile = await this.ownActiveProfile(user.id);
     if (!profile.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng công tác');
+    const visible = await this.visibleDepartments(user);
+    if (!visible.some((department) => department.id === profile.departmentId)) {
+      throw new ForbiddenException('Khoa/phòng công tác không thuộc phạm vi đăng ký lịch học của tài khoản');
+    }
     const [created] = await this.db.db
       .insert(staffLearningRegistrations)
       .values({ departmentId: profile.departmentId, userId: user.id, studyDate: dto.studyDate })
