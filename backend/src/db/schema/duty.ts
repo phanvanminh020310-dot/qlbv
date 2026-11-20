@@ -272,6 +272,27 @@ export const dutyRequests = pgTable(
   ],
 );
 
+/**
+ * Đăng ký lịch học của cán bộ nhân viên theo ngày làm việc trong tuần.
+ * departmentId là ảnh chụp đơn vị lúc đăng ký, giúp lịch sử không bị đổi khi nhân viên chuyển khoa.
+ */
+export const staffLearningRegistrations = pgTable(
+  'staff_learning_registrations',
+  {
+    id: serial('id').primaryKey(),
+    departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
+    userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+    studyDate: date('study_date', { mode: 'string' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('staff_learning_registrations_user_date_uq').on(t.userId, t.studyDate),
+    index('staff_learning_registrations_dept_week_idx').on(t.departmentId, t.studyDate, t.userId),
+    index('staff_learning_registrations_date_idx').on(t.studyDate),
+  ],
+);
+
 export const dutyLogs = pgTable(
   'duty_logs',
   {
