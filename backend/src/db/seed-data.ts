@@ -192,6 +192,11 @@ export const PERMISSIONS: PermissionSeed[] = [
   P('duty', 'exception.resolve', 'Xử lý ngoại lệ đổi trực (KHTH)', 'Duyệt ngoại lệ sau khi chốt và đổi trực trực tiếp — tài khoản đổi trực'),
   P('duty', 'export', 'Xuất / in lịch trực', 'Xuất Excel lịch trực và bảng tổng hợp giờ trực'),
 
+  // Lịch học cán bộ nhân viên — tách quyền xem/nhập/xuất để khoa chỉ sửa đúng nhân sự được gán.
+  P('staff-learning', 'view', 'Xem lịch học cán bộ nhân viên', 'Xem lịch học theo phạm vi khoa/phòng được gán'),
+  P('staff-learning', 'register', 'Đăng ký lịch học cán bộ nhân viên', 'Đăng ký hoặc gỡ lịch học cho nhân viên thuộc khoa/phòng được gán'),
+  P('staff-learning', 'export', 'Xuất lịch học cán bộ nhân viên', 'Xuất Excel lịch học theo phạm vi khoa/phòng được gán'),
+
   // Bảng chấm công trực và chấm công khác — tách riêng lịch trực khám; trực được nhập thủ công.
   P('duty-attendance', 'view', 'Xem bảng chấm công trực', 'Chỉ xem bảng chấm công của khoa/phòng được gán'),
   P('duty-attendance', 'update', 'Nhập bảng chấm công trực', 'Nhập/sửa ô chấm công của nhân viên thuộc đúng khoa/phòng được gán'),
@@ -480,7 +485,19 @@ export const ROLES: RoleSeed[] = [
     permissions: [
       'duty.view', 'duty.manage', 'duty.manage-all', 'duty.period.manage',
       'duty.catalog.manage', 'duty.swap.approve', 'duty.exception.resolve', 'duty.export',
+      'staff-learning.view', 'staff-learning.export',
     ],
+  },
+  {
+    code: 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN',
+    name: 'Đăng ký lịch học cán bộ nhân viên',
+    description:
+      'Giao cho nhân viên phụ trách khoa/phòng để xem, đăng ký, gỡ và xuất lịch học của nhân viên trong đúng các khoa/phòng được gán.',
+    dataScope: 'DEPT',
+    priority: 35,
+    color: '#0f766e',
+    isSystem: true,
+    permissions: ['staff-learning.view', 'staff-learning.register', 'staff-learning.export'],
   },
   {
     code: 'NGUOI_XEP_LICH_TRUC_KHOA',

@@ -110,7 +110,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Lịch khám bệnh',
     items: [
       { href: '/lich-truc', label: 'Lịch bác sĩ khám', icon: CalendarDays, permission: 'duty.view' },
-      { href: '/lich-truc/lich-hoc', label: 'Lịch học cán bộ nhân viên', icon: GraduationCap, permission: 'duty.view' },
+      { href: '/lich-truc/lich-hoc', label: 'Lịch học cán bộ nhân viên', icon: GraduationCap, permission: 'staff-learning.view' },
       { href: '/lich-truc/cua-toi', label: 'Lịch khám của tôi', icon: UserCheck, permission: 'duty.view' },
       { href: '/lich-truc/theo-doi-xac-thuc', label: 'Theo dõi ca khám', icon: Radio, permission: 'duty.manage', anyPermissions: ['duty.manage-all'] },
       { href: '/lich-truc/yeu-cau', label: 'Yêu cầu đổi lịch khám', icon: ArrowLeftRight, permission: 'duty.manage', anyPermissions: ['duty.manage-all', 'duty.swap.approve', 'duty.exception.resolve'] },

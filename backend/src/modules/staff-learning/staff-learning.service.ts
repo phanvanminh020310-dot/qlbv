@@ -22,9 +22,19 @@ const dateLabel = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
 export class StaffLearningService {
   constructor(private readonly db: DbService) {}
 
+  private hasPermission(user: AccessContext, permission: string) {
+    return user.isSuperAdmin || user.permissions.includes(permission);
+  }
+
+  private assertPermission(user: AccessContext, permission: string) {
+    if (!this.hasPermission(user, permission)) {
+      throw new ForbiddenException(`Tài khoản không có quyền ${permission}`);
+    }
+  }
+
   /** Điều phối toàn viện hoặc vai trò phạm vi ALL xem tất cả khoa; còn lại chỉ xem khoa được gán. */
   private canSeeAll(user: AccessContext) {
-    return user.isSuperAdmin || user.dataScope === 'ALL' || user.permissions.includes('duty.manage-all');
+    return user.isSuperAdmin || user.dataScope === 'ALL';
   }
 
   private assertWeekStart(weekStart: string) {
@@ -52,27 +62,71 @@ export class StaffLearningService {
       .orderBy(asc(departments.sortOrder), asc(departments.name), asc(departments.id));
   }
 
-  private async ownActiveProfile(userId: number) {
+  /** Phạm vi NHẬP của người được giao vai trò: luôn là khoa chính/các khoa gán rõ, không bị mở rộng bởi một vai trò ALL khác. */
+  private async registrationDepartments(user: AccessContext) {
+    const ids = [...new Set([user.departmentId, ...(user.departmentIds ?? [])].filter((id): id is number => typeof id === 'number'))];
+    if (!ids.length) return [];
+    return this.db.db
+      .select({ id: departments.id, code: departments.code, name: departments.name, shortName: departments.shortName, hospital: departments.hospital, sortOrder: departments.sortOrder })
+      .from(departments)
+      .where(and(eq(departments.active, true), isNull(departments.deletedAt), inArray(departments.id, ids)))
+      .orderBy(asc(departments.sortOrder), asc(departments.name), asc(departments.id));
+  }
+
+  private async activeStaffProfile(userId: number) {
     const [person] = await this.db.db
       .select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
-    if (!person || person.deletedAt || !person.active) throw new ForbiddenException('Tài khoản cán bộ không còn hoạt động để đăng ký lịch học');
-    return person;
+    if (!person || person.deletedAt || !person.active) {
+      throw new BadRequestException('Nhân viên không còn hoạt động hoặc không tồn tại');
+    }
+    if (!person.departmentId) throw new BadRequestException('Nhân viên chưa được gán khoa/phòng công tác');
+    return { ...person, departmentId: person.departmentId };
   }
 
-  /** Bảng tuần có 5 cột ngày làm việc, nhóm người đăng ký theo khoa tại thời điểm đăng ký. */
+  /** Chỉ người có quyền nhập lịch mới được tác động và chỉ đối với nhân viên thuộc khoa được xem. */
+  private async assertTargetInRegistrationScope(actor: AccessContext, targetUserId: number) {
+    this.assertPermission(actor, 'staff-learning.register');
+    const [target, editable] = await Promise.all([this.activeStaffProfile(targetUserId), this.registrationDepartments(actor)]);
+    if (!editable.some((department) => department.id === target.departmentId)) {
+      throw new ForbiddenException('Nhân viên không thuộc khoa/phòng trong phạm vi đăng ký lịch học của tài khoản');
+    }
+    return target;
+  }
+
+  private async staffInDepartments(departmentIds: number[]) {
+    if (!departmentIds.length) return [];
+    return this.db.db
+      .select({
+        userId: users.id,
+        fullName: users.fullName,
+        title: users.title,
+        manv: users.manv,
+        departmentId: departments.id,
+        departmentName: departments.name,
+        departmentShortName: departments.shortName,
+      })
+      .from(users)
+      .innerJoin(departments, eq(departments.id, users.departmentId))
+      .where(and(inArray(users.departmentId, departmentIds), eq(users.active, true), isNull(users.deletedAt)))
+      .orderBy(asc(departments.sortOrder), asc(departments.name), asc(users.fullName), asc(users.id));
+  }
+
+  /** Bảng tuần có 5 cột ngày làm việc; điều phối phạm vi ALL thấy toàn viện, khoa chỉ thấy khoa được gán. */
   async week(user: AccessContext, q: StaffLearningWeekQueryDto) {
+    this.assertPermission(user, 'staff-learning.view');
     this.assertWeekStart(q.weekStart);
     const days = Array.from({ length: 5 }, (_, index) => {
       const date = addDays(q.weekStart, index);
       return { date, weekday: WEEKDAY_NAMES[dateOf(date).getUTCDay()]!, label: `${WEEKDAY_NAMES[dateOf(date).getUTCDay()]}\n${dateLabel(date)}` };
     });
     const endDate = days[days.length - 1]!.date;
-    const [visible, profile] = await Promise.all([this.visibleDepartments(user), this.ownActiveProfile(user.id)]);
+    const visible = await this.visibleDepartments(user);
     const departmentIds = visible.map((department) => department.id);
-    const [registrations, ownRegistrations] = await Promise.all([
+    const editable = this.hasPermission(user, 'staff-learning.register') ? await this.registrationDepartments(user) : [];
+    const [registrations, staff] = await Promise.all([
       departmentIds.length
         ? this.db.db
           .select({
@@ -87,12 +141,7 @@ export class StaffLearningService {
           .innerJoin(users, eq(users.id, staffLearningRegistrations.userId))
           .where(and(inArray(staffLearningRegistrations.departmentId, departmentIds), gte(staffLearningRegistrations.studyDate, q.weekStart), lte(staffLearningRegistrations.studyDate, endDate)))
         : Promise.resolve([]),
-      // Cán bộ vẫn phải thấy/gỡ được đăng ký của chính mình nếu vừa chuyển khoa,
-      // dù dòng lịch sử hiện thuộc đơn vị cũ ngoài phạm vi xem hiện tại.
-      this.db.db
-        .select({ studyDate: staffLearningRegistrations.studyDate })
-        .from(staffLearningRegistrations)
-        .where(and(eq(staffLearningRegistrations.userId, user.id), gte(staffLearningRegistrations.studyDate, q.weekStart), lte(staffLearningRegistrations.studyDate, endDate))),
+      this.staffInDepartments(editable.map((department) => department.id)),
     ]);
     const entries: Record<string, Array<{ userId: number; fullName: string; title: string; manv: string }>> = {};
     for (const registration of registrations) {
@@ -100,14 +149,17 @@ export class StaffLearningService {
       entries[key] = [...(entries[key] ?? []), { userId: registration.userId, fullName: registration.fullName, title: registration.title, manv: registration.manv }];
     }
     for (const people of Object.values(entries)) people.sort((left, right) => left.fullName.localeCompare(right.fullName, 'vi') || left.userId - right.userId);
-    const myDates = ownRegistrations.map((registration) => registration.studyDate).sort();
     return {
       weekStart: q.weekStart,
       days,
       departments: visible.map(({ sortOrder: _sortOrder, hospital: _hospital, ...department }) => department),
+      staff,
       entries,
-      myDates,
-      viewer: { userId: user.id, departmentId: profile.departmentId, canRegister: profile.departmentId !== null && departmentIds.includes(profile.departmentId) },
+      viewer: {
+        userId: user.id,
+        canRegister: this.hasPermission(user, 'staff-learning.register') && editable.length > 0,
+        seesAllDepartments: this.canSeeAll(user),
+      },
       summary: {
         registrations: registrations.length,
         people: new Set(registrations.map((registration) => registration.userId)).size,
@@ -117,33 +169,41 @@ export class StaffLearningService {
     };
   }
 
-  /** Cán bộ chỉ đăng ký chính mình, tránh người khác tạo dữ liệu học thay mà không có căn cứ. */
+  /** Người được gán vai trò nhập lịch đăng ký cho nhân viên thuộc đúng khoa/phòng trong phạm vi của mình. */
   async register(user: AccessContext, dto: StaffLearningRegistrationDto) {
     this.assertStudyDate(dto.studyDate);
-    const profile = await this.ownActiveProfile(user.id);
-    if (!profile.departmentId) throw new ForbiddenException('Tài khoản chưa được gán khoa/phòng công tác');
-    const visible = await this.visibleDepartments(user);
-    if (!visible.some((department) => department.id === profile.departmentId)) {
-      throw new ForbiddenException('Khoa/phòng công tác không thuộc phạm vi đăng ký lịch học của tài khoản');
-    }
+    const target = await this.assertTargetInRegistrationScope(user, dto.userId);
     const [created] = await this.db.db
       .insert(staffLearningRegistrations)
-      .values({ departmentId: profile.departmentId, userId: user.id, studyDate: dto.studyDate })
+      .values({ departmentId: target.departmentId, userId: target.id, studyDate: dto.studyDate })
       .onConflictDoNothing()
       .returning({ id: staffLearningRegistrations.id });
     return { registered: true, alreadyRegistered: !created };
   }
 
-  async remove(user: AccessContext, studyDate: string) {
+  /** Gỡ đúng nhân viên/ngày, kiểm tra khoa từ ảnh chụp tại lúc đăng ký để giữ an toàn khi nhân sự chuyển khoa. */
+  async remove(user: AccessContext, userId: number, studyDate: string) {
+    this.assertPermission(user, 'staff-learning.register');
     this.assertStudyDate(studyDate);
+    const [registration] = await this.db.db
+      .select({ departmentId: staffLearningRegistrations.departmentId })
+      .from(staffLearningRegistrations)
+      .where(and(eq(staffLearningRegistrations.userId, userId), eq(staffLearningRegistrations.studyDate, studyDate)))
+      .limit(1);
+    if (!registration) return { removed: false };
+    const editable = await this.registrationDepartments(user);
+    if (!editable.some((department) => department.id === registration.departmentId)) {
+      throw new ForbiddenException('Đăng ký lịch học không thuộc khoa/phòng trong phạm vi của tài khoản');
+    }
     const [removed] = await this.db.db
       .delete(staffLearningRegistrations)
-      .where(and(eq(staffLearningRegistrations.userId, user.id), eq(staffLearningRegistrations.studyDate, studyDate)))
+      .where(and(eq(staffLearningRegistrations.userId, userId), eq(staffLearningRegistrations.studyDate, studyDate)))
       .returning({ id: staffLearningRegistrations.id });
     return { removed: !!removed };
   }
 
   async exportExcel(user: AccessContext, q: StaffLearningWeekQueryDto) {
+    this.assertPermission(user, 'staff-learning.export');
     const data = await this.week(user, q);
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'QLBS — Lịch học cán bộ nhân viên';

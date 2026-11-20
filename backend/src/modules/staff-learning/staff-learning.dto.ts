@@ -1,4 +1,4 @@
-import { IsDateString, Matches } from 'class-validator';
+import { IsDateString, IsInt, Matches, Min } from 'class-validator';
 
 /** Thứ Hai mở đầu tuần cần xem/xuất, giúp mỗi cột ngày cố định từ Thứ 2 đến Thứ 6. */
 export class StaffLearningWeekQueryDto {
@@ -6,8 +6,12 @@ export class StaffLearningWeekQueryDto {
   weekStart!: string;
 }
 
-/** Cán bộ chỉ đăng ký lịch học cho chính mình, một ngày làm việc tại một thời điểm. */
+/** Người được giao vai trò đăng ký chọn nhân viên thuộc khoa/phòng của mình và một ngày học. */
 export class StaffLearningRegistrationDto {
+  @IsInt({ message: 'Nhân viên không hợp lệ' })
+  @Min(1, { message: 'Nhân viên không hợp lệ' })
+  userId!: number;
+
   @IsDateString({}, { message: 'Ngày học không hợp lệ' })
   studyDate!: string;
 }

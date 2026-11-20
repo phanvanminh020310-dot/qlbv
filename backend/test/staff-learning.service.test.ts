@@ -5,14 +5,26 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import * as ExcelJS from 'exceljs';
+import { PERMISSIONS_KEY } from '../src/common/decorators';
 import type { AccessContext } from '../src/common/types/access-context';
 import { DbService } from '../src/db/db.service';
 import * as schema from '../src/db/schema';
+import { StaffLearningController } from '../src/modules/staff-learning/staff-learning.controller';
 import { StaffLearningService } from '../src/modules/staff-learning/staff-learning.service';
 
 const migration = (file: string) => readFileSync(resolve(__dirname, '..', 'drizzle', file), 'utf8');
-const context = (id: number, departmentId: number | null, dataScope: 'OWN' | 'DEPT' | 'ALL' = 'OWN'): AccessContext => ({
-  id, username: `u${id}`, fullName: `User ${id}`, title: '', departmentId, departmentName: '', roles: [], permissions: ['duty.view'], dataScope,
+const VIEW = 'staff-learning.view';
+const REGISTER = 'staff-learning.register';
+const EXPORT = 'staff-learning.export';
+
+const context = (
+  id: number,
+  departmentId: number | null,
+  dataScope: 'OWN' | 'DEPT' | 'ALL' = 'DEPT',
+  permissions: string[] = [VIEW, REGISTER, EXPORT],
+  roles: string[] = ['DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN'],
+): AccessContext => ({
+  id, username: `u${id}`, fullName: `User ${id}`, title: '', departmentId, departmentName: '', roles, permissions, dataScope,
   departmentIds: departmentId ? [departmentId] : [], isSuperAdmin: false, sessionId: `test-${id}`,
 });
 
@@ -21,6 +33,7 @@ async function setup() {
   await pg.exec(migration('0000_init_khoi_tao.sql'));
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
   await pg.exec(migration('0041_lich_hoc_can_bo_nhan_vien.sql'));
+  await pg.exec(migration('0042_vai_tro_dang_ky_lich_hoc_can_bo.sql'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, short_name, sort_order, active) VALUES
       (10, 'A1', 'Khoa A1', 'A1', 10, true),
@@ -35,56 +48,69 @@ async function setup() {
   return { pg, service: new StaffLearningService({ db, transaction: db.transaction.bind(db) } as unknown as DbService) };
 }
 
-test('cán bộ tự đăng ký lịch học tuần, danh sách được nhóm theo khoa và không lộ khoa ngoài phạm vi', async (t) => {
-  const { pg, service } = await setup(); t.after(() => pg.close());
-  const a1 = context(1, 10);
-  const a2 = context(2, 10);
-  const b1 = context(3, 11);
+test('API lịch học yêu cầu đúng các quyền staff-learning độc lập với lịch trực', () => {
+  assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.week), [VIEW]);
+  assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.register), [REGISTER]);
+  assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.remove), [REGISTER]);
+  assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.exportExcel), [EXPORT]);
+});
 
-  const initial = await service.week(a1, { weekStart: '2026-11-16' });
+test('vai trò đăng ký lịch học chỉ nhập nhân viên thuộc khoa được gán; điều phối chỉ xem toàn viện', async (t) => {
+  const { pg, service } = await setup(); t.after(() => pg.close());
+  const registrarA = context(1, 10);
+  const registrarB = context(3, 11);
+  const viewerA = context(2, 10, 'DEPT', [VIEW], []);
+  const coordinator = context(99, 10, 'ALL', [VIEW, EXPORT], ['DIEU_PHOI_TRUC']);
+
+  const initial = await service.week(registrarA, { weekStart: '2026-11-16' });
   assert.deepEqual(initial.days.map((day) => day.date), ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20']);
   assert.deepEqual(initial.departments.map((department) => department.id), [10]);
-  assert.deepEqual(initial.myDates, []);
-  await assert.rejects(
-    service.register(context(1, 11), { studyDate: '2026-11-18' }),
-    /không thuộc phạm vi đăng ký/i,
-    'không thể lợi dụng phạm vi khoa khác để tự ghi đăng ký vào khoa hiện tại',
-  );
+  assert.deepEqual(initial.staff.map((person) => person.userId), [1, 2, 99]);
+  assert.equal(initial.viewer.canRegister, true);
+  assert.equal(initial.viewer.seesAllDepartments, false);
 
-  assert.deepEqual(await service.register(a1, { studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: false });
-  assert.deepEqual(await service.register(a1, { studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: true }, 'mỗi người/ngày duy nhất, bấm lại không tạo dữ liệu trùng');
-  await service.register(a2, { studyDate: '2026-11-16' });
-  await service.register(a1, { studyDate: '2026-11-17' });
-  await service.register(b1, { studyDate: '2026-11-16' });
+  await assert.rejects(service.week(context(2, 10, 'DEPT', [], []), { weekStart: '2026-11-16' }), /staff-learning\.view/);
+  await assert.rejects(service.register(viewerA, { userId: 2, studyDate: '2026-11-16' }), /staff-learning\.register/);
+  await assert.rejects(service.register(registrarA, { userId: 3, studyDate: '2026-11-16' }), /không thuộc khoa\/phòng/i);
 
-  const scoped = await service.week(a1, { weekStart: '2026-11-16' });
-  assert.deepEqual(scoped.myDates, ['2026-11-16', '2026-11-17']);
-  assert.deepEqual(scoped.entries['10:2026-11-16']?.map((person) => person.fullName), ['Nguyễn An', 'Trần Bình']);
-  assert.equal(scoped.entries['11:2026-11-16'], undefined, 'phạm vi khoa chỉ thấy khoa được gán');
-  assert.equal(scoped.summary.registrations, 3);
+  assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: false });
+  assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: true }, 'mỗi nhân viên/ngày duy nhất');
+  await service.register(registrarA, { userId: 1, studyDate: '2026-11-17' });
+  await service.register(registrarB, { userId: 3, studyDate: '2026-11-16' });
 
-  const all = await service.week(context(99, 10, 'ALL'), { weekStart: '2026-11-16' });
+  const scoped = await service.week(registrarA, { weekStart: '2026-11-16' });
+  assert.deepEqual(scoped.entries['10:2026-11-16']?.map((person) => person.fullName), ['Trần Bình']);
+  assert.equal(scoped.entries['11:2026-11-16'], undefined, 'vai trò khoa không lộ dữ liệu khoa ngoài phạm vi');
+  assert.equal(scoped.summary.registrations, 2);
+
+  const all = await service.week(coordinator, { weekStart: '2026-11-16' });
   assert.deepEqual(all.departments.map((department) => department.code), ['A1', 'B1']);
+  assert.deepEqual(all.staff, [], 'điều phối chỉ xem/xuất nên không có danh sách nhân viên để nhập lịch');
   assert.deepEqual(all.entries['11:2026-11-16']?.map((person) => person.fullName), ['Lê Chi']);
+  assert.equal(all.viewer.canRegister, false, 'điều phối chỉ xem/xuất, không tự động có quyền nhập lịch');
+  assert.equal(all.viewer.seesAllDepartments, true);
+  await assert.rejects(service.register(coordinator, { userId: 3, studyDate: '2026-11-17' }), /staff-learning\.register/);
+  const registrarWithAllView = context(1, 10, 'ALL', [VIEW, REGISTER, EXPORT], ['DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN', 'DIEU_PHOI_TRUC']);
+  await assert.rejects(service.register(registrarWithAllView, { userId: 3, studyDate: '2026-11-17' }), /không thuộc khoa\/phòng/i, 'quyền xem ALL không được mở rộng phạm vi nhập lịch của vai trò khoa');
+  await assert.rejects(service.exportExcel(viewerA, { weekStart: '2026-11-16' }), /staff-learning\.export/);
 
-  await assert.rejects(service.register(a1, { studyDate: '2026-11-21' }), /Thứ 2 đến Thứ 6/);
-  assert.deepEqual(await service.remove(a1, '2026-11-16'), { removed: true });
-  const afterRemove = await service.week(a1, { weekStart: '2026-11-16' });
-  assert.deepEqual(afterRemove.entries['10:2026-11-16']?.map((person) => person.fullName), ['Trần Bình'], 'gỡ chỉ ảnh hưởng đăng ký của chính người dùng');
+  assert.deepEqual(await service.remove(registrarA, 2, '2026-11-16'), { removed: true });
+  assert.equal((await service.week(registrarA, { weekStart: '2026-11-16' })).entries['10:2026-11-16'], undefined, 'gỡ đúng nhân viên/ngày');
 
-  // Đổi khoa sau khi đăng ký không làm mất khả năng tự gỡ dòng lịch sử của cán bộ.
-  await pg.exec(`UPDATE users SET department_id = 11 WHERE id = 1`);
-  const moved = context(1, 11);
-  const afterTransfer = await service.week(moved, { weekStart: '2026-11-16' });
-  assert.deepEqual(afterTransfer.myDates, ['2026-11-17'], 'đăng ký lịch sử ở khoa cũ vẫn hiện trong lịch cá nhân để tự gỡ');
-  assert.deepEqual(await service.remove(moved, '2026-11-17'), { removed: true });
+  // Khoa được chụp tại lúc nhập: nhân viên chuyển khoa vẫn có thể được người phụ trách khoa cũ gỡ dòng lịch sử.
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-18' });
+  await pg.exec('UPDATE users SET department_id = 11 WHERE id = 2');
+  assert.deepEqual(await service.remove(registrarA, 2, '2026-11-18'), { removed: true });
+  await assert.rejects(service.register(registrarA, { userId: 2, studyDate: '2026-11-19' }), /không thuộc khoa\/phòng/i);
+
+  await assert.rejects(service.register(registrarA, { userId: 1, studyDate: '2026-11-21' }), /Thứ 2 đến Thứ 6/);
 });
 
 test('xuất Excel có cột khoa/đơn vị và đủ năm cột ngày làm việc trong tuần', async (t) => {
   const { pg, service } = await setup(); t.after(() => pg.close());
-  const a1 = context(1, 10);
-  await service.register(a1, { studyDate: '2026-11-16' });
-  const exported = await service.exportExcel(a1, { weekStart: '2026-11-16' });
+  const registrarA = context(1, 10);
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' });
+  const exported = await service.exportExcel(registrarA, { weekStart: '2026-11-16' });
   assert.match(exported.fileName, /^LICH_HOC_CAN_BO_NHAN_VIEN_2026-11-16\.xlsx$/);
   assert.equal(exported.buffer.subarray(0, 2).toString('utf8'), 'PK', 'Excel XLSX phải là gói ZIP hợp lệ');
   const workbook = new ExcelJS.Workbook();
@@ -96,14 +122,43 @@ test('xuất Excel có cột khoa/đơn vị và đủ năm cột ngày làm vi�
   assert.equal(sheet.getCell('C3').value, 'Thứ 2\n16/11');
   assert.equal(sheet.getCell('G3').value, 'Thứ 6\n20/11');
   assert.equal(sheet.getCell('B5').value, 'A1');
-  assert.equal(sheet.getCell('C5').value, 'Nguyễn An', 'ô khoa/ngày phải ghi đúng danh sách người đã đăng ký');
+  assert.equal(sheet.getCell('C5').value, 'Trần Bình', 'ô khoa/ngày phải ghi đúng nhân viên đã đăng ký');
 });
 
-test('migration lịch học chạy lặp an toàn và chặn trùng nhân viên-ngày', async (t) => {
+test('migration lịch học chạy lặp an toàn, chặn trùng nhân viên-ngày và tạo vai trò/phân quyền mới', async (t) => {
   const pg = await PGlite.create(); t.after(() => pg.close());
   await pg.exec(migration('0000_init_khoi_tao.sql'));
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
-  const sql = migration('0041_lich_hoc_can_bo_nhan_vien.sql'); await pg.exec(sql); await pg.exec(sql);
+  await pg.exec(`
+    INSERT INTO roles (code, name, data_scope, is_system, priority, color) VALUES
+      ('DIEU_PHOI_TRUC', 'Điều phối trực', 'ALL', true, 25, '#0891b2'),
+      ('DIEU_PHOI_CHAM_CONG', 'Điều phối chấm công', 'ALL', true, 30, '#7c3aed');
+  `);
+  const learningSql = migration('0041_lich_hoc_can_bo_nhan_vien.sql');
+  const rbacSql = migration('0042_vai_tro_dang_ky_lich_hoc_can_bo.sql');
+  await pg.exec(learningSql); await pg.exec(rbacSql); await pg.exec(learningSql); await pg.exec(rbacSql);
   await pg.exec(`INSERT INTO departments (id, code, name, active) VALUES (10, 'A1', 'Khoa A1', true); INSERT INTO users (id, manv, username, password_hash, full_name, department_id, active) VALUES (1, 'NV01', 'nv001', 'hash', 'Nhân viên', 10, true); INSERT INTO staff_learning_registrations (department_id, user_id, study_date) VALUES (10, 1, '2026-11-16');`);
   await assert.rejects(pg.exec(`INSERT INTO staff_learning_registrations (department_id, user_id, study_date) VALUES (10, 1, '2026-11-16')`), /unique|duplicate/i);
+
+  const role = await pg.query<{ code: string; data_scope: string }>(`SELECT code, data_scope FROM roles WHERE code = 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN'`);
+  assert.deepEqual(role.rows, [{ code: 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN', data_scope: 'DEPT' }]);
+  const rolePermissions = await pg.query<{ code: string }>(`
+    SELECT p.code FROM role_permissions rp
+    JOIN roles r ON r.id = rp.role_id
+    JOIN permissions p ON p.id = rp.permission_id
+    WHERE r.code = 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN'
+    ORDER BY p.code
+  `);
+  assert.deepEqual(rolePermissions.rows.map((row) => row.code), [EXPORT, REGISTER, VIEW]);
+  const coordinatorPermissions = await pg.query<{ role_code: string; permission_code: string }>(`
+    SELECT r.code AS role_code, p.code AS permission_code FROM role_permissions rp
+    JOIN roles r ON r.id = rp.role_id
+    JOIN permissions p ON p.id = rp.permission_id
+    WHERE r.code IN ('DIEU_PHOI_TRUC', 'DIEU_PHOI_CHAM_CONG') AND p.code LIKE 'staff-learning.%'
+    ORDER BY r.code, p.code
+  `);
+  assert.deepEqual(coordinatorPermissions.rows, [
+    { role_code: 'DIEU_PHOI_TRUC', permission_code: EXPORT },
+    { role_code: 'DIEU_PHOI_TRUC', permission_code: VIEW },
+  ]);
 });
