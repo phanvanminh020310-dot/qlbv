@@ -29,7 +29,7 @@ import { renderPrintDocument } from '../../infra/rendering/pdf-renderer';
 import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
-import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, calculateAttendanceMetrics } from './attendance-metrics';
+import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, calculateAttendanceMetrics, pairAttendanceRestEntries } from './attendance-metrics';
 import { defaultNationalHolidayPlan, nationalHolidayProposal, type NationalHolidayPlanConfig } from './national-holiday-plan';
 import type {
   AttendanceCodeDto,
@@ -497,19 +497,21 @@ export class DutyAttendanceService {
   async save(user: AccessContext, dto: SaveAttendanceEntriesDto) {
     const departmentId = await this.deptId(user, dto.departmentId);
     if (!dto.entries.length) return { saved: 0 };
-    const dates = [...new Set(dto.entries.map((entry) => entry.workDate))];
+    const dates = [...new Set(dto.entries.map((entry) => entry.workDate))].sort();
     const today = bangkokToday();
-    const lockPolicy = await this.attendanceLockPolicy();
+    const [lockPolicy, restPairLookbackDays] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays()]);
     for (const date of dates) {
       if (!YMD.test(date)) throw new BadRequestException('Ngày chấm công không hợp lệ');
       if (isDateLocked(date, today, lockPolicy)) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} theo chế độ khóa bảng hiện tại`);
     }
+    const restValidationFrom = addCalendarDays(dates[0]!, -restPairLookbackDays);
+    const restValidationTo = addCalendarDays(dates[dates.length - 1]!, 1);
     const personIds = [...new Set(dto.entries.map((entry) => entry.userId))];
     const [people, allStoredCodes, existingEntries, existingEntryCodes, existingNotes, assignmentRows] = await Promise.all([
       this.db.db.select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, personIds)),
       // Mã ngừng dùng vẫn cần nhận diện để người dùng có thể giữ/bỏ đúng ký hiệu lịch sử đã có,
       // nhưng tuyệt đối không được chọn mới cho một ô chưa từng có mã đó.
-      this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code, active: dutyAttendanceCodes.active }).from(dutyAttendanceCodes),
+      this.db.db.select({ id: dutyAttendanceCodes.id, code: dutyAttendanceCodes.code, active: dutyAttendanceCodes.active, countValue: dutyAttendanceCodes.countValue, calculationRole: dutyAttendanceCodes.calculationRole, deductsWorkday: dutyAttendanceCodes.deductsWorkday, restSource: dutyAttendanceCodes.restSource, sortOrder: dutyAttendanceCodes.sortOrder }).from(dutyAttendanceCodes),
       // Dòng cũ là ký hiệu đầu tiên, để API/bản sao lưu cũ vẫn đọc được một ký hiệu hợp lệ.
       this.db.db.select({ id: dutyAttendanceEntries.id, userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, departmentId: dutyAttendanceEntries.departmentId, codeId: dutyAttendanceEntries.codeId, note: dutyAttendanceEntries.note }).from(dutyAttendanceEntries).where(and(inArray(dutyAttendanceEntries.userId, personIds), inArray(dutyAttendanceEntries.workDate, dates))),
       this.db.db.select({ id: dutyAttendanceEntryCodes.id, userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, departmentId: dutyAttendanceEntryCodes.departmentId, codeId: dutyAttendanceEntryCodes.codeId }).from(dutyAttendanceEntryCodes).where(and(inArray(dutyAttendanceEntryCodes.userId, personIds), inArray(dutyAttendanceEntryCodes.workDate, dates))),
@@ -563,6 +565,55 @@ export class DutyAttendanceService {
     }
 
     await this.db.transaction(async (tx) => {
+      // Dựng lại trạng thái sau khi áp dụng cả yêu cầu đang gửi (chưa ghi CSDL), rồi
+      // ghép bằng đúng thuật toán mà bảng tổng hợp sử dụng. Việc này nằm trong giao
+      // dịch để một NB/NB2 không hợp lệ không thể khiến một phần yêu cầu bị lưu.
+      const hasPotentialRest = preparedEntries.some(({ codeProvided, codes }) => codeProvided && codes?.some((code) => byCode.get(code)?.calculationRole === 'REST'));
+      if (hasPotentialRest) {
+        const [historicalCodeRows, historicalLegacyRows] = await Promise.all([
+          tx.select({ userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, codeId: dutyAttendanceEntryCodes.codeId }).from(dutyAttendanceEntryCodes).where(and(eq(dutyAttendanceEntryCodes.departmentId, departmentId), inArray(dutyAttendanceEntryCodes.userId, personIds), gte(dutyAttendanceEntryCodes.workDate, restValidationFrom), lt(dutyAttendanceEntryCodes.workDate, restValidationTo))),
+          tx.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, codeId: dutyAttendanceEntries.codeId }).from(dutyAttendanceEntries).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), inArray(dutyAttendanceEntries.userId, personIds), gte(dutyAttendanceEntries.workDate, restValidationFrom), lt(dutyAttendanceEntries.workDate, restValidationTo))),
+        ]);
+        const codeById = new Map(allStoredCodes.map((code) => [code.id, code.code.toUpperCase()]));
+        const codesByCell = new Map<string, string[]>();
+        const cellsWithModernCodes = new Set<string>();
+        const addHistoricalCode = (userId: number, workDate: string, codeId: number, modern: boolean) => {
+          const cell = `${userId}:${workDate}`;
+          if (modern) cellsWithModernCodes.add(cell);
+          if (!modern && cellsWithModernCodes.has(cell)) return;
+          const code = codeById.get(codeId); if (!code) return;
+          const current = codesByCell.get(cell) ?? [];
+          if (!current.includes(code)) codesByCell.set(cell, [...current, code]);
+        };
+        for (const row of historicalCodeRows) addHistoricalCode(row.userId, row.workDate, row.codeId, true);
+        for (const row of historicalLegacyRows) addHistoricalCode(row.userId, row.workDate, row.codeId, false);
+        const originalCodesByCell = new Map([...codesByCell.entries()].map(([cell, codes]) => [cell, [...codes]]));
+        for (const { entry, codeProvided, codes } of preparedEntries) if (codeProvided) codesByCell.set(`${entry.userId}:${entry.workDate}`, codes ?? []);
+        const newRestEntries = new Set<string>();
+        for (const { entry, codeProvided } of preparedEntries) {
+          if (!codeProvided) continue;
+          const cell = `${entry.userId}:${entry.workDate}`;
+          const original = new Set(originalCodesByCell.get(cell) ?? []);
+          for (const code of codesByCell.get(cell) ?? []) if (byCode.get(code)?.calculationRole === 'REST' && !original.has(code)) newRestEntries.add(`${entry.userId}:${entry.workDate}:${code}`);
+        }
+        if (newRestEntries.size) {
+          const codeOrder = (left: string, right: string) => (byCode.get(left)?.sortOrder ?? Number.MAX_SAFE_INTEGER) - (byCode.get(right)?.sortOrder ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right);
+          for (const personId of personIds) {
+            const entries = [...codesByCell.entries()].flatMap(([cell, selectedCodes]) => {
+              const divider = cell.indexOf(':');
+              if (Number(cell.slice(0, divider)) !== personId) return [];
+              const workDate = cell.slice(divider + 1);
+              return [...selectedCodes].sort(codeOrder).map((code) => ({ date: workDate, code }));
+            });
+            const invalid = pairAttendanceRestEntries({ codes: allStoredCodes, entries, restPairLookbackDays }).pairs.find(({ rest, source }) => !source && newRestEntries.has(`${personId}:${rest.date}:${rest.code.toUpperCase()}`));
+            if (invalid) {
+              const restCode = byCode.get(invalid.rest.code.toUpperCase())!;
+              throw new BadRequestException(`Ký hiệu nghỉ bù “${restCode.code}” ngày ${fmtDate(invalid.rest.date)} chưa có ca Trực/Tăng cường hợp lệ chưa dùng trong ${restPairLookbackDays} ngày trước đó; không thể lưu.`);
+            }
+          }
+        }
+      }
+
       for (const prepared of preparedEntries) {
         const { entry, codeProvided, codes, noteProvided, note } = prepared;
         const existingEntry = existingEntryByCell.get(`${entry.userId}:${entry.workDate}`);

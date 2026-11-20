@@ -121,21 +121,21 @@ test('lọc nguồn nghỉ bù chỉ chọn đúng loại ca và vẫn lấy ca 
   assert.equal(result.values.SYS_NGHI_BU_CHUA_GAN, 0);
 });
 
-test('nhiều nghỉ bù liên tiếp cùng quy về ca phù hợp gần nhất và ca thiếu nguồn tạo cảnh báo', () => {
+test('nghỉ bù chỉ tiêu thụ ca gần nhất, không quay lại tái sử dụng ca trực cũ hơn', () => {
   const result = calculateAttendanceMetrics({
-    monthDates: ['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06'],
+    monthDates: ['2026-08-03', '2026-08-04', '2026-08-07', '2026-08-08'],
     holidayDates: [],
     codes,
     restPairLookbackDays: 14,
     entries: [
-      { date: '2026-08-03', code: 'T' },
-      { date: '2026-08-04', code: 'N2' },
-      { date: '2026-08-05', code: 'N' },
-      { date: '2026-08-06', code: 'NTC' },
+      { date: '2026-08-03', code: 'T' }, // Thứ Hai: bị ca T sau thay thế làm nguồn chờ.
+      { date: '2026-08-04', code: 'T' }, // Thứ Ba: là nguồn gần nhất duy nhất cho N ngày 07.
+      { date: '2026-08-07', code: 'N' },
+      { date: '2026-08-08', code: 'N' },
     ],
   });
-  assert.equal(result.values.SYS_NGHI_TRUC_NGAY_THUONG, 1.5, 'N2 và N đều dựa theo ca trực gần nhất');
-  assert.equal(result.values.SYS_NGHI_BU_CHUA_GAN, 1, 'nghỉ chỉ ghép Tăng cường không được ghép nhầm với Trực');
+  assert.equal(result.values.SYS_NGHI_TRUC_NGAY_THUONG, 1, 'N ngày 07 chỉ ghép T ngày 04');
+  assert.equal(result.values.SYS_NGHI_BU_CHUA_GAN, 1, 'N ngày 08 không được quay lại ghép T ngày 03');
   assert.equal(result.warnings.length, 1);
 });
 

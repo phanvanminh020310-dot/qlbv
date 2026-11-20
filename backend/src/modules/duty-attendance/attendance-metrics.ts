@@ -2,14 +2,18 @@ import type { DutyAttendanceCalculationRole, DutyAttendanceRestSource } from '..
 
 export type AttendanceDayClass = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY';
 
-type MetricCode = {
+/** Cấu hình tối thiểu cần dùng chung cho ghép ca trực với nghỉ bù. */
+export type AttendancePairingCode = {
   code: string;
   countValue: string | number;
   calculationRole: DutyAttendanceCalculationRole;
   deductsWorkday: boolean;
   restSource: DutyAttendanceRestSource;
 };
-type MetricEntry = { date: string; code: string };
+/** Một ký hiệu trong dòng thời gian của một nhân viên. */
+export type AttendancePairingEntry = { date: string; code: string };
+type MetricCode = AttendancePairingCode;
+type MetricEntry = AttendancePairingEntry;
 
 export const ATTENDANCE_SYSTEM_METRICS = [
   { key: 'SYS_NGAY_CONG', label: 'Ngày công', description: 'Thứ Hai–Sáu, trừ ngày lễ và các ký hiệu được đánh dấu “trừ Ngày công”.' },
@@ -58,6 +62,76 @@ function isMatchedDuty(role: DutyAttendanceCalculationRole, source: DutyAttendan
     : false;
 }
 
+const calendarGap = (later: string, earlier: string) => Math.round((toDate(later).getTime() - toDate(earlier).getTime()) / 86_400_000);
+type DutyRole = 'DUTY' | 'REINFORCEMENT';
+type PairingCandidate = { entry: AttendancePairingEntry; index: number; role: DutyRole };
+
+/**
+ * Ghép nghỉ bù theo dòng thời gian của một nhân viên.
+ *
+ * Mỗi loại ca chỉ giữ một nguồn chờ: một ca mới cùng loại thay thế ca cũ chưa được nghỉ
+ * bù. Khi nghỉ bù nguồn ANY_DUTY lấy ca mới nhất, mọi nguồn cũ hơn cũng hết hiệu lực.
+ * Vì vậy T thứ Hai, T thứ Ba, NB thứ Sáu chỉ tiêu thụ T thứ Ba; NB tiếp theo không
+ * được quay lại dùng T thứ Hai. Hàm này là nguồn chân lý dùng đồng thời cho hiển thị
+ * tổng hợp và kiểm tra trước khi lưu, để hai nơi không thể ghép khác nhau.
+ */
+export function pairAttendanceRestEntries(input: {
+  codes: AttendancePairingCode[];
+  entries: AttendancePairingEntry[];
+  restPairLookbackDays: number;
+}) {
+  const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
+  const pairLimit = Math.max(1, Math.min(62, Math.floor(input.restPairLookbackDays)));
+  const timeline = input.entries
+    .map((entry, index) => ({ entry, index, code: codes.get(entry.code.toUpperCase()) }))
+    .filter((item): item is { entry: AttendancePairingEntry; index: number; code: AttendancePairingCode } => !!item.code)
+    .sort((left, right) => left.entry.date.localeCompare(right.entry.date) || left.index - right.index);
+  const available: Partial<Record<DutyRole, PairingCandidate>> = {};
+  const pairs: Array<{ rest: AttendancePairingEntry; source?: AttendancePairingEntry }> = [];
+
+  for (let start = 0; start < timeline.length;) {
+    const date = timeline[start]!.entry.date;
+    let end = start + 1;
+    while (end < timeline.length && timeline[end]!.entry.date === date) end += 1;
+    const dayEntries = timeline.slice(start, end);
+
+    // Xử lý nghỉ trước rồi mới đưa ca của ngày này vào nguồn chờ, nên không thể ghép
+    // nghỉ bù với Trực/Tăng cường của chính ngày đó, bất kể thứ tự tick các ký hiệu.
+    for (const item of dayEntries) {
+      if (item.code.calculationRole !== 'REST') continue;
+      const candidates = (['DUTY', 'REINFORCEMENT'] as const)
+        .map((role) => available[role])
+        .filter((candidate): candidate is PairingCandidate => !!candidate)
+        .filter((candidate) => isMatchedDuty(candidate.role, item.code.restSource))
+        .filter((candidate) => calendarGap(item.entry.date, candidate.entry.date) <= pairLimit)
+        .sort((left, right) => right.entry.date.localeCompare(left.entry.date) || right.index - left.index);
+      const matched = candidates[0];
+      if (!matched) {
+        pairs.push({ rest: item.entry });
+        continue;
+      }
+      pairs.push({ rest: item.entry, source: matched.entry });
+      delete available[matched.role];
+      // Nghỉ bù ANY_DUTY đã chốt tại nguồn gần nhất thì các nguồn cũ hơn không còn
+      // là lựa chọn dự phòng cho một ngày nghỉ bù tiếp theo.
+      if (item.code.restSource === 'ANY_DUTY') {
+        for (const role of ['DUTY', 'REINFORCEMENT'] as const) {
+          const candidate = available[role];
+          if (candidate && candidate.entry.date <= matched.entry.date) delete available[role];
+        }
+      }
+    }
+
+    for (const item of dayEntries) {
+      if (item.code.calculationRole !== 'DUTY' && item.code.calculationRole !== 'REINFORCEMENT') continue;
+      // Một ca mới cùng loại thay thế nguồn cũ: không tích lũy rồi quay lại lấy ca xa hơn.
+      available[item.code.calculationRole] = { entry: item.entry, index: item.index, role: item.code.calculationRole };
+    }
+    start = end;
+  }
+  return { pairs, pairLimit };
+}
+
 /**
  * Tính các biến nghiệp vụ theo từng người/tháng. Hàm thuần để có thể kiểm thử kế toán độc lập với CSDL/UI.
  * Một ngày lễ trùng cuối tuần được xếp HOLIDAY trước, đúng nguyên tắc thanh toán ngày lễ.
@@ -94,33 +168,19 @@ export function calculateAttendanceMetrics(input: {
   }
   values.SYS_NGAY_CONG = Math.max(0, values.SYS_NGAY_CONG);
 
-  const timeline = [...input.entries]
-    .filter((entry) => codes.has(entry.code.toUpperCase()))
-    .sort((left, right) => left.date.localeCompare(right.date));
-  const pairLimit = Math.max(1, Math.min(62, Math.floor(input.restPairLookbackDays)));
-  for (let index = 0; index < timeline.length; index += 1) {
-    const rest = timeline[index];
+  const { pairs, pairLimit } = pairAttendanceRestEntries({ codes: input.codes, entries: input.entries, restPairLookbackDays: input.restPairLookbackDays });
+  for (const { rest, source } of pairs) {
     if (!currentDates.has(rest.date)) continue;
     const restCode = codes.get(rest.code.toUpperCase());
-    if (!restCode || restCode.calculationRole !== 'REST') continue;
-    let matched: MetricEntry | undefined;
-    for (let previous = index - 1; previous >= 0; previous -= 1) {
-      const candidate = timeline[previous];
-      // Nghỉ bù luôn phải dò một ngày trực trước đó, không ghép hai ký hiệu cùng ngày.
-      if (candidate.date >= rest.date) continue;
-      const gap = Math.round((toDate(rest.date).getTime() - toDate(candidate.date).getTime()) / 86_400_000);
-      if (gap > pairLimit) break;
-      const dutyCode = codes.get(candidate.code.toUpperCase());
-      if (dutyCode && isMatchedDuty(dutyCode.calculationRole, restCode.restSource)) { matched = candidate; break; }
-    }
+    if (!restCode) continue;
     const value = count(restCode.countValue);
-    if (!matched) {
+    if (!source) {
       values.SYS_NGHI_BU_CHUA_GAN += value;
       warnings.push(`${restCode.code} ngày ${formatDate(rest.date)} chưa tìm được ca trực phù hợp trong ${pairLimit} ngày trước`);
       continue;
     }
-    const dutyCode = codes.get(matched.code.toUpperCase())!;
-    const kind = attendanceDayClass(matched.date, holidaySet, workdaySet);
+    const dutyCode = codes.get(source.code.toUpperCase())!;
+    const kind = attendanceDayClass(source.date, holidaySet, workdaySet);
     values[metricKey(dutyCode.calculationRole === 'DUTY' ? 'SYS_NGHI_TRUC' : 'SYS_NGHI_TANG_CUONG', kind)] += value;
   }
 
