@@ -2,13 +2,13 @@ import { apiFetch } from '@/lib/api';
 
 export interface StaffLearningDay { date: string; weekday: string; label: string }
 export interface StaffLearningDepartment { id: number; code: string; name: string; shortName: string }
-export interface StaffLearningPerson { userId: number; fullName: string; title: string; manv: string }
+export interface StaffLearningPerson { userId: number; fullName: string; title: string; manv: string; /** Ghi chú theo lượt học, ví dụ chỉ học buổi sáng/chiều. */ note?: string }
 export interface StaffLearningStaff extends StaffLearningPerson {
   departmentId: number;
   departmentName: string;
   departmentShortName: string;
 }
-export interface StaffLearningRegistrationInput { userId: number; studyDate: string }
+export interface StaffLearningRegistrationInput { userId: number; studyDate: string; note?: string }
 export interface StaffLearningWeek {
   weekStart: string;
   days: StaffLearningDay[];
@@ -23,12 +23,14 @@ export interface StaffLearningWeek {
 
 const get = <T,>(path: string) => apiFetch<T>(path);
 const post = <T,>(path: string, body: unknown) => apiFetch<T>(path, { method: 'POST', body });
+const put = <T,>(path: string, body: unknown) => apiFetch<T>(path, { method: 'PUT', body });
 const remove = <T,>(path: string) => apiFetch<T>(path, { method: 'DELETE' });
 const params = (weekStart: string) => new URLSearchParams({ weekStart }).toString();
 
 export const staffLearningApi = {
   week: (weekStart: string) => get<StaffLearningWeek>(`/staff-learning/week?${params(weekStart)}`),
   register: (input: StaffLearningRegistrationInput) => post<{ registered: true; alreadyRegistered: boolean }>('/staff-learning/registrations', input),
+  updateNote: ({ userId, studyDate, note }: StaffLearningRegistrationInput) => put<{ updated: true }>(`/staff-learning/registrations/${userId}/${encodeURIComponent(studyDate)}`, { note }),
   remove: ({ userId, studyDate }: StaffLearningRegistrationInput) => remove<{ removed: boolean }>(`/staff-learning/registrations/${userId}/${encodeURIComponent(studyDate)}`),
   exportPath: (weekStart: string) => `/staff-learning/export?${params(weekStart)}`,
 };

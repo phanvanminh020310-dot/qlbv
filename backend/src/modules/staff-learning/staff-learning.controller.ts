@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Audit, CurrentUser, RequirePermissions } from '../../common/decorators';
 import type { AccessContext } from '../../common/types/access-context';
-import { StaffLearningRegistrationDto, StaffLearningWeekQueryDto } from './staff-learning.dto';
+import { StaffLearningRegistrationDto, StaffLearningRegistrationNoteDto, StaffLearningWeekQueryDto } from './staff-learning.dto';
 import { StaffLearningService } from './staff-learning.service';
 
 /**
@@ -28,6 +28,14 @@ export class StaffLearningController {
   @ApiOperation({ summary: 'Đăng ký lịch học cho nhân viên thuộc phạm vi khoa/phòng được giao' })
   register(@CurrentUser() user: AccessContext, @Body() dto: StaffLearningRegistrationDto) {
     return this.service.register(user, dto);
+  }
+
+  @Put('registrations/:userId/:studyDate')
+  @RequirePermissions('staff-learning.register')
+  @Audit({ module: 'STAFF_LEARNING', action: 'UPDATE', entity: 'staff_learning_registrations', description: 'Cập nhật ghi chú lịch học cho nhân viên thuộc khoa/phòng được gán' })
+  @ApiOperation({ summary: 'Cập nhật ghi chú cho lượt học thuộc phạm vi khoa/phòng được giao' })
+  updateNote(@CurrentUser() user: AccessContext, @Param('userId', ParseIntPipe) userId: number, @Param('studyDate') studyDate: string, @Body() dto: StaffLearningRegistrationNoteDto) {
+    return this.service.updateNote(user, userId, studyDate, dto);
   }
 
   @Delete('registrations/:userId/:studyDate')

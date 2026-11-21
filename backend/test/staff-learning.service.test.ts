@@ -34,6 +34,7 @@ async function setup() {
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
   await pg.exec(migration('0041_lich_hoc_can_bo_nhan_vien.sql'));
   await pg.exec(migration('0042_vai_tro_dang_ky_lich_hoc_can_bo.sql'));
+  await pg.exec(migration('0043_ghi_chu_lich_hoc_can_bo_nhan_vien.sql'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, short_name, sort_order, active) VALUES
       (10, 'A1', 'Khoa A1', 'A1', 10, true),
@@ -51,6 +52,7 @@ async function setup() {
 test('API lịch học yêu cầu đúng các quyền staff-learning độc lập với lịch trực', () => {
   assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.week), [VIEW]);
   assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.register), [REGISTER]);
+  assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.updateNote), [REGISTER]);
   assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.remove), [REGISTER]);
   assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, StaffLearningController.prototype.exportExcel), [EXPORT]);
 });
@@ -76,16 +78,21 @@ test('vai trò đăng ký lịch học chỉ nhập nhân viên thuộc khoa đ�
   assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: false });
   assert.deepEqual(await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' }), { registered: true, alreadyRegistered: true }, 'mỗi nhân viên/ngày duy nhất');
   await service.register(registrarA, { userId: 1, studyDate: '2026-11-17' });
-  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21' }); // Thứ 7
-  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22' }); // Chủ nhật
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21', note: 'Chỉ học buổi sáng' }); // Thứ 7
+  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22', note: 'Học buổi chiều' }); // Chủ nhật
   await service.register(registrarB, { userId: 3, studyDate: '2026-11-16' });
 
   const scoped = await service.week(registrarA, { weekStart: '2026-11-16' });
   assert.deepEqual(scoped.entries['10:2026-11-16']?.map((person) => person.fullName), ['Trần Bình']);
   assert.deepEqual(scoped.entries['10:2026-11-21']?.map((person) => person.fullName), ['Trần Bình'], 'Thứ 7 được đăng ký và trả về đúng tuần');
+  assert.equal(scoped.entries['10:2026-11-21']?.[0]?.note, 'Chỉ học buổi sáng', 'ghi chú được trả về cùng lượt học');
   assert.deepEqual(scoped.entries['10:2026-11-22']?.map((person) => person.fullName), ['Nguyễn An'], 'Chủ nhật được đăng ký và trả về đúng tuần');
+  assert.equal(scoped.entries['10:2026-11-22']?.[0]?.note, 'Học buổi chiều');
   assert.equal(scoped.entries['11:2026-11-16'], undefined, 'vai trò khoa không lộ dữ liệu khoa ngoài phạm vi');
   assert.equal(scoped.summary.registrations, 4);
+  assert.deepEqual(await service.updateNote(registrarA, 2, '2026-11-21', { note: 'Học buổi chiều' }), { updated: true });
+  assert.equal((await service.week(registrarA, { weekStart: '2026-11-16' })).entries['10:2026-11-21']?.[0]?.note, 'Học buổi chiều', 'có thể sửa ghi chú mà không xóa lượt học');
+  await assert.rejects(service.updateNote(viewerA, 2, '2026-11-21', { note: 'Không có quyền' }), /staff-learning\.register/);
 
   const all = await service.week(coordinator, { weekStart: '2026-11-16' });
   assert.deepEqual(all.departments.map((department) => department.code), ['A1', 'B1']);
@@ -114,8 +121,8 @@ test('xuất Excel có cột khoa/đơn vị và đủ bảy cột ngày từ Th
   const { pg, service } = await setup(); t.after(() => pg.close());
   const registrarA = context(1, 10);
   await service.register(registrarA, { userId: 2, studyDate: '2026-11-16' });
-  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21' });
-  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22' });
+  await service.register(registrarA, { userId: 2, studyDate: '2026-11-21', note: 'Chỉ học buổi sáng' });
+  await service.register(registrarA, { userId: 1, studyDate: '2026-11-22', note: 'Học buổi chiều' });
   const exported = await service.exportExcel(registrarA, { weekStart: '2026-11-16' });
   assert.match(exported.fileName, /^LICH_HOC_CAN_BO_NHAN_VIEN_2026-11-16\.xlsx$/);
   assert.equal(exported.buffer.subarray(0, 2).toString('utf8'), 'PK', 'Excel XLSX phải là gói ZIP hợp lệ');
@@ -131,8 +138,8 @@ test('xuất Excel có cột khoa/đơn vị và đủ bảy cột ngày từ Th
   assert.equal(sheet.getCell('I3').value, 'Chủ nhật\n22/11');
   assert.equal(sheet.getCell('B5').value, 'A1');
   assert.equal(sheet.getCell('C5').value, 'Trần Bình', 'ô khoa/ngày phải ghi đúng nhân viên đã đăng ký');
-  assert.equal(sheet.getCell('H5').value, 'Trần Bình', 'Excel phải giữ lịch Thứ 7');
-  assert.equal(sheet.getCell('I5').value, 'Nguyễn An', 'Excel phải giữ lịch Chủ nhật');
+  assert.equal(sheet.getCell('H5').value, 'Trần Bình\nGhi chú: Chỉ học buổi sáng', 'Excel phải kèm ghi chú Thứ 7');
+  assert.equal(sheet.getCell('I5').value, 'Nguyễn An\nGhi chú: Học buổi chiều', 'Excel phải kèm ghi chú Chủ nhật');
 });
 
 test('migration lịch học chạy lặp an toàn, chặn trùng nhân viên-ngày và tạo vai trò/phân quyền mới', async (t) => {
@@ -149,6 +156,11 @@ test('migration lịch học chạy lặp an toàn, chặn trùng nhân viên-ng
   await pg.exec(learningSql); await pg.exec(rbacSql); await pg.exec(learningSql); await pg.exec(rbacSql);
   await pg.exec(`INSERT INTO departments (id, code, name, active) VALUES (10, 'A1', 'Khoa A1', true); INSERT INTO users (id, manv, username, password_hash, full_name, department_id, active) VALUES (1, 'NV01', 'nv001', 'hash', 'Nhân viên', 10, true); INSERT INTO staff_learning_registrations (department_id, user_id, study_date) VALUES (10, 1, '2026-11-16');`);
   await assert.rejects(pg.exec(`INSERT INTO staff_learning_registrations (department_id, user_id, study_date) VALUES (10, 1, '2026-11-16')`), /unique|duplicate/i);
+  const noteSql = migration('0043_ghi_chu_lich_hoc_can_bo_nhan_vien.sql');
+  await pg.exec(noteSql); await pg.exec(noteSql);
+  const historic = await pg.query<{ user_id: number; study_date: string; note: string }>(`SELECT user_id, study_date::text AS study_date, note FROM staff_learning_registrations`);
+  assert.deepEqual(historic.rows, [{ user_id: 1, study_date: '2026-11-16', note: '' }], 'đăng ký cũ được giữ nguyên với ghi chú rỗng');
+  await assert.rejects(pg.exec(`UPDATE staff_learning_registrations SET note = NULL`), /null/i);
 
   const role = await pg.query<{ code: string; data_scope: string }>(`SELECT code, data_scope FROM roles WHERE code = 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN'`);
   assert.deepEqual(role.rows, [{ code: 'DANG_KY_LICH_HOC_CAN_BO_NHAN_VIEN', data_scope: 'DEPT' }]);

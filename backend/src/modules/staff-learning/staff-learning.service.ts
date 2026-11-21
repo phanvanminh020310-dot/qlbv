@@ -4,7 +4,7 @@ import * as ExcelJS from 'exceljs';
 import { DbService } from '../../db/db.service';
 import { departments, staffLearningRegistrations, users } from '../../db/schema';
 import type { AccessContext } from '../../common/types/access-context';
-import type { StaffLearningRegistrationDto, StaffLearningWeekQueryDto } from './staff-learning.dto';
+import type { StaffLearningRegistrationDto, StaffLearningRegistrationNoteDto, StaffLearningWeekQueryDto } from './staff-learning.dto';
 
 const YMD = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const WEEKDAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
@@ -45,6 +45,13 @@ export class StaffLearningService {
   /** Lịch học đủ bảy ngày trong tuần, từ Thứ 2 đến Chủ nhật. */
   private assertStudyDate(studyDate: string) {
     if (!isCalendarDate(studyDate)) throw new BadRequestException('Ngày học không hợp lệ');
+  }
+
+  /** Chuẩn hóa ghi chú để API cũ không gửi note tiếp tục tạo dữ liệu rỗng an toàn. */
+  private noteOf(note?: string) {
+    const normalized = (note ?? '').trim();
+    if (normalized.length > 300) throw new BadRequestException('Ghi chú lịch học tối đa 300 ký tự');
+    return normalized;
   }
 
   private async visibleDepartments(user: AccessContext) {
@@ -131,6 +138,7 @@ export class StaffLearningService {
           .select({
             departmentId: staffLearningRegistrations.departmentId,
             studyDate: staffLearningRegistrations.studyDate,
+            note: staffLearningRegistrations.note,
             userId: users.id,
             fullName: users.fullName,
             title: users.title,
@@ -142,10 +150,10 @@ export class StaffLearningService {
         : Promise.resolve([]),
       this.staffInDepartments(editable.map((department) => department.id)),
     ]);
-    const entries: Record<string, Array<{ userId: number; fullName: string; title: string; manv: string }>> = {};
+    const entries: Record<string, Array<{ userId: number; fullName: string; title: string; manv: string; note: string }>> = {};
     for (const registration of registrations) {
       const key = `${registration.departmentId}:${registration.studyDate}`;
-      entries[key] = [...(entries[key] ?? []), { userId: registration.userId, fullName: registration.fullName, title: registration.title, manv: registration.manv }];
+      entries[key] = [...(entries[key] ?? []), { userId: registration.userId, fullName: registration.fullName, title: registration.title, manv: registration.manv, note: registration.note }];
     }
     for (const people of Object.values(entries)) people.sort((left, right) => left.fullName.localeCompare(right.fullName, 'vi') || left.userId - right.userId);
     return {
@@ -174,10 +182,31 @@ export class StaffLearningService {
     const target = await this.assertTargetInRegistrationScope(user, dto.userId);
     const [created] = await this.db.db
       .insert(staffLearningRegistrations)
-      .values({ departmentId: target.departmentId, userId: target.id, studyDate: dto.studyDate })
+      .values({ departmentId: target.departmentId, userId: target.id, studyDate: dto.studyDate, note: this.noteOf(dto.note) })
       .onConflictDoNothing()
       .returning({ id: staffLearningRegistrations.id });
     return { registered: true, alreadyRegistered: !created };
+  }
+
+  /** Sửa ghi chú của lượt học đã có, vẫn kiểm tra khoa được chụp tại thời điểm đăng ký. */
+  async updateNote(user: AccessContext, userId: number, studyDate: string, dto: StaffLearningRegistrationNoteDto) {
+    this.assertPermission(user, 'staff-learning.register');
+    this.assertStudyDate(studyDate);
+    const [registration] = await this.db.db
+      .select({ departmentId: staffLearningRegistrations.departmentId })
+      .from(staffLearningRegistrations)
+      .where(and(eq(staffLearningRegistrations.userId, userId), eq(staffLearningRegistrations.studyDate, studyDate)))
+      .limit(1);
+    if (!registration) throw new BadRequestException('Không tìm thấy lượt đăng ký lịch học để cập nhật ghi chú');
+    const editable = await this.registrationDepartments(user);
+    if (!editable.some((department) => department.id === registration.departmentId)) {
+      throw new ForbiddenException('Đăng ký lịch học không thuộc khoa/phòng trong phạm vi của tài khoản');
+    }
+    await this.db.db
+      .update(staffLearningRegistrations)
+      .set({ note: this.noteOf(dto.note), updatedAt: new Date() })
+      .where(and(eq(staffLearningRegistrations.userId, userId), eq(staffLearningRegistrations.studyDate, studyDate)));
+    return { updated: true };
   }
 
   /** Gỡ đúng nhân viên/ngày, kiểm tra khoa từ ảnh chụp tại lúc đăng ký để giữ an toàn khi nhân sự chuyển khoa. */
@@ -236,7 +265,7 @@ export class StaffLearningService {
       sheet.getCell(row, 2).value = department.shortName || department.name;
       data.days.forEach((day, dayIndex) => {
         const people = data.entries[`${department.id}:${day.date}`] ?? [];
-        sheet.getCell(row, dayIndex + 3).value = people.map((person) => person.fullName).join('\n');
+        sheet.getCell(row, dayIndex + 3).value = people.map((person) => person.note ? `${person.fullName}\nGhi chú: ${person.note}` : person.fullName).join('\n');
       });
       for (let column = 1; column <= lastColumn; column += 1) {
         const cell = sheet.getCell(row, column);
@@ -244,7 +273,7 @@ export class StaffLearningService {
         cell.alignment = { vertical: 'top', horizontal: column <= 2 ? (column === 1 ? 'center' : 'left') : 'left', wrapText: true };
         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
       }
-      sheet.getRow(row).height = Math.max(34, 17 * Math.max(1, ...data.days.map((day) => (data.entries[`${department.id}:${day.date}`] ?? []).length)));
+      sheet.getRow(row).height = Math.max(34, 17 * Math.max(1, ...data.days.map((day) => (data.entries[`${department.id}:${day.date}`] ?? []).reduce((lines, person) => lines + (person.note ? 2 : 1), 0))));
     });
     sheet.getRow(1).height = 26; sheet.getRow(2).height = 21; sheet.getRow(3).height = 22; sheet.getRow(4).height = 36;
     sheet.getColumn(1).width = 8; sheet.getColumn(2).width = 30;

@@ -283,6 +283,8 @@ export const staffLearningRegistrations = pgTable(
     departmentId: integer('department_id').notNull().references(() => departments.id, { onDelete: 'restrict' }),
     userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
     studyDate: date('study_date', { mode: 'string' }).notNull(),
+    /** Ví dụ: chỉ học buổi sáng/chiều; chuỗi rỗng giữ tương thích mọi đăng ký lịch sử. */
+    note: text('note').default('').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
