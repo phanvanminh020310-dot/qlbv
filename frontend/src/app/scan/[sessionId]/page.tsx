@@ -1,18 +1,35 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
+  AlertTriangle,
   Camera,
   CheckCircle2,
-  AlertTriangle,
+  Copy,
+  ExternalLink,
   RefreshCw,
   ShieldCheck,
-  Stethoscope,
   Sparkles,
-  SwitchCamera,
-  ScanFace,
+  Stethoscope,
 } from "lucide-react";
+import {
+  BLACK_FRAME_MAX_LUMA,
+  frameLuma,
+  buildLiveCaptureProof,
+  cameraFailureMessage,
+  classifyCameraError,
+  isIos,
+  isIosInAppBrowser,
+  liveFramesReady,
+  openFrontCameraStream,
+  pushLiveFrame,
+  safariOpenUrl,
+  startVideoPlayback,
+  stopStream,
+  type CameraFailure,
+  type LiveFrame,
+} from "@/lib/live-camera";
 
 // One stable claim even when Safari/private-mode storage is unavailable.
 let memoryDeviceClaimToken = "";
@@ -42,6 +59,22 @@ function getDeviceClaimToken(): string {
   return memoryDeviceClaimToken;
 }
 
+/**
+ * Trạng thái camera trực tiếp:
+ *  - starting: đang xin quyền / mở luồng camera trước
+ *  - live: video đang chạy, vòng quét tự động gửi chuỗi khung hình
+ *  - needs-tap: WebView (Zalo/iOS) chặn tự phát → cần một lần chạm để phát video
+ *  - no-frames: đã có luồng nhưng khung hình đen/không chạy
+ *  - error: không mở được camera (bị từ chối, không hỗ trợ...)
+ * Không có chế độ chụp/tải ảnh: xác thực chỉ bằng camera trực tiếp.
+ */
+type CameraState = "starting" | "live" | "needs-tap" | "no-frames" | "error";
+
+const FRAME_INTERVAL_MS = 400;
+const DARK_SKIP_BRIGHTNESS = 18; // trung bình toàn khung; quá tối thì AI không nhận diện được
+const BLACK_FRAMES_BEFORE_RECOVERY = 15; // ~6 giây khung hình đen liên tục
+const MAX_ATTEMPTS = 80;
+
 export default function MobileScanPage() {
   const routeParams = useParams();
   const rawSessionId = (routeParams?.sessionId as string) || "";
@@ -51,32 +84,38 @@ export default function MobileScanPage() {
   const [loadingSession, setLoadingSession] = useState(true);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const [cameraState, setCameraState] = useState<CameraState>("starting");
+  const [cameraFailure, setCameraFailure] = useState<CameraFailure | null>(null);
+  const [tapAttempts, setTapAttempts] = useState(0);
+  const [env, setEnv] = useState({ ios: false, inAppIos: false, https: true });
+  const [linkCopied, setLinkCopied] = useState(false);
 
-  // Fallback chụp ảnh trực tiếp nếu trình duyệt chặn hoàn toàn WebRTC.
-  // iOS đôi khi báo isSecureContext sai trong handoff/WebView dù URL thực là HTTPS,
-  // vì vậy không được dùng isSecureContext đơn lẻ để kết luận đang chạy HTTP.
-  const [isHttpCaptureMode, setIsHttpCaptureMode] = useState(false);
-  const [needsHttpsUpgrade, setNeedsHttpsUpgrade] = useState(false);
-  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
-
-  // Trạng thái quét khuôn mặt
   const [currentStep, setCurrentStep] = useState<
     "scanning" | "verifying" | "success" | "failed"
   >("scanning");
-  const [statusText, setStatusText] = useState<string>(
-    "Đang mở camera trước...",
-  );
+  const [statusText, setStatusText] = useState<string>("Đang mở camera trước...");
   const [resultData, setResultData] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStartingRef = useRef(false);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ua = navigator.userAgent || "";
+    setEnv({
+      ios: isIos(ua),
+      inAppIos: isIosInAppBrowser(ua),
+      https: window.location.protocol === "https:",
+    });
+    return () => {
+      unmountedRef.current = true;
+      stopStream(streamRef.current);
+      streamRef.current = null;
+    };
+  }, []);
 
   // 1. Nhận claim của điện thoại và tải thông tin phiên QR từ sessionId
   useEffect(() => {
@@ -84,16 +123,10 @@ export default function MobileScanPage() {
 
     const runInit = async () => {
       try {
-        // QR có TTL ngắn; trước khi mở máy vẫn phải qua liveness, khuôn mặt và lịch khám.
-        // Không chặn theo User-Agent/referrer: iOS có thể mở URL quét từ Zalo
-        // qua Chrome hoặc Safari, và việc chặn sai làm QR hết hạn trước khi Camera mở được.
+        // Không chặn theo User-Agent/referrer: iOS có thể mở URL từ Zalo, Chrome hoặc Safari.
         const claimToken = getDeviceClaimToken();
-        const headers: Record<string, string> = {
-          "x-device-claim-token": claimToken,
-        };
-
         const resp = await fetch(`/api/kiosk/session/${sessionId}`, {
-          headers,
+          headers: { "x-device-claim-token": claimToken },
         });
         if (!resp.ok) {
           const errJson = await resp.json().catch(() => null);
@@ -106,11 +139,9 @@ export default function MobileScanPage() {
         const data = raw?.data ?? raw;
         setSessionData(data);
 
-        // Nếu phiên đã mở khoá thành công trước đó (do request chạy ngầm xong hoặc quét lại)
         if (data?.status === "VERIFIED") {
           setResultData({ success: true, doctor: data.verifiedDoctor });
           setCurrentStep("success");
-          return;
         }
       } catch (err: any) {
         setSessionError(err.message || "Lỗi nạp phiên.");
@@ -122,39 +153,6 @@ export default function MobileScanPage() {
     runInit();
   }, [sessionId]);
 
-  // Nén ảnh để tải lên nhanh (< 80KB)
-  const compressImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const maxDim = 800;
-          let w = img.width;
-          let h = img.height;
-          if (w > h && w > maxDim) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else if (h > maxDim) {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return resolve(e.target?.result as string);
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.85));
-        };
-        img.onerror = reject;
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleSwitchToHttps = () => {
     if (typeof window === "undefined") return;
     const curPort = window.location.port;
@@ -164,198 +162,134 @@ export default function MobileScanPage() {
     } else if (curPort && curPort !== "80" && curPort !== "443") {
       targetPort = `:${curPort}`;
     }
-    const httpsUrl = `https://${window.location.hostname}${targetPort}${window.location.pathname}${window.location.search}`;
-    window.location.href = httpsUrl;
+    window.location.href = `https://${window.location.hostname}${targetPort}${window.location.pathname}${window.location.search}`;
   };
 
-  // 2. Khởi tạo Camera (Ưu tiên 100% camera trước và tự động sửa nếu điện thoại chọn nhầm camera sau)
-  const startCamera = async (forceMode?: "user" | "environment") => {
+  /** Video chỉ được mount khi đang ở bước quét; chờ phần tử có trong DOM trước khi gắn luồng. */
+  const waitForVideoElement = async (): Promise<HTMLVideoElement | null> => {
+    for (let i = 0; i < 40 && !videoRef.current; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return videoRef.current;
+  };
+
+  const applyPlaybackResult = useCallback((result: "live" | "needs-tap" | "no-frames") => {
+    setCameraState(result);
+    setStatusText(
+      result === "live"
+        ? "Nhìn thẳng camera để tự động điểm danh..."
+        : "Chạm vào khung camera để bật hình ảnh camera trước",
+    );
+  }, []);
+
+  // 2. Mở camera trước trực tiếp. Không còn đường dự phòng chụp/tải ảnh.
+  const startCamera = useCallback(async () => {
     if (isStartingRef.current) return;
     isStartingRef.current = true;
-    setCameraError(null);
-
-    // Safari/iOS can transiently report isSecureContext=false after a QR/browser
-    // handoff even though the URL is already HTTPS. The URL scheme is the only
-    // signal used for the HTTPS-upgrade UI; always try getUserMedia first.
-    const pageIsHttps =
-      typeof window !== "undefined" && window.location.protocol === "https:";
-    if (typeof window !== "undefined" && window.isSecureContext === false) {
-      console.warn(
-        "isSecureContext=false; vẫn thử camera vì URL có thể là HTTPS trên iOS.",
-      );
-    }
-
-    const targetMode = forceMode || facingMode;
-
+    setCameraFailure(null);
+    setCameraState("starting");
+    setStatusText("Đang mở camera trước...");
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
+      stopStream(streamRef.current);
+      streamRef.current = null;
+
+      const stream = (await openFrontCameraStream(
+        typeof navigator !== "undefined" ? (navigator.mediaDevices as any) : null,
+      )) as unknown as MediaStream;
+      if (unmountedRef.current) {
+        stopStream(stream);
+        return;
       }
-
-      // Tìm kiếm device ID của camera trước một cách rõ ràng
-      let selectedDeviceId: string | undefined = undefined;
-      if (navigator?.mediaDevices?.enumerateDevices) {
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = devices.filter((d) => d.kind === "videoinput");
-
-          if (targetMode === "user") {
-            const front = videoInputs.find((d) =>
-              /front|user|facetime|trước|selfie/i.test(d.label),
-            );
-            if (front) {
-              selectedDeviceId = front.deviceId;
-            }
-          } else {
-            const back = videoInputs.find((d) =>
-              /back|rear|environment|sau/i.test(d.label),
-            );
-            if (back) {
-              selectedDeviceId = back.deviceId;
-            }
-          }
-        } catch {}
-      }
-
-      const constraints: MediaStreamConstraints = {
-        audio: false,
-        video: selectedDeviceId
-          ? {
-              deviceId: { exact: selectedDeviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-            }
-          : {
-              facingMode:
-                targetMode === "user"
-                  ? { ideal: "user" }
-                  : { ideal: "environment" },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-            },
-      };
-
-      let stream: MediaStream | null = null;
-      if (navigator?.mediaDevices?.getUserMedia) {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } else {
-        const legacyGUM =
-          (navigator as any).getUserMedia ||
-          (navigator as any).webkitGetUserMedia ||
-          (navigator as any).mozGetUserMedia ||
-          (navigator as any).msGetUserMedia;
-
-        if (legacyGUM) {
-          stream = await new Promise((resolve, reject) => {
-            legacyGUM.call(navigator, constraints, resolve, reject);
-          });
-        }
-      }
-
-      if (!stream) {
-        throw new Error("NO_STREAM");
-      }
-
-      // Kiểm tra nếu thiết bị tự mở nhầm camera sau khi đang cần camera trước:
-      // Tự động phát hiện và tráo đổi ngay lập tức sang camera trước
-      if (targetMode === "user") {
-        const tracks = stream.getVideoTracks();
-        if (tracks.length > 0) {
-          const trackLabel = tracks[0].label.toLowerCase();
-          if (/back|rear|sau|environment/.test(trackLabel)) {
-            console.log(
-              "[Camera] Thiết bị tự chọn camera sau, đang tự động chuyển về camera trước...",
-            );
-            try {
-              const devices = await navigator.mediaDevices.enumerateDevices();
-              const other = devices.find(
-                (d) =>
-                  d.kind === "videoinput" &&
-                  d.deviceId !== tracks[0].getSettings()?.deviceId,
-              );
-              if (other) {
-                tracks[0].stop();
-                stream = await navigator.mediaDevices.getUserMedia({
-                  audio: false,
-                  video: {
-                    deviceId: { exact: other.deviceId },
-                    width: { ideal: 640 },
-                    height: { ideal: 480 },
-                  },
-                });
-              }
-            } catch {}
-          }
-        }
-      }
-
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute("playsinline", "true");
-        videoRef.current.setAttribute("autoplay", "true");
-        videoRef.current.muted = true;
-        await videoRef.current.play().catch(() => {});
-      }
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          if (streamRef.current !== stream || unmountedRef.current) return;
+          setCameraState("no-frames");
+          setStatusText("Camera đã bị tắt. Chạm vào khung camera để bật lại.");
+        });
+      });
 
-      setCameraActive(true);
-      setIsHttpCaptureMode(false);
-      setNeedsHttpsUpgrade(false);
-      setCurrentStep("scanning");
-      setStatusText("Nhìn thẳng camera để tự động điểm danh...");
-    } catch (err: any) {
-      console.warn(
-        "Không thể mở Live Video Stream, kích hoạt chế độ chụp trực tiếp:",
-        err,
-      );
-      setCameraError(String(err?.name || err?.message || "CAMERA_UNAVAILABLE"));
-      // Only show the HTTPS action when the loaded URL is genuinely not HTTPS.
-      // This prevents a trusted iOS hostname from being incorrectly downgraded
-      // to the photo-only flow because of a false isSecureContext result.
-      setNeedsHttpsUpgrade(!pageIsHttps);
-      setIsHttpCaptureMode(true);
-      setCameraActive(true);
-      setCurrentStep("scanning");
-      setStatusText(
-        pageIsHttps
-          ? "Chạm Thử mở lại camera trước để Safari xin quyền Camera"
-          : "Chạm vào màn hình để mở Camera chụp ảnh",
-      );
+      const video = await waitForVideoElement();
+      if (!video) {
+        applyPlaybackResult("needs-tap");
+        return;
+      }
+      applyPlaybackResult(await startVideoPlayback(video as any, stream as any));
+    } catch (err) {
+      const kind = classifyCameraError(err);
+      console.warn("Không mở được camera trước:", err);
+      setCameraFailure(kind);
+      setCameraState("error");
+      setStatusText("Chưa mở được camera trước");
     } finally {
       isStartingRef.current = false;
     }
+  }, [applyPlaybackResult]);
+
+  /**
+   * Chạm của người dùng: gọi play() đồng bộ trong sự kiện chạm để WebKit/Zalo
+   * cho phép phát video camera; nếu luồng đã mất thì xin lại camera.
+   */
+  const handleCameraTap = () => {
+    if (cameraState === "live" || cameraState === "starting") return;
+    setTapAttempts((n) => n + 1);
+    const stream = streamRef.current;
+    const video = videoRef.current;
+    const streamAlive = !!stream?.getVideoTracks().some((t) => t.readyState === "live");
+    if (!stream || !video || !streamAlive) {
+      void startCamera();
+      return;
+    }
+    setCameraState("starting");
+    setStatusText("Đang bật hình ảnh camera trước...");
+    void startVideoPlayback(video as any, stream as any).then(applyPlaybackResult);
   };
 
   // Tự động mở camera khi phiên nạp thành công
   useEffect(() => {
-    if (!loadingSession && !sessionError && sessionData) {
-      startCamera();
+    if (!loadingSession && !sessionError && sessionData && sessionData.status !== "VERIFIED") {
+      void startCamera();
     }
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+  }, [loadingSession, sessionError, sessionData, startCamera]);
+
+  // iOS tạm dừng video khi hộp thoại quyền/ứng dụng khác che trang: phát lại khi quay về.
+  useEffect(() => {
+    const resume = () => {
+      const video = videoRef.current;
+      if (document.visibilityState !== "visible" || !video || !streamRef.current) return;
+      if (video.paused) {
+        Promise.resolve(video.play()).catch(() => {
+          setCameraState((state) => (state === "live" ? "needs-tap" : state));
+        });
       }
     };
-  }, [loadingSession, sessionError, sessionData]);
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("focus", resume);
+    window.addEventListener("pageshow", resume);
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("pageshow", resume);
+    };
+  }, []);
 
-  // Gửi ảnh sang AI xác thực
-  const submitVerification = async (imageBase64: string): Promise<boolean> => {
+  // Gửi chuỗi khung hình camera trực tiếp sang AI xác thực
+  const submitVerification = async (
+    liveCapture: ReturnType<typeof buildLiveCaptureProof>,
+  ): Promise<boolean> => {
     try {
       const claimToken = getDeviceClaimToken();
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        "x-device-claim-token": claimToken,
-      };
-
       const resp = await fetch("/api/kiosk/verify-face", {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          "x-device-claim-token": claimToken,
+        },
         body: JSON.stringify({
           sessionId,
-          imageBase64,
           completedChallenges: ["PASSIVE_LIVENESS"],
           claimToken,
+          liveCapture,
         }),
       });
 
@@ -365,10 +299,8 @@ export default function MobileScanPage() {
       if (resp.ok && data?.success !== false && !data?.isProcessing) {
         setResultData(data);
         setCurrentStep("success");
-
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-        }
+        stopStream(streamRef.current);
+        streamRef.current = null;
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           navigator.vibrate([100, 50, 100]);
         }
@@ -377,14 +309,12 @@ export default function MobileScanPage() {
 
       if (data?.isProcessing) {
         setStatusText(
-          data.message ||
-            "Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy",
+          data.message || "Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy",
         );
         return false;
       }
 
       const msg = String(data?.message || "");
-      // Nếu chưa phát hiện rõ mặt hoặc server đang xử lý, báo nhẹ và tiếp tục quét frame tiếp theo
       if (
         msg.includes("Không phát hiện") ||
         msg.includes("khuôn mặt") ||
@@ -397,141 +327,115 @@ export default function MobileScanPage() {
         return false;
       }
 
-      // Nếu lỗi ca trực hoặc lỗi nghiêm trọng
       setErrorMessage(msg || "Xác thực khuôn mặt không thành công.");
       setCurrentStep("failed");
+      stopStream(streamRef.current);
+      streamRef.current = null;
       return false;
     } catch {
       return false;
     }
   };
 
-  // 3. VÒNG LẶP TỰ ĐỘNG CHỤP & NHẬN DIỆN LIÊN TỤC (TỰ ĐỘNG 100% NHƯ FACE ID)
-  const cameraReadyTimeRef = useRef<number>(0);
-
+  // 3. VÒNG LẶP TỰ ĐỘNG: lấy khung hình từ video trực tiếp, gửi kèm bằng chứng nhiều khung.
+  const nonce: string | undefined = sessionData?.liveCaptureNonce;
   useEffect(() => {
-    if (cameraActive) {
-      cameraReadyTimeRef.current = Date.now();
-    }
-  }, [cameraActive]);
+    if (cameraState !== "live" || currentStep !== "scanning" || !nonce) return;
 
-  useEffect(() => {
-    if (!cameraActive || isHttpCaptureMode || currentStep !== "scanning")
-      return;
-
-    let isScanning = true;
+    let active = true;
     let analyzing = false;
-    let failCount = 0;
+    let attempts = 0;
+    let blackFrames = 0;
+    let frames: LiveFrame[] = [];
+    const startedAt = Date.now();
+    const canvas = document.createElement("canvas");
 
     const interval = setInterval(async () => {
-      if (!isScanning || analyzing) return;
-      if (!videoRef.current) return;
-
-      // Chờ ít nhất 600ms sau khi camera kích hoạt để auto-exposure / white-balance ổn định
-      if (Date.now() - cameraReadyTimeRef.current < 600) {
-        return;
-      }
-
+      if (!active || analyzing) return;
       const video = videoRef.current;
-      // Chờ video sẵn sàng và có dữ liệu hình ảnh
-      if (
-        video.readyState < 2 ||
-        video.videoWidth === 0 ||
-        video.videoHeight === 0
-      ) {
-        return;
-      }
+      if (!video) return;
+      // Cho auto-exposure / white-balance ổn định
+      if (Date.now() - startedAt < 600) return;
+      if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) return;
 
-      const canvas = canvasRef.current || document.createElement("canvas");
       canvas.width = 480;
       canvas.height = Math.round((480 * video.videoHeight) / video.videoWidth);
-
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
       if (!ctx) return;
-
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Kiểm tra độ sáng khung hình (tránh chụp khi camera chưa kịp lấy sáng lúc mới bật)
-      const sample = ctx.getImageData(
-        0,
-        0,
-        Math.min(canvas.width, 80),
-        Math.min(canvas.height, 80),
-      );
-      let sum = 0;
-      for (let i = 0; i < sample.data.length; i += 4) {
-        sum += (sample.data[i] + sample.data[i + 1] + sample.data[i + 2]) / 3;
-      }
-      const brightness = sum / (sample.data.length / 4);
-      if (brightness < 30) {
+      const luma = frameLuma(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+      if (luma.max < BLACK_FRAME_MAX_LUMA) {
+        blackFrames++;
+        if (blackFrames >= BLACK_FRAMES_BEFORE_RECOVERY) {
+          active = false;
+          clearInterval(interval);
+          setCameraState("no-frames");
+          setStatusText("Khung camera đang đen. Chạm vào khung camera để bật lại hình ảnh.");
+        }
         return;
       }
+      blackFrames = 0;
+      if (luma.avg < DARK_SKIP_BRIGHTNESS) {
+        setStatusText("Khung hình hơi tối, vui lòng đứng nơi đủ sáng");
+        return;
+      }
+
+      frames = pushLiveFrame(frames, { dataUrl: canvas.toDataURL("image/jpeg", 0.85), at: Date.now() });
+      if (!liveFramesReady(frames)) return;
 
       analyzing = true;
       setStatusText("Đang nhận diện sinh học khuôn mặt... Giữ nguyên máy");
-
-      const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
-      const ok = await submitVerification(imageBase64);
-
+      const proof = buildLiveCaptureProof(frames, nonce, video);
+      frames = []; // Mỗi lần gửi dùng chuỗi khung hình mới
+      const ok = await submitVerification(proof);
+      if (!active) return;
       if (ok) {
-        isScanning = false;
+        active = false;
         clearInterval(interval);
-      } else {
-        failCount++;
-        // Quét liên tục 80 chu kỳ (~36 giây) để bác sĩ lớn tuổi thao tác thong thả
-        if (failCount >= 80 && currentStep === "scanning") {
-          isScanning = false;
-          setErrorMessage("Không nhận diện được Bác sĩ hoặc ca trực chưa tới.");
-          setCurrentStep("failed");
-        } else {
-          analyzing = false;
-        }
+        return;
       }
-    }, 450);
+      attempts++;
+      if (attempts >= MAX_ATTEMPTS) {
+        active = false;
+        clearInterval(interval);
+        setErrorMessage("Không nhận diện được Bác sĩ hoặc ca trực chưa tới.");
+        setCurrentStep("failed");
+        stopStream(streamRef.current);
+        streamRef.current = null;
+        return;
+      }
+      analyzing = false;
+    }, FRAME_INTERVAL_MS);
 
     return () => {
-      isScanning = false;
+      active = false;
       clearInterval(interval);
     };
-  }, [cameraActive, isHttpCaptureMode, currentStep, sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraState, currentStep, nonce, sessionId]);
 
-  // Chụp từ input file khi chạy chế độ Native Camera
-  const handleFileCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const copyLink = async () => {
+    const href = window.location.href;
     try {
-      setCurrentStep("verifying");
-      setStatusText("Đang xử lý hình ảnh...");
-      const imageBase64 = await compressImage(file);
-      setCapturedPreview(imageBase64);
-      await submitVerification(imageBase64);
+      await navigator.clipboard.writeText(href);
     } catch {
-      setErrorMessage("Không thể đọc ảnh từ Camera điện thoại.");
-      setCurrentStep("failed");
+      const area = document.createElement("textarea");
+      area.value = href;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* người dùng có thể sao chép thủ công */
+      }
+      document.body.removeChild(area);
     }
-  };
-
-  const triggerNativeCamera = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  // iOS may require an explicit tap before Safari grants the front-camera stream.
-  const retryLiveCamera = () => {
-    setIsHttpCaptureMode(false);
-    setCameraActive(false);
-    setCurrentStep("scanning");
-    setStatusText("Đang mở lại camera trước...");
-    void startCamera("user");
-  };
-
-  // Đổi camera trước / sau
-  const toggleFacingMode = () => {
-    const nextMode = facingMode === "user" ? "environment" : "user";
-    setFacingMode(nextMode);
-    startCamera(nextMode);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2500);
   };
 
   if (sessionError) {
@@ -566,18 +470,18 @@ export default function MobileScanPage() {
     );
   }
 
+  const needsRecovery = cameraState === "needs-tap" || cameraState === "no-frames";
+  const safariHref =
+    typeof window !== "undefined" ? safariOpenUrl(window.location.href) : null;
+  // Gợi ý mở bằng Safari khi đang ở trình duyệt nhúng iPhone và camera chưa lên,
+  // hoặc đã chạm mà vẫn đen.
+  const showSafariHelp =
+    env.ios &&
+    ((env.inAppIos && (needsRecovery || cameraState === "error")) ||
+      (needsRecovery && tapAttempts >= 1));
+
   return (
     <div className="app-viewport-min app-safe-page bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-md mx-auto">
-      {/* Input ẩn hỗ trợ chụp ảnh trực tiếp nếu WebRTC bị chặn */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*;capture=camera"
-        capture="user"
-        onChange={handleFileCapture}
-        className="hidden"
-      />
-
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2.5">
@@ -600,110 +504,81 @@ export default function MobileScanPage() {
         </span>
       </header>
 
-      {/* Main Body */}
       <main className="my-auto py-4">
-        {/* Fallback khi Safari/WebView chưa mở được luồng camera trực tiếp. */}
-        {isHttpCaptureMode && currentStep === "scanning" && (
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4 text-xs text-amber-200">
-            <div className="flex items-start gap-2.5">
-              <Sparkles className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-bold text-amber-300">
-                  {needsHttpsUpgrade
-                    ? "Cần HTTPS để mở camera tự động"
-                    : "Safari chưa mở camera trực tiếp"}
-                </p>
-                <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                  {needsHttpsUpgrade ? (
-                    <>
-                      Để điện thoại tự động mở camera trước nhận diện không cần
-                      bấm chụp, hệ thống cần chạy qua <strong>HTTPS</strong>.
-                    </>
-                  ) : (
-                    <>
-                      Bạn đang ở HTTPS. Hãy chạm nút bên dưới để Safari xin quyền
-                      mở camera trước; không cần đổi URL hoặc quét QR lại.
-                    </>
-                  )}
-                </p>
-                <button
-                  type="button"
-                  onClick={
-                    needsHttpsUpgrade ? handleSwitchToHttps : retryLiveCamera
-                  }
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
-                >
-                  {needsHttpsUpgrade
-                    ? "⚡ Thử chuyển sang HTTPS ngay"
-                    : "📷 Thử mở lại camera trước"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* KHUNG QUÉT CAMERA */}
+        {/* KHUNG QUÉT CAMERA TRỰC TIẾP */}
         {(currentStep === "scanning" || currentStep === "verifying") && (
           <div className="space-y-4">
             <div
-              onClick={isHttpCaptureMode ? triggerNativeCamera : undefined}
+              onClick={handleCameraTap}
+              role={needsRecovery ? "button" : undefined}
+              aria-label={needsRecovery ? "Chạm để bật camera trước" : undefined}
               className={`relative aspect-square w-full rounded-3xl overflow-hidden bg-black border-2 border-teal-500/60 shadow-2xl ${
-                isHttpCaptureMode ? "cursor-pointer" : ""
+                needsRecovery ? "cursor-pointer" : ""
               }`}
             >
-              {isHttpCaptureMode ? (
-                // Chế độ Native Camera Capture (khi không mở được stream)
-                <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center relative bg-gradient-to-b from-slate-900 to-black">
-                  {capturedPreview ? (
-                    <img
-                      src={capturedPreview}
-                      alt="Captured Face"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/20 px-4">
-                      <Camera className="h-12 w-12 text-teal-400 mb-2 animate-bounce" />
-                      <span className="text-sm font-bold text-teal-200">
-                        Chạm để mở Camera
-                      </span>
-                      <span className="text-[11px] text-teal-300/80 mt-1.5 text-center font-medium">
-                        Vui lòng chụp camera trước thẳng khuôn mặt
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                // Chế độ Live Video Stream (Tự động nhận diện & chụp như Face ID)
+              {/* Lật gương trên lớp bọc, không đặt transform trực tiếp lên <video> (WebKit có thể vẽ đen). */}
+              <div className="absolute inset-0 -scale-x-100">
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  autoPlay
+                  disablePictureInPicture
+                  className="w-full h-full object-cover"
+                />
+              </div>
+
+              {cameraState === "live" && (
                 <>
-                  <video
-                    ref={videoRef}
-                    playsInline
-                    muted
-                    autoPlay
-                    className={`w-full h-full object-cover ${facingMode === "user" ? "-scale-x-100" : ""}`}
-                  />
-                  {/* Vòng oval chỉ dẫn khuôn mặt sinh học */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/70 animate-pulse shadow-[0_0_40px_rgba(20,184,166,0.35)] flex items-center justify-center">
                       <div className="w-48 h-64 rounded-[50%] border border-dashed border-teal-300/40"></div>
                     </div>
                   </div>
-                  {/* Tia quét laser tự động */}
                   <div className="absolute inset-x-8 top-12 h-1 bg-gradient-to-r from-transparent via-teal-400 to-transparent animate-bounce opacity-75 pointer-events-none"></div>
-
-                  {/* Nút lật camera */}
-                  <button
-                    type="button"
-                    onClick={toggleFacingMode}
-                    className="absolute top-3 right-3 p-2.5 rounded-full bg-slate-900/80 backdrop-blur-md text-white border border-slate-700"
-                    title="Đổi camera"
-                  >
-                    <SwitchCamera className="h-4 w-4" />
-                  </button>
                 </>
               )}
 
-              {/* Lớp phủ khi đang gửi AI xử lý */}
+              {cameraState === "starting" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/70">
+                  <RefreshCw className="h-9 w-9 text-teal-400 animate-spin mb-3" />
+                  <p className="text-xs font-semibold text-teal-100">
+                    Đang mở camera trước...
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Nếu điện thoại hỏi quyền, hãy chọn <strong>Cho phép</strong>.
+                  </p>
+                </div>
+              )}
+
+              {needsRecovery && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/75">
+                  <div className="w-56 h-72 rounded-[50%] border-2 border-teal-400/80 animate-pulse flex flex-col items-center justify-center bg-teal-950/30 px-4">
+                    <Camera className="h-12 w-12 text-teal-300 mb-2" />
+                    <span className="text-sm font-bold text-teal-100">
+                      Chạm để bật camera trước
+                    </span>
+                    <span className="text-[11px] text-teal-300/80 mt-1.5 font-medium">
+                      Xác thực chỉ bằng hình ảnh trực tiếp từ camera
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {cameraState === "error" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-gradient-to-b from-slate-900 to-black">
+                  <AlertTriangle className="h-10 w-10 text-amber-400 mb-3" />
+                  <p className="text-sm font-bold text-amber-200">
+                    Chưa mở được camera trước
+                  </p>
+                  <p className="text-[11px] text-slate-300 mt-2 leading-relaxed">
+                    {cameraFailure === "insecure" || !env.https
+                      ? cameraFailureMessage("insecure", env.inAppIos)
+                      : cameraFailureMessage(cameraFailure ?? "unknown", env.inAppIos)}
+                  </p>
+                </div>
+              )}
+
               {currentStep === "verifying" && (
                 <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4">
                   <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-3" />
@@ -717,34 +592,64 @@ export default function MobileScanPage() {
               )}
             </div>
 
-            {/* Thông báo trạng thái */}
             <div className="space-y-3 text-center">
               <div className="flex items-center justify-center gap-2 text-xs font-bold text-teal-400 animate-pulse">
                 <Sparkles className="h-4 w-4" />
                 <span>{statusText}</span>
               </div>
 
-              {isHttpCaptureMode && (
-                <div className="space-y-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={triggerNativeCamera}
-                    disabled={currentStep === "verifying"}
-                    className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 active:scale-95 text-white font-bold text-sm shadow-lg shadow-teal-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
-                  >
-                    <Camera className="h-5 w-5" />
-                    <span>
-                      {capturedPreview
-                        ? "Chụp lại ảnh khác"
-                        : "Mở Camera chụp (Camera trước)"}
-                    </span>
-                  </button>
+              {cameraState === "error" && (
+                <div className="space-y-2">
+                  {!env.https ? (
+                    <button
+                      type="button"
+                      onClick={handleSwitchToHttps}
+                      className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm"
+                    >
+                      Chuyển sang HTTPS
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void startCamera()}
+                      className="w-full py-3 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-sm flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      Thử mở lại camera trước
+                    </button>
+                  )}
+                </div>
+              )}
 
-                  <p className="text-[10px] text-slate-400 text-center px-2 leading-relaxed">
-                    💡 Nếu ứng dụng máy ảnh tự bật camera sau, vui lòng nhấn nút
-                    lật camera trên màn hình máy ảnh sang camera trước để chụp
-                    ảnh chân dung trực tiếp.
+              {showSafariHelp && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-left text-xs text-amber-100 space-y-2">
+                  <p className="font-bold text-amber-300">
+                    Camera chưa hiển thị trong trình duyệt của ứng dụng
                   </p>
+                  <p className="text-[11px] leading-relaxed text-slate-200">
+                    Trên iPhone, trình duyệt bên trong Zalo có thể không hiển thị
+                    camera. Hãy mở trang này bằng <strong>Safari</strong>: bấm nút
+                    bên dưới, hoặc bấm <strong>⋯</strong> ở góc trên → <strong>Mở bằng trình duyệt</strong>.
+                  </p>
+                  <div className="flex gap-2">
+                    {safariHref && (
+                      <a
+                        href={safariHref}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Mở bằng Safari
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void copyLink()}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-amber-400/60 text-amber-100 font-bold"
+                    >
+                      <Copy className="h-4 w-4" />
+                      {linkCopied ? "Đã sao chép" : "Sao chép liên kết"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -803,7 +708,7 @@ export default function MobileScanPage() {
           </div>
         )}
 
-        {/* THẤT BÀI */}
+        {/* THẤT BẠI */}
         {currentStep === "failed" && (
           <div className="text-center space-y-6">
             <div className="h-20 w-20 mx-auto rounded-3xl bg-rose-500/10 border-2 border-rose-500/30 text-rose-400 flex items-center justify-center shadow-xl">
@@ -823,8 +728,6 @@ export default function MobileScanPage() {
               type="button"
               onClick={async () => {
                 setErrorMessage(null);
-                setCapturedPreview(null);
-                // Kiểm tra xem phiên này thực tế đã được mở khoá thành công chưa trước khi quét lại
                 try {
                   const claimToken = getDeviceClaimToken();
                   const check = await fetch(`/api/kiosk/session/${sessionId}`, {
@@ -833,18 +736,16 @@ export default function MobileScanPage() {
                   if (check.ok) {
                     const cRaw = await check.json();
                     const cData = cRaw?.data ?? cRaw;
+                    if (cData?.liveCaptureNonce) setSessionData(cData);
                     if (cData?.status === "VERIFIED") {
-                      setResultData({
-                        success: true,
-                        doctor: cData.verifiedDoctor,
-                      });
+                      setResultData({ success: true, doctor: cData.verifiedDoctor });
                       setCurrentStep("success");
                       return;
                     }
                   }
                 } catch {}
                 setCurrentStep("scanning");
-                startCamera();
+                void startCamera();
               }}
               className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
             >
@@ -855,7 +756,6 @@ export default function MobileScanPage() {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="text-center text-[10px] text-slate-500 border-t border-slate-900 pt-3">
         Bệnh viện Quân y 4 · Điểm danh khuôn mặt thông minh
       </footer>

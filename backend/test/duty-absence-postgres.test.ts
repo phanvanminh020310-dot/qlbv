@@ -9,6 +9,7 @@ import * as schema from "../src/db/schema";
 import { DutyCoreService } from "../src/modules/duty/duty-core.service";
 import { DutyAbsenceService } from "../src/modules/duty/duty-absence.service";
 import { KioskService } from "../src/modules/kiosk/kiosk.service";
+import { liveCaptureFor } from "./support/live-capture-fixture";
 import { IntegrationDutyService } from "../src/modules/integration/integration-duty.service";
 import type { AccessContext } from "../src/common/types/access-context";
 
@@ -443,6 +444,7 @@ test("PostgreSQL: absence requests preserve roster until scoped, atomic approval
         sessionId: status.qrSession.sessionId,
         claimToken,
         snapshotBase64: "fixture-no-real-patient-or-face",
+        liveCapture: liveCaptureFor(kiosk, status.qrSession.sessionId),
       });
       assert.equal(checked.success, true);
       await service.create(doctor, leave);

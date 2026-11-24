@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { KioskService } from "../src/modules/kiosk/kiosk.service";
+import { liveCaptureFor } from "./support/live-capture-fixture";
 import { IntegrationDutyService } from "../src/modules/integration/integration-duty.service";
 import * as schema from "../src/db/schema";
 
@@ -125,6 +126,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       const verified = await service.verifyFaceAndUnlock({
         sessionId,
         snapshotBase64: "fixture-only-not-a-real-face",
+      liveCapture: liveCaptureFor(service, sessionId),
         claimToken: TOKEN,
       });
       assert.equal(verified.success, true);
@@ -170,6 +172,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       const params = {
         sessionId: id,
         snapshotBase64: "fixture-only-not-a-real-face",
+      liveCapture: liveCaptureFor(service, id),
         claimToken: `${TOKEN}_safari`,
         clientEnv: "in-app-webview",
         userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1",
@@ -402,6 +405,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         (await service.verifyFaceAndUnlock({
           sessionId: status.qrSession!.sessionId,
           snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, status.qrSession!.sessionId),
           claimToken: TOKEN,
         })).success,
         true,
@@ -437,6 +441,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         (await service.verifyFaceAndUnlock({
           sessionId: beforeExpiry.qrSession!.sessionId,
           snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, beforeExpiry.qrSession!.sessionId),
           claimToken: TOKEN,
         })).success,
         true,
@@ -520,6 +525,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         service.verifyFaceAndUnlock({
           sessionId: id,
           snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, id),
           claimToken: TOKEN,
         }),
         /hết hạn|bị huỷ/,
@@ -552,7 +558,8 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         return { isLive: true, embedding: [1, ...Array<number>(511).fill(0)] };
       };
       await assert.rejects(
-        service.verifyFaceAndUnlock({ sessionId: id, snapshotBase64: "fixture-only", claimToken: TOKEN }),
+        service.verifyFaceAndUnlock({ sessionId: id, snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, id), claimToken: TOKEN }),
         /khung giờ ca trực|Ca trực đã kết thúc/,
       );
       assert.equal((await database.db.select().from(schema.dutyAttendance)).length, before);

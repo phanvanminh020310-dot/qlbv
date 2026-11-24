@@ -39,6 +39,12 @@ import { addDays, bangkokToday, shiftInterval } from "../duty/duty-rules";
 import { candidateDutyDates } from "../integration/integration-time";
 import { Subscription } from "rxjs";
 import {
+  LIVE_CAPTURE_REQUIRED_MESSAGE,
+  createLiveCaptureNonce,
+  validateLiveCaptureProof,
+  type LiveCaptureProof,
+} from "./kiosk-live-capture";
+import {
   kioskTargetKey,
   sameKioskTarget,
   matchesMasterPin,
@@ -81,6 +87,8 @@ export interface KioskSession {
   isVerifying?: boolean; // Đang có frame AI xử lý
   failCount?: number; // Số lần frame lỗi tạm thời
   verifiedDoctor?: any;
+  /** Nonce chỉ cấp cho trang quét; bắt buộc kèm chuỗi khung hình camera trực tiếp. */
+  liveCaptureNonce: string;
 }
 
 /** Snapshot of the published people covering the shift when IT opened a terminal.
@@ -2107,6 +2115,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       flashColorSequence,
       status: "WAITING",
       consumed: false,
+      liveCaptureNonce: createLiveCaptureNonce(),
     };
 
     // Dọn các phiên cũ của đúng phòng khám (roomCode) hoặc máy trạm (terminalId) này:
@@ -2405,16 +2414,16 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
 
   async verifyFaceAndUnlock(params: {
     sessionId: string;
-    snapshotBase64: string;
+    snapshotBase64?: string; // Bỏ qua: ảnh xác thực chỉ lấy từ liveCapture.frames
     completedChallenges?: string[];
     deviceInfo?: string;
     claimToken?: string;
     clientEnv?: string;
     userAgent?: string;
+    liveCapture?: LiveCaptureProof;
   }) {
     const {
       sessionId,
-      snapshotBase64,
       completedChallenges,
       deviceInfo,
       claimToken,
@@ -2477,6 +2486,18 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     // QR có thể được mở lại từ Camera/Safari sau khi app quét chuyển hướng sang Chrome.
     // Không khóa theo claim token; quyền mở máy vẫn chỉ có sau liveness, đối chiếu
     // khuôn mặt và lịch khám hợp lệ trước khi QR hết hạn.
+
+    // Tuyệt đối không nhận ảnh chụp sẵn/tải lên: chỉ chuỗi khung hình lấy trực tiếp
+    // từ camera của trang quét, gắn nonce của đúng phiên QR này. Kiểm tra trước AI và
+    // không tính vào failCount để một client cũ không làm cháy phiên của bác sĩ.
+    const liveCapture = validateLiveCaptureProof(
+      params.liveCapture,
+      session.liveCaptureNonce,
+    );
+    if (!liveCapture.ok) {
+      throw new BadRequestException(LIVE_CAPTURE_REQUIRED_MESSAGE);
+    }
+    const snapshotBase64 = liveCapture.primaryFrame;
 
     // Mutex chống xử lý trùng lặp nhiều frame cùng lúc
     if (session.isVerifying) {

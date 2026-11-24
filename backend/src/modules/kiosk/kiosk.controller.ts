@@ -20,6 +20,7 @@ import type {
   AccessContext,
   ClientMeta,
 } from "../../common/types/access-context";
+import type { LiveCaptureProof } from "./kiosk-live-capture";
 import { KioskService } from "./kiosk.service";
 
 @ApiTags("Kiosk · Điểm danh Sinh trắc học & Mở khoá Phòng khám")
@@ -149,6 +150,8 @@ export class KioskController {
       status: session.status,
       verifiedDoctor: session.verifiedDoctor,
       faceVerifyBufferSeconds: result.faceVerifyBufferSeconds || 60,
+      // Chỉ trả sau khi phiên QR được nhận hợp lệ; trang quét phải gửi lại kèm khung hình camera trực tiếp.
+      liveCaptureNonce: session.liveCaptureNonce,
     };
   }
 
@@ -205,12 +208,12 @@ export class KioskController {
       deviceInfo?: string;
       claimToken?: string;
       clientEnv?: string;
+      liveCapture?: LiveCaptureProof;
     },
     @Headers("x-device-claim-token") headerClaimToken?: string,
     @Headers("x-client-env") headerClientEnv?: string,
     @Req() req?: any,
   ) {
-    const image = body.snapshotBase64 || body.imageBase64 || "";
     const challenges = body.completedChallenges ||
       body.livenessChallenges || ["PASSIVE_LIVENESS"];
     const claimToken = body.claimToken || headerClaimToken;
@@ -219,8 +222,8 @@ export class KioskController {
 
     return this.service.verifyFaceAndUnlock({
       sessionId: body.sessionId,
-      snapshotBase64: image,
       completedChallenges: challenges,
+      liveCapture: body.liveCapture,
       deviceInfo: body.deviceInfo,
       claimToken,
       clientEnv,

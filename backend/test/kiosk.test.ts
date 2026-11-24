@@ -3,6 +3,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { KioskService, type ActiveRoomUnlock } from "../src/modules/kiosk/kiosk.service";
+import { liveCaptureFor } from "./support/live-capture-fixture";
 import { KioskAttemptLimiter, kioskTargetKey, matchesMasterPin, sameKioskTarget } from "../src/modules/kiosk/kiosk-security";
 
 const TOKEN = "dev_0123456789abcdef0123456789abcdef";
@@ -93,6 +94,7 @@ test("third-party iPhone or scanner-app QR links are accepted while TTL remains 
     service.verifyFaceAndUnlock({
       sessionId: session.sessionId,
       snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, session.sessionId),
       ...thirdPartyMeta,
     }),
     /AI từ chối/,
@@ -112,6 +114,7 @@ test("third-party iPhone or scanner-app QR links are accepted while TTL remains 
     service.verifyFaceAndUnlock({
       sessionId: session.sessionId,
       snapshotBase64: "fixture-only",
+      liveCapture: liveCaptureFor(service, session.sessionId),
       claimToken: otherToken,
       clientEnv: "in-app-webview",
       userAgent: "Zalo/26.1",
