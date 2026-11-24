@@ -130,6 +130,8 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
         claimToken: TOKEN,
       });
       assert.equal(verified.success, true);
+      assert.equal(verified.message, "Điểm danh thành công.");
+      assert.equal("similarity" in verified, false, "không trả độ tương đồng cho điện thoại");
       assert.equal((verified as any).doctor.username, "doctor_fixture_b");
       const attendance = (await database.db.select().from(schema.dutyAttendance))
         .filter((row) => row.userId === 7002 && row.method === "AI_FACIAL_BIOMETRICS");
@@ -528,7 +530,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       liveCapture: liveCaptureFor(service, id),
           claimToken: TOKEN,
         }),
-        /hết hạn|bị huỷ/,
+        /Mã QR đã hết hạn\. Vui lòng quét mã mới\.$/,
       );
       assert.equal(
         (await database.db.select().from(schema.dutyAttendance)).length,
@@ -560,7 +562,7 @@ test("PostgreSQL: published roster → QR claim → verification → targeted le
       await assert.rejects(
         service.verifyFaceAndUnlock({ sessionId: id, snapshotBase64: "fixture-only",
       liveCapture: liveCaptureFor(service, id), claimToken: TOKEN }),
-        /khung giờ ca trực|Ca trực đã kết thúc/,
+        /Bạn không có ca trực tại phòng khám này\.$/,
       );
       assert.equal((await database.db.select().from(schema.dutyAttendance)).length, before);
       const released = await service.getKioskStatus("PK01", "pc_a", "https://hospital.test");

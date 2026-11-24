@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { KIOSK_SCAN_MESSAGES } from "./kiosk-scan-messages";
 
 /**
  * Bằng chứng khung hình lấy trực tiếp từ luồng camera trước (getUserMedia).
@@ -17,8 +18,8 @@ export const LIVE_CAPTURE_MAX_SPAN_MS = 15_000;
 const MIN_FRAME_BYTES = 1_024;
 const MAX_FRAME_BYTES = 600 * 1024;
 
-export const LIVE_CAPTURE_REQUIRED_MESSAGE =
-  "Chỉ chấp nhận xác thực trực tiếp bằng camera trước của điện thoại. Không hỗ trợ gửi ảnh chụp sẵn hoặc ảnh tải lên.";
+/** Thông báo ngắn gọn cho người dùng; chi tiết lý do không gửi ra ngoài. */
+export const LIVE_CAPTURE_REQUIRED_MESSAGE = KIOSK_SCAN_MESSAGES.CAMERA_REQUIRED;
 
 export interface LiveCaptureProof {
   mode?: unknown;

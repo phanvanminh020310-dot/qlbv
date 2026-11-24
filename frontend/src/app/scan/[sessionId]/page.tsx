@@ -9,7 +9,6 @@ import {
   Copy,
   ExternalLink,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
   Stethoscope,
 } from "lucide-react";
@@ -30,6 +29,14 @@ import {
   type CameraFailure,
   type LiveFrame,
 } from "@/lib/live-camera";
+import {
+  SCAN_MESSAGES,
+  isTransientScanMessage,
+  needsNewQr,
+  scanMessageTitle,
+  toScanMessage,
+  type ScanMessage,
+} from "@/lib/scan-messages";
 
 // One stable claim even when Safari/private-mode storage is unavailable.
 let memoryDeviceClaimToken = "";
@@ -82,7 +89,7 @@ export default function MobileScanPage() {
 
   const [sessionData, setSessionData] = useState<any>(null);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<ScanMessage | null>(null);
 
   const [cameraState, setCameraState] = useState<CameraState>("starting");
   const [cameraFailure, setCameraFailure] = useState<CameraFailure | null>(null);
@@ -90,12 +97,10 @@ export default function MobileScanPage() {
   const [env, setEnv] = useState({ ios: false, inAppIos: false, https: true });
   const [linkCopied, setLinkCopied] = useState(false);
 
-  const [currentStep, setCurrentStep] = useState<
-    "scanning" | "verifying" | "success" | "failed"
-  >("scanning");
+  const [currentStep, setCurrentStep] = useState<"scanning" | "success" | "failed">("scanning");
   const [statusText, setStatusText] = useState<string>("Đang mở camera trước...");
   const [resultData, setResultData] = useState<any>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<ScanMessage | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -130,10 +135,8 @@ export default function MobileScanPage() {
         });
         if (!resp.ok) {
           const errJson = await resp.json().catch(() => null);
-          throw new Error(
-            errJson?.message ||
-              "Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.",
-          );
+          // Không hiển thị nguyên văn lỗi máy chủ: quy về câu ngắn gọn.
+          throw new Error(toScanMessage(errJson?.message || SCAN_MESSAGES.QR_EXPIRED));
         }
         const raw = await resp.json();
         const data = raw?.data ?? raw;
@@ -144,7 +147,7 @@ export default function MobileScanPage() {
           setCurrentStep("success");
         }
       } catch (err: any) {
-        setSessionError(err.message || "Lỗi nạp phiên.");
+        setSessionError(toScanMessage(err?.message));
       } finally {
         setLoadingSession(false);
       }
@@ -308,26 +311,17 @@ export default function MobileScanPage() {
       }
 
       if (data?.isProcessing) {
-        setStatusText(
-          data.message || "Đang nhận diện sinh học khuôn mặt... Vui lòng giữ nguyên máy",
-        );
+        setStatusText(SCAN_MESSAGES.PROCESSING);
         return false;
       }
 
-      const msg = String(data?.message || "");
-      if (
-        msg.includes("Không phát hiện") ||
-        msg.includes("khuôn mặt") ||
-        msg.includes("mờ") ||
-        msg.includes("chưa rõ") ||
-        msg.includes("xử lý") ||
-        msg.includes("giữ nguyên máy")
-      ) {
-        setStatusText("Đang quét... Vui lòng nhìn thẳng vào camera");
+      const msg = toScanMessage(data?.message);
+      if (isTransientScanMessage(msg)) {
+        setStatusText(msg);
         return false;
       }
 
-      setErrorMessage(msg || "Xác thực khuôn mặt không thành công.");
+      setErrorMessage(msg);
       setCurrentStep("failed");
       stopStream(streamRef.current);
       streamRef.current = null;
@@ -385,7 +379,7 @@ export default function MobileScanPage() {
       if (!liveFramesReady(frames)) return;
 
       analyzing = true;
-      setStatusText("Đang nhận diện sinh học khuôn mặt... Giữ nguyên máy");
+      setStatusText(SCAN_MESSAGES.PROCESSING);
       const proof = buildLiveCaptureProof(frames, nonce, video);
       frames = []; // Mỗi lần gửi dùng chuỗi khung hình mới
       const ok = await submitVerification(proof);
@@ -399,7 +393,7 @@ export default function MobileScanPage() {
       if (attempts >= MAX_ATTEMPTS) {
         active = false;
         clearInterval(interval);
-        setErrorMessage("Không nhận diện được Bác sĩ hoặc ca trực chưa tới.");
+        setErrorMessage(SCAN_MESSAGES.VERIFY_FAILED);
         setCurrentStep("failed");
         stopStream(streamRef.current);
         streamRef.current = null;
@@ -445,16 +439,20 @@ export default function MobileScanPage() {
           <AlertTriangle className="h-8 w-8" />
         </div>
         <h2 className="text-lg font-bold text-white mb-2">
-          Phiên không hợp lệ hoặc đã hết hạn
+          {scanMessageTitle(sessionError)}
         </h2>
-        <p className="text-xs text-slate-400 max-w-sm mb-6">{sessionError}</p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold"
-        >
-          Thử lại
-        </button>
+        {needsNewQr(sessionError) && (
+          <p className="text-sm text-slate-300 max-w-sm">Vui lòng quét mã mới.</p>
+        )}
+        {!needsNewQr(sessionError) && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-4 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold"
+          >
+            Thử lại
+          </button>
+        )}
       </div>
     );
   }
@@ -498,15 +496,11 @@ export default function MobileScanPage() {
           </div>
         </div>
 
-        <span className="text-[10px] text-teal-400 font-mono bg-teal-950/60 px-2 py-1 rounded-lg border border-teal-800 flex items-center gap-1">
-          <ShieldCheck className="h-3 w-3" />
-          AI Bio-PAD
-        </span>
       </header>
 
       <main className="my-auto py-4">
         {/* KHUNG QUÉT CAMERA TRỰC TIẾP */}
-        {(currentStep === "scanning" || currentStep === "verifying") && (
+        {currentStep === "scanning" && (
           <div className="space-y-4">
             <div
               onClick={handleCameraTap}
@@ -579,17 +573,6 @@ export default function MobileScanPage() {
                 </div>
               )}
 
-              {currentStep === "verifying" && (
-                <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4">
-                  <RefreshCw className="h-10 w-10 text-teal-400 animate-spin mb-3" />
-                  <p className="text-xs font-bold text-white">
-                    Đang phân tích ArcFace & CSDL...
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Đối chiếu ca trực tại {sessionData?.room?.name}
-                  </p>
-                </div>
-              )}
             </div>
 
             <div className="space-y-3 text-center">
@@ -656,108 +639,81 @@ export default function MobileScanPage() {
           </div>
         )}
 
-        {/* THÀNH CÔNG */}
+        {/* THÀNH CÔNG — chỉ báo thành công, không hiện chỉ số kỹ thuật */}
         {currentStep === "success" && (
-          <div className="text-center space-y-6">
+          <div className="text-center space-y-5">
             <div className="h-20 w-20 mx-auto rounded-3xl bg-emerald-500/10 border-2 border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-xl">
               <CheckCircle2 className="h-10 w-10 animate-in zoom-in-75 duration-300" />
             </div>
-
-            <div className="space-y-1">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                ĐIỂM DANH THÀNH CÔNG
-              </div>
-              <h2 className="text-xl font-bold text-white mt-2">
-                {resultData?.doctor?.title || "BS"}{" "}
-                {resultData?.doctor?.fullName}
-              </h2>
-              <p className="text-xs text-slate-400">
-                Ca trực:{" "}
-                <strong className="text-white">
-                  {resultData?.doctor?.shiftName || "Hiện tại"}
-                </strong>
+            <h2 className="text-xl font-bold text-emerald-400">
+              {scanMessageTitle(SCAN_MESSAGES.SUCCESS)}
+            </h2>
+            {resultData?.doctor?.fullName && (
+              <p className="text-base font-semibold text-white">
+                {[resultData.doctor.title, resultData.doctor.fullName].filter(Boolean).join(" ")}
               </p>
-            </div>
-
-            <div className="rounded-2xl border border-teal-500/30 bg-teal-950/20 p-4 text-left space-y-2 text-xs">
-              <div className="flex justify-between text-slate-300">
-                <span>Phòng khám đã mở khoá:</span>
-                <span className="font-bold text-teal-400">
-                  {sessionData?.room?.name}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Độ tin cậy sinh trắc học:</span>
-                <span className="font-mono text-emerald-400">
-                  {(resultData?.similarity * 100 || 96.5).toFixed(1)}%
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Chống giả mạo PAD:</span>
-                <span className="font-semibold text-emerald-400">
-                  Đạt chuẩn ISO 30107
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-teal-300 font-semibold">
-              Màn hình máy tính phòng khám đã mở khoá và giải phóng Desktop. Bác
-              sĩ có thể bắt đầu làm việc ngay!
-            </p>
+            )}
+            {resultData?.doctor?.shiftName && (
+              <p className="text-xs text-slate-400">
+                Ca trực: <strong className="text-white">{resultData.doctor.shiftName}</strong>
+              </p>
+            )}
           </div>
         )}
 
-        {/* THẤT BẠI */}
+        {/* THẤT BẠI — một câu ngắn gọn, không hiện chi tiết kỹ thuật */}
         {currentStep === "failed" && (
-          <div className="text-center space-y-6">
+          <div className="text-center space-y-5">
             <div className="h-20 w-20 mx-auto rounded-3xl bg-rose-500/10 border-2 border-rose-500/30 text-rose-400 flex items-center justify-center shadow-xl">
               <AlertTriangle className="h-10 w-10" />
             </div>
-
-            <div className="space-y-2">
-              <h2 className="text-lg font-bold text-white">
-                Xác thực không thành công
-              </h2>
-              <p className="text-xs text-rose-300 px-4 leading-relaxed">
-                {errorMessage}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={async () => {
-                setErrorMessage(null);
-                try {
-                  const claimToken = getDeviceClaimToken();
-                  const check = await fetch(`/api/kiosk/session/${sessionId}`, {
-                    headers: { "x-device-claim-token": claimToken },
-                  });
-                  if (check.ok) {
-                    const cRaw = await check.json();
-                    const cData = cRaw?.data ?? cRaw;
-                    if (cData?.liveCaptureNonce) setSessionData(cData);
-                    if (cData?.status === "VERIFIED") {
-                      setResultData({ success: true, doctor: cData.verifiedDoctor });
-                      setCurrentStep("success");
+            <h2 className="text-lg font-bold text-white">
+              {scanMessageTitle(errorMessage ?? SCAN_MESSAGES.VERIFY_FAILED)}
+            </h2>
+            {errorMessage && needsNewQr(errorMessage) ? (
+              <p className="text-sm text-slate-300">Vui lòng quét mã mới.</p>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const claimToken = getDeviceClaimToken();
+                    const check = await fetch(`/api/kiosk/session/${sessionId}`, {
+                      headers: { "x-device-claim-token": claimToken },
+                    });
+                    if (!check.ok) {
+                      // Mã QR đã hết hạn/đã dùng: báo ngắn gọn, không mở lại camera vô ích.
+                      const cErr = await check.json().catch(() => null);
+                      setErrorMessage(toScanMessage(cErr?.message || SCAN_MESSAGES.QR_EXPIRED));
                       return;
                     }
-                  }
-                } catch {}
-                setCurrentStep("scanning");
-                void startCamera();
-              }}
-              className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
-            >
-              <RefreshCw className="h-4 w-4" />
-              <span>Quét lại lần nữa</span>
-            </button>
+                    {
+                      const cRaw = await check.json();
+                      const cData = cRaw?.data ?? cRaw;
+                      if (cData?.liveCaptureNonce) setSessionData(cData);
+                      if (cData?.status === "VERIFIED") {
+                        setResultData({ success: true, doctor: cData.verifiedDoctor });
+                        setCurrentStep("success");
+                        return;
+                      }
+                    }
+                  } catch {}
+                  setErrorMessage(null);
+                  setCurrentStep("scanning");
+                  void startCamera();
+                }}
+                className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span>Thử lại</span>
+              </button>
+            )}
           </div>
         )}
       </main>
 
       <footer className="text-center text-[10px] text-slate-500 border-t border-slate-900 pt-3">
-        Bệnh viện Quân y 4 · Điểm danh khuôn mặt thông minh
+        Bệnh viện Quân y 4 · Điểm danh khuôn mặt
       </footer>
     </div>
   );

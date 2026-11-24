@@ -97,7 +97,7 @@ test("third-party iPhone or scanner-app QR links are accepted while TTL remains 
       liveCapture: liveCaptureFor(service, session.sessionId),
       ...thirdPartyMeta,
     }),
-    /AI từ chối/,
+    /Xác thực không thành công\.$/,
   );
   assert.equal(session.status, "WAITING");
   assert.equal(session.consumed, false);
@@ -119,7 +119,7 @@ test("third-party iPhone or scanner-app QR links are accepted while TTL remains 
       clientEnv: "in-app-webview",
       userAgent: "Zalo/26.1",
     }),
-    /AI từ chối/,
+    /Xác thực không thành công\.$/,
   );
   assert.equal(session.status, "WAITING");
 });
@@ -200,7 +200,7 @@ test("expired QR and absent claim token remain rejected; another browser context
   assert.ok((await service.touchSessionScan(expired.sessionId, { claimToken: TOKEN })).error);
   const guarded = qr(service); assert.ok((await service.touchSessionScan(guarded.sessionId)).error);
   await service.touchSessionScan(guarded.sessionId, { claimToken: TOKEN });
-  await assert.rejects(service.verifyFaceAndUnlock({ sessionId: guarded.sessionId, snapshotBase64: "image" }), /phiên quét trên điện thoại/);
+  await assert.rejects(service.verifyFaceAndUnlock({ sessionId: guarded.sessionId, snapshotBase64: "image" }), /Vui lòng quét lại mã QR\.$/);
   const fixedDeadline = guarded.expiresAt;
   const other = await service.touchSessionScan(guarded.sessionId, { claimToken: TOKEN + "other" });
   assert.equal(other.error, undefined); assert.equal(guarded.status, "WAITING"); assert.equal(guarded.expiresAt, fixedDeadline);

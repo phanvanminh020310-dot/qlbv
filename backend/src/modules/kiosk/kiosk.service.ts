@@ -44,6 +44,7 @@ import {
   validateLiveCaptureProof,
   type LiveCaptureProof,
 } from "./kiosk-live-capture";
+import { KIOSK_SCAN_MESSAGES as MSG } from "./kiosk-scan-messages";
 import {
   kioskTargetKey,
   sameKioskTarget,
@@ -2170,10 +2171,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       (s.consumed && s.status !== "VERIFIED") ||
       Date.now() >= s.expiresAt
     ) {
-      return reject(
-        "Phiên QR đã hết hạn. Vui lòng quét mã mới trên màn hình phòng khám.",
-        true,
-      );
+      return reject(MSG.QR_EXPIRED, true);
     }
     // QR là mã ngẫu nhiên, hết hạn rất ngắn; mở máy vẫn cần liveness, sinh trắc
     // học và đúng lịch khám. Không suy đoán nguồn mở link bằng User-Agent/WebView:
@@ -2181,9 +2179,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     // cháy luôn phiên QR. clientEnv/userAgent vẫn được nhận để tương thích client cũ,
     // nhưng không còn là điều kiện từ chối quét.
     if (!token || token.length < 16 || token.length > 256) {
-      return reject(
-        "Không xác định được thiết bị quét. Vui lòng mở lại bằng trình duyệt hệ thống.",
-      );
+      return reject(MSG.RESCAN);
     }
     // Một QR có thể được iOS chuyển qua nhiều ngữ cảnh (Zalo → Chrome/Safari → Camera).
     // Ghi nhận claim đầu tiên để chẩn đoán nhưng không hủy phiên khi cùng mã được mở
@@ -2431,9 +2427,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
 
     const session = this.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException(
-        "Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.",
-      );
+      throw new BadRequestException(MSG.QR_EXPIRED);
     }
 
     if (
@@ -2442,9 +2436,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       claimToken.trim().length < 16 ||
       claimToken.trim().length > 256
     ) {
-      throw new ForbiddenException(
-        "Không xác định được phiên quét trên điện thoại. Vui lòng quét lại mã QR đang hiển thị tại phòng khám.",
-      );
+      throw new ForbiddenException(MSG.RESCAN);
     }
 
     // NẾU PHIÊN NÀY ĐÃ ĐƯỢC XÁC THỰC THÀNH CÔNG RỒI:
@@ -2452,31 +2444,24 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     if (session.status === "VERIFIED") {
       return {
         success: true,
-        message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
-        similarity: 1.0,
+        message: MSG.SUCCESS,
         doctor: session.verifiedDoctor,
       };
     }
 
     if (session.status !== "WAITING") {
-      throw new BadRequestException(
-        "Phiên quét QR không hợp lệ hoặc đã hết hạn. Vui lòng quét lại trên màn hình phòng khám.",
-      );
+      throw new BadRequestException(MSG.QR_EXPIRED);
     }
 
     if (session.consumed) {
-      throw new BadRequestException(
-        "Mã QR này đã được tiếp nhận xác thực trước đó (Burn-on-scan). Vui lòng nhìn lên màn hình phòng khám để quét mã mới!",
-      );
+      throw new BadRequestException(MSG.QR_USED);
     }
 
     if (Date.now() >= session.expiresAt) {
       session.status = "EXPIRED";
       session.consumed = true;
       this.sessions.delete(sessionId);
-      throw new BadRequestException(
-        "Phiên quét QR đã quá thời gian cho phép. Vui lòng quét lại trên màn hình phòng khám.",
-      );
+      throw new BadRequestException(MSG.QR_EXPIRED);
     }
 
     // 1. Không chặn ứng dụng quét, trình duyệt nhúng hoặc Chrome/Safari trên iPhone.
@@ -2504,7 +2489,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       return {
         success: false,
         isProcessing: true,
-        message: "Đang xử lý nhận diện khuôn mặt, vui lòng giữ nguyên máy...",
+        message: MSG.PROCESSING,
       };
     }
     session.isVerifying = true;
@@ -2512,19 +2497,27 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
     try {
       // 1. Gọi AI Engine kiểm tra người thật ISO 30107 PAD & trích xuất vector embedding (Gộp 1 lượt siêu tốc)
       const challenges = completedChallenges || ["PASSIVE_LIVENESS"];
-      const aiResult = await this.verifyAndExtractAi(
-        snapshotBase64,
-        challenges,
-      );
+      let aiResult: Awaited<ReturnType<KioskService["verifyAndExtractAi"]>>;
+      try {
+        aiResult = await this.verifyAndExtractAi(snapshotBase64, challenges);
+      } catch (err: any) {
+        const detail = String(err?.message || err);
+        this.logger.warn(`[scan ${session.roomCode}] AI không xử lý được khung hình: ${detail}`);
+        // Mất kết nối dịch vụ AI → báo bận; còn lại (không thấy rõ mặt...) → quét tiếp.
+        throw new BadRequestException(
+          /kết nối|Máy chủ AI|ECONN|fetch failed|timeout/i.test(detail)
+            ? MSG.SERVICE_BUSY
+            : MSG.LOOK_AT_CAMERA,
+        );
+      }
 
       if (!aiResult.isLive) {
         session.failCount = (session.failCount || 0) + 1;
         if (session.failCount >= 5) {
           session.consumed = true;
         }
-        throw new BadRequestException(
-          `AI từ chối: Phát hiện hình ảnh giả mạo (${aiResult.reason}).`,
-        );
+        this.logger.warn(`[scan ${session.roomCode}] Liveness từ chối: ${aiResult.reason ?? "-"}`);
+        throw new BadRequestException(MSG.VERIFY_FAILED);
       }
 
       const probeVector = aiResult.embedding;
@@ -2544,9 +2537,8 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         .where(eq(users.active, true));
 
       if (allBiometrics.length === 0) {
-        throw new BadRequestException(
-          "Hệ thống chưa có hồ sơ khuôn mặt nào được đăng ký. Vui lòng liên hệ KHTH/IT.",
-        );
+        this.logger.warn(`[scan ${session.roomCode}] Chưa có hồ sơ khuôn mặt nào được đăng ký.`);
+        throw new BadRequestException(MSG.VERIFY_FAILED);
       }
 
       // So khớp Cosine Similarity
@@ -2572,9 +2564,10 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         if (session.failCount >= 8) {
           session.consumed = true;
         }
-        throw new ForbiddenException(
-          `Khuôn mặt không khớp với hồ sơ Bác sĩ nào trong CSDL bệnh viện (Độ tương đồng: ${(Math.max(0, maxCosine) * 100).toFixed(1)}%).`,
+        this.logger.warn(
+          `[scan ${session.roomCode}] Không khớp hồ sơ (cosine ${Math.max(0, maxCosine).toFixed(3)}).`,
         );
+        throw new ForbiddenException(MSG.VERIFY_FAILED);
       }
 
       // 3. KIỂM TRA LỊCH TRỰC CỦA BÁC SĨ TẠI PHÒNG KHÁM
@@ -2592,9 +2585,10 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
       );
 
       if (doctorSlots.length === 0) {
-        throw new ForbiddenException(
-          `Bác sĩ ${bestMatch.title} ${bestMatch.fullName} nhận diện thành công (${(maxCosine * 100).toFixed(1)}%), nhưng KHÔNG CÓ LỊCH TRỰC hôm nay tại ${session.roomName}!`,
+        this.logger.warn(
+          `[scan ${session.roomCode}] user ${bestMatch.userId} không có lịch trực hôm nay tại phòng.`,
         );
+        throw new ForbiddenException(MSG.NO_SHIFT);
       }
 
       const matchedSlot = doctorSlots
@@ -2610,9 +2604,10 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         .find(({ interval }) => now >= interval.start && now < interval.end);
 
       if (!matchedSlot) {
-        throw new ForbiddenException(
-          `Hiện tại không trong khung giờ ca trực của Bác sĩ ${bestMatch.title} ${bestMatch.fullName} tại ${session.roomName}.`,
+        this.logger.warn(
+          `[scan ${session.roomCode}] user ${bestMatch.userId} ngoài khung giờ ca trực.`,
         );
+        throw new ForbiddenException(MSG.NO_SHIFT);
       }
 
       const currentShift = matchedSlot.slot;
@@ -2622,18 +2617,14 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         session.consumed ||
         Date.now() >= session.expiresAt
       ) {
-        throw new ForbiddenException(
-          "Phiên xác thực đã hết hạn hoặc bị huỷ trong lúc AI xử lý. Vui lòng quét QR mới.",
-        );
+        throw new ForbiddenException(MSG.QR_EXPIRED);
       }
 
       if (
         Date.now() < matchedSlot.interval.start ||
         Date.now() >= matchedSlot.interval.end
       ) {
-        throw new ForbiddenException(
-          "Ca trực đã kết thúc trong lúc xác thực. Máy trạm được giải phóng; vui lòng xác thực ở ca đang diễn ra.",
-        );
+        throw new ForbiddenException(MSG.NO_SHIFT);
       }
 
       // 4. Attendance is an audit event; the separate terminal lease is the
@@ -2701,9 +2692,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
         session.consumed ||
         Date.now() >= session.expiresAt
       ) {
-        throw new ForbiddenException(
-          "Phiên đã hết hạn trong lúc ghi nhận. Máy trạm vẫn khoá, vui lòng quét lại QR.",
-        );
+        throw new ForbiddenException(MSG.QR_EXPIRED);
       }
 
       // 5. Cập nhật phiên & BẮN SỰ KIỆN SSE MỞ KHOÁ ĐÍCH DANH DUY NHẤT MÁY TRẠM PHÒNG KHÁM (UNICAST)
@@ -2780,8 +2769,7 @@ export class KioskService implements OnModuleInit, OnModuleDestroy {
 
       return {
         success: true,
-        message: `Điểm danh thành công! Máy tính phòng khám ${session.roomName} đã được mở khoá.`,
-        similarity: maxCosine,
+        message: MSG.SUCCESS,
         doctor: session.verifiedDoctor,
       };
     } finally {

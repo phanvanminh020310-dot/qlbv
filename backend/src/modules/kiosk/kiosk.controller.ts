@@ -21,6 +21,7 @@ import type {
   ClientMeta,
 } from "../../common/types/access-context";
 import type { LiveCaptureProof } from "./kiosk-live-capture";
+import { KIOSK_SCAN_MESSAGES } from "./kiosk-scan-messages";
 import { KioskService } from "./kiosk.service";
 
 @ApiTags("Kiosk · Điểm danh Sinh trắc học & Mở khoá Phòng khám")
@@ -139,9 +140,7 @@ export class KioskController {
     }
     const session = result.session || this.service.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException(
-        "Mã QR đã hết hạn hoặc phiên không tồn tại. Vui lòng quét lại trên màn hình phòng khám.",
-      );
+      throw new BadRequestException(KIOSK_SCAN_MESSAGES.QR_EXPIRED);
     }
     return {
       sessionId: session.sessionId,

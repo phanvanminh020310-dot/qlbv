@@ -104,7 +104,7 @@ test("khung hình camera trực tiếp được chuyển tới AI; snapshotBase6
   service.verifyAndExtractAi = async (image: string) => { analysed = image; return { isLive: false, reason: "fixture", embedding: [] }; };
   await assert.rejects(
     service.verifyFaceAndUnlock({ sessionId: session.sessionId, claimToken: TOKEN, snapshotBase64: "uploaded-photo", liveCapture: proof as any }),
-    /AI từ chối/,
+    /Xác thực không thành công\.$/,
   );
   assert.equal(analysed, proof.frames[2], "AI nhận đúng khung camera trực tiếp cuối cùng");
 });
