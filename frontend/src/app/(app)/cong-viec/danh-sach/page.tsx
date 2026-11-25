@@ -35,7 +35,7 @@ function ListInner() {
   const [creating, setCreating] = useState(false);
   const filters: TaskListQuery = useMemo(() => {
     const o: TaskListQuery = {};
-    for (const k of ['view', 'status', 'priority', 'departmentId', 'projectId', 'label', 'q', 'due', 'sort', 'page', 'includeSubtasks'] as const) {
+    for (const k of ['view', 'status', 'priority', 'departmentId', 'projectId', 'assigneeId', 'label', 'q', 'due', 'sort', 'page', 'includeSubtasks'] as const) {
       const v = sp?.get(k);
       if (v) o[k] = v;
     }
@@ -55,6 +55,7 @@ function ListInner() {
   };
 
   const meta = useQuery({ queryKey: taskKeys.meta, queryFn: tasksApi.meta, staleTime: 60_000 });
+  const people = useQuery({ queryKey: ['tasks', 'assignable', 0], queryFn: () => tasksApi.assignable({}), staleTime: 60_000 });
   const query = { ...filters, pageSize: '50', sort: filters.sort ?? 'updated' };
   const list = useQuery({ queryKey: taskKeys.list(query), queryFn: () => tasksApi.list(query), placeholderData: keepPreviousData });
   useRealtimeInvalidate({ tasks: [[...taskKeys.all]] });
@@ -118,6 +119,12 @@ function ListInner() {
             <option value="">Mọi dự án</option>
             {meta.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
           </Select>
+          {(people.data?.length ?? 0) > 1 ? (
+            <Select value={filters.assigneeId ?? ''} onChange={(e) => set({ assigneeId: e.target.value })}>
+              <option value="">Mọi người thực hiện</option>
+              {people.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}{u.departmentName ? ` · ${u.departmentName}` : ''}</option>)}
+            </Select>
+          ) : null}
           {meta.data && meta.data.departments.length > 1 ? (
             <Select value={filters.departmentId ?? ''} onChange={(e) => set({ departmentId: e.target.value })}>
               <option value="">Mọi khoa/phòng</option>

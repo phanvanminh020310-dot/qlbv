@@ -160,6 +160,14 @@ export interface TaskSummary {
   overdue: TaskRow[];
   upcoming: TaskRow[];
   review: TaskRow[];
+  /** Việc tôi đã giao còn đang mở */
+  assigned: TaskRow[];
+  stats: {
+    byStatus: Array<{ status: TaskStatus; label: string; count: number }>;
+    byPriority: Array<{ priority: TaskPriority; label: string; count: number }>;
+    series: Array<{ date: string; label: string; assigned: number; done: number; late: number }>;
+    onTimeRateMonth: number | null;
+  };
 }
 
 export interface TaskFileInput { fileName: string; mimeType?: string; contentBase64: string }

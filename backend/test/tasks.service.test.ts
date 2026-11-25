@@ -185,6 +185,16 @@ test('giao việc → nhận → làm → gửi duyệt → trả lại → duy�
   const actions = history.logs.map((h) => h.action);
   for (const a of ['CREATE', 'ACCEPT', 'START', 'SUBMIT', 'RETURN', 'APPROVE']) assert.ok(actions.includes(a), `lịch sử có ${a}`);
 
+  // Tổng quan cá nhân: thống kê + danh sách tôi đã giao
+  const mySum = await service.mySummary(staff2);
+  assert.equal(mySum.stats.series.length, 30);
+  assert.ok(mySum.stats.byStatus.some((b) => b.status === 'DONE' && b.count === 1));
+  assert.equal(mySum.stats.series.reduce((a, d) => a + d.done, 0), 1);
+  assert.equal(mySum.stats.onTimeRateMonth, 1);
+  const boss = await service.mySummary(manager);
+  assert.ok(Array.isArray(boss.assigned));
+  assert.ok(boss.assigned.every((t) => !['DONE', 'CANCELLED', 'DRAFT'].includes(t.status)));
+
   // Báo cáo
   const ov = await reports.overview(manager, {});
   assert.equal(ov.kpi.assigned, 2);

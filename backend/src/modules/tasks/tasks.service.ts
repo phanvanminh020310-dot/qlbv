@@ -1435,12 +1435,53 @@ export class TasksService {
       from tasks where deleted_at is null`);
     const rows = (res as unknown as { rows?: Record<string, number>[] }).rows ?? (res as unknown as Record<string, number>[]);
     const counts = rows[0] ?? {};
-    const [overdue, upcoming, review] = await Promise.all([
+    const [overdue, upcoming, review, assigned, stats] = await Promise.all([
       this.list(user, { view: 'mine', due: 'overdue', sort: 'due', pageSize: '10' }),
       this.list(user, { view: 'mine', status: 'ASSIGNED,ACCEPTED,IN_PROGRESS,RETURNED,ON_HOLD', sort: 'due', pageSize: '10' }),
       this.list(user, { view: 'review', status: 'SUBMITTED', sort: 'due', pageSize: '10' }),
+      this.list(user, { view: 'assigned', status: 'ASSIGNED,ACCEPTED,IN_PROGRESS,RETURNED,ON_HOLD,SUBMITTED,DECLINED', sort: 'due', pageSize: '10' }),
+      this.myStats(uid),
     ]);
-    return { counts, overdue: overdue.items, upcoming: upcoming.items, review: review.items };
+    return { counts, overdue: overdue.items, upcoming: upcoming.items, review: review.items, assigned: assigned.items, stats };
+  }
+
+  /** Thống kê cá nhân cho trang tổng quan: phân bố trạng thái/ưu tiên, xu hướng 30 ngày, tỷ lệ đúng hạn tháng này. */
+  private async myStats(uid: number) {
+    const rowsOf = <T>(res: unknown): T[] => ((res as { rows?: T[] }).rows ?? (res as T[])) ?? [];
+    const [statusRes, priorityRes, assignedRes, doneRes, monthRes] = await Promise.all([
+      this.db.db.execute(sql`select status, count(*)::int as n from tasks
+        where deleted_at is null and assignee_id = ${uid} and status <> 'DRAFT' group by status`),
+      this.db.db.execute(sql`select priority, count(*)::int as n from tasks
+        where deleted_at is null and assignee_id = ${uid} and status not in ('DONE','CANCELLED','DRAFT') group by priority`),
+      this.db.db.execute(sql`select to_char((coalesce(assigned_at, created_at) at time zone ${TZ})::date, 'YYYY-MM-DD') as d, count(*)::int as n
+        from tasks where deleted_at is null and assignee_id = ${uid} and status <> 'DRAFT'
+          and coalesce(assigned_at, created_at) >= now() - interval '30 days' group by 1`),
+      this.db.db.execute(sql`select to_char((completed_at at time zone ${TZ})::date, 'YYYY-MM-DD') as d, count(*)::int as n,
+          count(*) filter (where due_at is not null and completed_at > due_at)::int as late
+        from tasks where deleted_at is null and assignee_id = ${uid} and status = 'DONE'
+          and completed_at >= now() - interval '30 days' group by 1`),
+      this.db.db.execute(sql`select count(*) filter (where due_at is not null)::int as "withDue",
+          count(*) filter (where due_at is not null and completed_at <= due_at)::int as "onTime"
+        from tasks where deleted_at is null and assignee_id = ${uid} and status = 'DONE'
+          and completed_at >= date_trunc('month', now() at time zone ${TZ}) at time zone ${TZ}`),
+    ]);
+    const assignedMap = new Map(rowsOf<{ d: string; n: number }>(assignedRes).map((r) => [r.d, Number(r.n)]));
+    const doneMap = new Map(rowsOf<{ d: string; n: number; late: number }>(doneRes).map((r) => [r.d, r]));
+    const series: Array<{ date: string; label: string; assigned: number; done: number; late: number }> = [];
+    const todayVn = new Date(Date.now() + 7 * 3600_000);
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(todayVn.getTime() - i * 86400_000).toISOString().slice(0, 10);
+      const done = doneMap.get(d);
+      series.push({ date: d, label: `${d.slice(8, 10)}/${d.slice(5, 7)}`, assigned: assignedMap.get(d) ?? 0, done: Number(done?.n ?? 0), late: Number(done?.late ?? 0) });
+    }
+    const month = rowsOf<{ withDue: number; onTime: number }>(monthRes)[0];
+    const withDue = Number(month?.withDue ?? 0);
+    return {
+      byStatus: rowsOf<{ status: TaskStatus; n: number }>(statusRes).map((r) => ({ status: r.status, label: TASK_STATUS_LABEL[r.status] ?? r.status, count: Number(r.n) })),
+      byPriority: rowsOf<{ priority: keyof typeof TASK_PRIORITY_LABEL; n: number }>(priorityRes).map((r) => ({ priority: r.priority, label: TASK_PRIORITY_LABEL[r.priority] ?? r.priority, count: Number(r.n) })),
+      series,
+      onTimeRateMonth: withDue ? Math.round((1000 * Number(month?.onTime ?? 0)) / withDue) / 1000 : null,
+    };
   }
 
   /* ====================================================================== Mẫu công việc */
