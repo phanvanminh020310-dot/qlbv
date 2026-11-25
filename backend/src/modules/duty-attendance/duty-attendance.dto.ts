@@ -66,7 +66,7 @@ export class AttendanceCodeDto {
   @IsOptional() @IsIn(['NONE', 'DUTY', 'REINFORCEMENT', 'REST']) calculationRole?: 'NONE' | 'DUTY' | 'REINFORCEMENT' | 'REST';
   /** Trừ countValue khỏi SYS_NGAY_CONG khi ký hiệu được nhập vào ngày làm việc. */
   @IsOptional() @IsBoolean() deductsWorkday?: boolean;
-  /** Dành cho REST: dò ca Trực, Tăng cường hoặc bất kỳ ca nào gần nhất trước đó. */
+  /** Trường cũ, giữ để tương thích API: nghỉ bù nay trừ theo số lượng vào tổng ca Trực tích lũy. */
   @IsOptional() @IsIn(['ANY_DUTY', 'DUTY', 'REINFORCEMENT']) restSource?: 'ANY_DUTY' | 'DUTY' | 'REINFORCEMENT';
   @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
   @IsOptional() @IsBoolean() active?: boolean;

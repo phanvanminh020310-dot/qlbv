@@ -41,8 +41,6 @@ export interface AttendanceMonth {
   columns: AttendanceColumn[];
   validations: AttendanceValidation[];
   systemMetrics: AttendanceSystemMetric[];
-  /** Khoảng truy ca trực trước đó để phân loại nghỉ bù. */
-  restPairLookbackDays: number;
   staff: AttendanceStaff[];
   /** code là chuỗi hiển thị tương thích; codes là danh sách ký hiệu đầy đủ của ngày. */
   entries: Record<string, { code: string; codes: string[]; note: string }>;
@@ -50,7 +48,7 @@ export interface AttendanceMonth {
   manualValues: Record<string, string>;
   /** Thông điệp các ràng buộc chưa thỏa, theo ô tự nhập staffKey:columnId. */
   manualViolations: Record<string, string[]>;
-  /** Nghỉ bù chưa ghép được ca trực/tăng cường phù hợp, theo staffKey; không chặn nhập liệu. */
+  /** Cảnh báo tổng hợp (VD: dữ liệu cũ có nghỉ bù vượt tổng Trực tích lũy), theo staffKey. */
   calculationWarnings: Record<string, string[]>;
   /** Cột ký hiệu, công thức và tự nhập theo mã cột, dùng khóa staffKey. */
   rowValues: Record<string, Record<string, string | number>>;

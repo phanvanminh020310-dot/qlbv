@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { and, asc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import * as ExcelJS from 'exceljs';
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
-import { DbService } from '../../db/db.service';
+import { DbService, type Executor } from '../../db/db.service';
 import {
   departments,
   dutyAttendanceCodeGroups,
@@ -29,7 +29,7 @@ import { renderPrintDocument } from '../../infra/rendering/pdf-renderer';
 import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
-import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, calculateAttendanceMetrics, pairAttendanceRestEntries } from './attendance-metrics';
+import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, attendanceRestBalance, calculateAttendanceMetrics } from './attendance-metrics';
 import { defaultNationalHolidayPlan, nationalHolidayProposal, type NationalHolidayPlanConfig } from './national-holiday-plan';
 import type {
   AttendanceCodeDto,
@@ -80,7 +80,6 @@ export type AttendanceLockPolicy = (typeof ATTENDANCE_LOCK_POLICIES)[number];
 const SYSTEM_SECTION_CODES = new Set(['ADMIN', 'DAYS', 'SYMBOLS', 'REPORT']);
 const monthBounds = (month: string) => ({ from: `${month}-01`, to: `${month === '9999-12' ? '10000-01' : `${Number(month.slice(0, 4)) + (month.endsWith('-12') ? 1 : 0)}-${String((Number(month.slice(5)) % 12) + 1).padStart(2, '0')}`}-01` });
 const daysInMonth = (month: string) => new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate();
-const addCalendarDays = (ymd: string, days: number) => { const date = new Date(`${ymd}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
 const fmtDate = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; };
 const vnWeekday = (ymd: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${ymd}T00:00:00`).getDay()];
 const lockPolicyOf = (value: unknown): AttendanceLockPolicy => {
@@ -141,10 +140,34 @@ export class DutyAttendanceService {
     return staffOrderModeOf(this.settings ? await this.settings.get<string>('dutyAttendance.staffOrderMode', 'MANAGEMENT_THEN_PROFESSIONAL') : 'MANAGEMENT_THEN_PROFESSIONAL');
   }
 
-  /** Chỉ dò một khoảng hợp lý để không ghép nhầm nghỉ bù với ca trực đã quá xa trong lịch sử. */
-  private async restPairLookbackDays(): Promise<number> {
-    const configured = Number(this.settings ? await this.settings.get<number>('dutyAttendance.restPairLookbackDays', 14) : 14);
-    return Number.isFinite(configured) ? Math.min(62, Math.max(1, Math.floor(configured))) : 14;
+  /**
+   * Toàn bộ ký hiệu đã lưu của các nhân viên (mọi khoa, mọi ngày) để tính số dư nghỉ bù
+   * tích lũy theo người. entry_codes là nguồn nhiều ký hiệu; dòng entries cũ chỉ dùng
+   * dự phòng cho ô (khoa, người, ngày) chưa có ký hiệu mới, đúng như bảng chấm công.
+   * Khóa ô là `departmentId:userId:workDate`.
+   */
+  private async attendanceCodeHistory(executor: Executor, userIds: number[], codeById: Map<number, string>) {
+    const cells = new Map<string, string[]>();
+    if (!userIds.length) return cells;
+    const [modernRows, legacyRows] = await Promise.all([
+      executor.select({ departmentId: dutyAttendanceEntryCodes.departmentId, userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, codeId: dutyAttendanceEntryCodes.codeId }).from(dutyAttendanceEntryCodes).where(inArray(dutyAttendanceEntryCodes.userId, userIds)),
+      executor.select({ departmentId: dutyAttendanceEntries.departmentId, userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, codeId: dutyAttendanceEntries.codeId }).from(dutyAttendanceEntries).where(inArray(dutyAttendanceEntries.userId, userIds)),
+    ]);
+    const add = (row: { departmentId: number; userId: number; workDate: string; codeId: number }) => {
+      const code = codeById.get(row.codeId); if (!code) return;
+      const cell = `${row.departmentId}:${row.userId}:${row.workDate}`; const current = cells.get(cell) ?? [];
+      if (!current.includes(code)) cells.set(cell, [...current, code]);
+    };
+    for (const row of modernRows) add(row);
+    const modernCells = new Set(cells.keys());
+    for (const row of legacyRows) if (!modernCells.has(`${row.departmentId}:${row.userId}:${row.workDate}`)) add(row);
+    return cells;
+  }
+
+  /** Tách khóa ô lịch sử thành khoa, người, ngày. */
+  private historyCell(cell: string) {
+    const [departmentId, userId, workDate] = cell.split(':');
+    return { departmentId: Number(departmentId), userId: Number(userId), workDate: workDate! };
   }
 
   /** Vai trò phạm vi TOÀN VIỆN (gồm Điều phối chấm công KHTH) được chọn khoa rõ ràng. */
@@ -280,20 +303,20 @@ export class DutyAttendanceService {
   /** Xây dựng bảng của một khoa, bao gồm mốc chuyển khoa và dữ liệu lịch sử đã ghi. */
   private async buildSingleBoard(departmentId: number, month: string, overrides = new Map<string, string | null>()) {
     this.assertMonth(month);
-    const [lockPolicy, restPairLookbackDays, staffOrderMode] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays(), this.attendanceStaffOrderMode()]);
+    const [lockPolicy, staffOrderMode] = await Promise.all([this.attendanceLockPolicy(), this.attendanceStaffOrderMode()]);
     const { from, to } = monthBounds(month);
-    const lookbackFrom = addCalendarDays(from, -restPairLookbackDays);
     const layout = await this.activeLayout();
     const [department, allCodes, metricHolidayRows, metricWorkdayRows, dailyCodeRows, legacyCodeRows, dailyNotes, manualRows, departmentAssignmentRows, currentDepartmentUsers] = await Promise.all([
       this.db.db.select().from(departments).where(eq(departments.id, departmentId)),
       // Giữ mã ngừng dùng trong tập tính nghiệp vụ để dữ liệu lịch sử vẫn phân loại đúng,
       // nhưng chỉ trả mã đang dùng về bảng để không thể chọn thêm mã đã dừng.
       this.db.db.select().from(dutyAttendanceCodes).orderBy(asc(dutyAttendanceCodes.sortOrder), asc(dutyAttendanceCodes.code)),
-      this.db.db.select().from(dutyAttendanceHolidays).where(and(gte(dutyAttendanceHolidays.holidayDate, lookbackFrom), lt(dutyAttendanceHolidays.holidayDate, to))),
-      this.db.db.select().from(dutyAttendanceWorkdayOverrides).where(and(gte(dutyAttendanceWorkdayOverrides.workDate, lookbackFrom), lt(dutyAttendanceWorkdayOverrides.workDate, to))),
-      this.db.db.select({ userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntryCodes).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntryCodes.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntryCodes.departmentId, departmentId), gte(dutyAttendanceEntryCodes.workDate, lookbackFrom), lt(dutyAttendanceEntryCodes.workDate, to))),
+      // Lấy mọi ngày lễ/làm bù: nghỉ bù tích lũy có thể trừ vào ca Trực ở bất kỳ tháng nào.
+      this.db.db.select().from(dutyAttendanceHolidays),
+      this.db.db.select().from(dutyAttendanceWorkdayOverrides),
+      this.db.db.select({ userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntryCodes).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntryCodes.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntryCodes.departmentId, departmentId), gte(dutyAttendanceEntryCodes.workDate, from), lt(dutyAttendanceEntryCodes.workDate, to))),
       // Dòng cũ vẫn là lớp tương thích khi một máy chủ cũ vừa ghi dữ liệu trước lúc nâng cấp.
-      this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, lookbackFrom), lt(dutyAttendanceEntries.workDate, to))),
+      this.db.db.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, code: dutyAttendanceCodes.code }).from(dutyAttendanceEntries).innerJoin(dutyAttendanceCodes, eq(dutyAttendanceEntries.codeId, dutyAttendanceCodes.id)).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), gte(dutyAttendanceEntries.workDate, from), lt(dutyAttendanceEntries.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceDailyNotes.userId, workDate: dutyAttendanceDailyNotes.workDate, note: dutyAttendanceDailyNotes.note }).from(dutyAttendanceDailyNotes).where(and(eq(dutyAttendanceDailyNotes.departmentId, departmentId), gte(dutyAttendanceDailyNotes.workDate, from), lt(dutyAttendanceDailyNotes.workDate, to))),
       this.db.db.select({ userId: dutyAttendanceManualValues.userId, columnId: dutyAttendanceManualValues.columnId, value: dutyAttendanceManualValues.value }).from(dutyAttendanceManualValues).where(and(eq(dutyAttendanceManualValues.departmentId, departmentId), eq(dutyAttendanceManualValues.month, month))),
       this.db.db.select({ userId: dutyAttendanceDepartmentAssignments.userId }).from(dutyAttendanceDepartmentAssignments).where(and(eq(dutyAttendanceDepartmentAssignments.departmentId, departmentId), lt(dutyAttendanceDepartmentAssignments.effectiveFrom, to))),
@@ -357,8 +380,8 @@ export class DutyAttendanceService {
       .sort((left, right) => compareByAttendanceStaffOrder(left, right, staffOrderMode));
 
     const today = bangkokToday();
-    const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from);
-    const workdayOverrides = metricWorkdayRows.filter((workday) => workday.workDate >= from);
+    const holidays = metricHolidayRows.filter((holiday) => holiday.holidayDate >= from && holiday.holidayDate < to).sort((left, right) => left.holidayDate.localeCompare(right.holidayDate));
+    const workdayOverrides = metricWorkdayRows.filter((workday) => workday.workDate >= from && workday.workDate < to).sort((left, right) => left.workDate.localeCompare(right.workDate));
     const holidayDates = new Set(metricHolidayRows.map((holiday) => holiday.holidayDate));
     const workdayDates = new Set(metricWorkdayRows.map((workday) => workday.workDate));
     const dates = Array.from({ length: daysInMonth(month) }, (_, index) => {
@@ -378,7 +401,14 @@ export class DutyAttendanceService {
       if (!codesByCell.has(cell)) addCode(row.userId, row.workDate, row.code);
     }
     for (const codesForDay of codesByCell.values()) codesForDay.sort((left, right) => (codeSort.get(left.toUpperCase()) ?? Number.MAX_SAFE_INTEGER) - (codeSort.get(right.toUpperCase()) ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right));
-    const allCodeEntries = [...codesByCell.entries()].flatMap(([cell, codesForDay]) => { const divider = cell.indexOf(':'); const userId = Number(cell.slice(0, divider)); const workDate = cell.slice(divider + 1); return codesForDay.map((code) => ({ userId, workDate, code })); });
+    // Số dư nghỉ bù đi theo người qua mọi khoa và mọi tháng; `current` đánh dấu ký hiệu
+    // thuộc chính khoa này để số liệu theo tháng không cộng nhầm ngày ở khoa khác.
+    const history = await this.attendanceCodeHistory(this.db.db, staff.map((person) => person.id), new Map(allCodes.map((code) => [code.id, code.code.toUpperCase()])));
+    const historyByUser = new Map<number, Array<{ date: string; code: string; current: boolean }>>();
+    for (const [cell, codesForDay] of history) {
+      const item = this.historyCell(cell);
+      historyByUser.set(item.userId, [...(historyByUser.get(item.userId) ?? []), ...codesForDay.map((code) => ({ date: item.workDate, code, current: item.departmentId === departmentId }))]);
+    }
     const noteByCell = new Map(dailyNotes.map((item) => [`${item.userId}:${item.workDate}`, item.note]));
     const entryByCell = new Map<string, { code: string; codes: string[]; note: string }>();
     for (const [cell, codesForDay] of codesByCell) {
@@ -409,8 +439,7 @@ export class DutyAttendanceService {
       }
       const metrics = calculateAttendanceMetrics({
         monthDates: dates.map((date) => date.date), holidayDates, workdayDates, codes: allCodes,
-        entries: allCodeEntries.filter((entry) => entry.userId === person.id).map((entry) => ({ date: entry.workDate, code: entry.code })),
-        restPairLookbackDays,
+        entries: historyByUser.get(person.id) ?? [],
       });
       Object.assign(values, metrics.values);
       if (metrics.warnings.length) calculationWarnings[String(person.id)] = metrics.warnings;
@@ -450,7 +479,7 @@ export class DutyAttendanceService {
       department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital },
       departments: [{ id: currentDepartment.id, name: currentDepartment.name }], multiDepartment: false,
       dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations,
-      systemMetrics: ATTENDANCE_SYSTEM_METRICS, restPairLookbackDays,
+      systemMetrics: ATTENDANCE_SYSTEM_METRICS,
       staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, titleSortOrder: person.titleSortOrder, managementPosition: person.managementPosition, managementPositionSortOrder: person.managementPositionSortOrder, managementPositions: person.managementPositions, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
       entries, manualValues, manualViolations, calculationWarnings, rowValues, holidays, workdayOverrides,
     };
@@ -499,13 +528,11 @@ export class DutyAttendanceService {
     if (!dto.entries.length) return { saved: 0 };
     const dates = [...new Set(dto.entries.map((entry) => entry.workDate))].sort();
     const today = bangkokToday();
-    const [lockPolicy, restPairLookbackDays] = await Promise.all([this.attendanceLockPolicy(), this.restPairLookbackDays()]);
+    const lockPolicy = await this.attendanceLockPolicy();
     for (const date of dates) {
       if (!YMD.test(date)) throw new BadRequestException('Ngày chấm công không hợp lệ');
       if (isDateLocked(date, today, lockPolicy)) throw new ForbiddenException(`Không được sửa chấm công ngày ${fmtDate(date)} theo chế độ khóa bảng hiện tại`);
     }
-    const restValidationFrom = addCalendarDays(dates[0]!, -restPairLookbackDays);
-    const restValidationTo = addCalendarDays(dates[dates.length - 1]!, 1);
     const personIds = [...new Set(dto.entries.map((entry) => entry.userId))];
     const [people, allStoredCodes, existingEntries, existingEntryCodes, existingNotes, assignmentRows] = await Promise.all([
       this.db.db.select({ id: users.id, departmentId: users.departmentId, active: users.active, deletedAt: users.deletedAt }).from(users).where(inArray(users.id, personIds)),
@@ -565,51 +592,34 @@ export class DutyAttendanceService {
     }
 
     await this.db.transaction(async (tx) => {
-      // Dựng lại trạng thái sau khi áp dụng cả yêu cầu đang gửi (chưa ghi CSDL), rồi
-      // ghép bằng đúng thuật toán mà bảng tổng hợp sử dụng. Việc này nằm trong giao
-      // dịch để một NB/NB2 không hợp lệ không thể khiến một phần yêu cầu bị lưu.
-      const hasPotentialRest = preparedEntries.some(({ codeProvided, codes }) => codeProvided && codes?.some((code) => byCode.get(code)?.calculationRole === 'REST'));
-      if (hasPotentialRest) {
-        const [historicalCodeRows, historicalLegacyRows] = await Promise.all([
-          tx.select({ userId: dutyAttendanceEntryCodes.userId, workDate: dutyAttendanceEntryCodes.workDate, codeId: dutyAttendanceEntryCodes.codeId }).from(dutyAttendanceEntryCodes).where(and(eq(dutyAttendanceEntryCodes.departmentId, departmentId), inArray(dutyAttendanceEntryCodes.userId, personIds), gte(dutyAttendanceEntryCodes.workDate, restValidationFrom), lt(dutyAttendanceEntryCodes.workDate, restValidationTo))),
-          tx.select({ userId: dutyAttendanceEntries.userId, workDate: dutyAttendanceEntries.workDate, codeId: dutyAttendanceEntries.codeId }).from(dutyAttendanceEntries).where(and(eq(dutyAttendanceEntries.departmentId, departmentId), inArray(dutyAttendanceEntries.userId, personIds), gte(dutyAttendanceEntries.workDate, restValidationFrom), lt(dutyAttendanceEntries.workDate, restValidationTo))),
-        ]);
-        const codeById = new Map(allStoredCodes.map((code) => [code.id, code.code.toUpperCase()]));
-        const codesByCell = new Map<string, string[]>();
-        const cellsWithModernCodes = new Set<string>();
-        const addHistoricalCode = (userId: number, workDate: string, codeId: number, modern: boolean) => {
-          const cell = `${userId}:${workDate}`;
-          if (modern) cellsWithModernCodes.add(cell);
-          if (!modern && cellsWithModernCodes.has(cell)) return;
-          const code = codeById.get(codeId); if (!code) return;
-          const current = codesByCell.get(cell) ?? [];
-          if (!current.includes(code)) codesByCell.set(cell, [...current, code]);
-        };
-        for (const row of historicalCodeRows) addHistoricalCode(row.userId, row.workDate, row.codeId, true);
-        for (const row of historicalLegacyRows) addHistoricalCode(row.userId, row.workDate, row.codeId, false);
-        const originalCodesByCell = new Map([...codesByCell.entries()].map(([cell, codes]) => [cell, [...codes]]));
-        for (const { entry, codeProvided, codes } of preparedEntries) if (codeProvided) codesByCell.set(`${entry.userId}:${entry.workDate}`, codes ?? []);
-        const newRestEntries = new Set<string>();
-        for (const { entry, codeProvided } of preparedEntries) {
-          if (!codeProvided) continue;
-          const cell = `${entry.userId}:${entry.workDate}`;
-          const original = new Set(originalCodesByCell.get(cell) ?? []);
-          for (const code of codesByCell.get(cell) ?? []) if (byCode.get(code)?.calculationRole === 'REST' && !original.has(code)) newRestEntries.add(`${entry.userId}:${entry.workDate}:${code}`);
-        }
-        if (newRestEntries.size) {
-          const codeOrder = (left: string, right: string) => (byCode.get(left)?.sortOrder ?? Number.MAX_SAFE_INTEGER) - (byCode.get(right)?.sortOrder ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right);
-          for (const personId of personIds) {
-            const entries = [...codesByCell.entries()].flatMap(([cell, selectedCodes]) => {
-              const divider = cell.indexOf(':');
-              if (Number(cell.slice(0, divider)) !== personId) return [];
-              const workDate = cell.slice(divider + 1);
-              return [...selectedCodes].sort(codeOrder).map((code) => ({ date: workDate, code }));
-            });
-            const invalid = pairAttendanceRestEntries({ codes: allStoredCodes, entries, restPairLookbackDays }).pairs.find(({ rest, source }) => !source && newRestEntries.has(`${personId}:${rest.date}:${rest.code.toUpperCase()}`));
-            if (invalid) {
-              const restCode = byCode.get(invalid.rest.code.toUpperCase())!;
-              throw new BadRequestException(`Ký hiệu nghỉ bù “${restCode.code}” ngày ${fmtDate(invalid.rest.date)} chưa có ca Trực/Tăng cường hợp lệ chưa dùng trong ${restPairLookbackDays} ngày trước đó; không thể lưu.`);
-            }
+      // Nghỉ bù tính theo số lượng tích lũy: tổng nghỉ bù (NB = 1, NB2 = 0,5…) của
+      // một người, mọi khoa và mọi ngày, không được vượt tổng ca Trực. Kiểm tra nằm
+      // trong giao dịch, trên trạng thái sau khi áp dụng yêu cầu, nên thêm nghỉ bù hay
+      // bỏ/sửa một ca Trực cũ đều không thể làm số dư âm và không lưu dở một phần.
+      const balanceRole = (code: string) => { const role = byCode.get(code)?.calculationRole; return role === 'DUTY' || role === 'REST'; };
+      const touchesBalance = preparedEntries.some(({ entry, codeProvided, codes }) => {
+        if (!codeProvided) return false;
+        const cell = `${entry.userId}:${entry.workDate}`;
+        const existingEntry = existingEntryByCell.get(cell);
+        const existingIds = new Set([...(existingEntry ? [existingEntry.codeId] : []), ...(existingCodesByCell.get(cell) ?? []).map((row) => row.codeId)]);
+        const before = allStoredCodes.filter((code) => existingIds.has(code.id)).map((code) => code.code.toUpperCase());
+        return [...before, ...(codes ?? [])].some(balanceRole);
+      });
+      if (touchesBalance) {
+        const before = await this.attendanceCodeHistory(tx, personIds, new Map(allStoredCodes.map((code) => [code.id, code.code.toUpperCase()])));
+        const after = new Map(before);
+        for (const { entry, codeProvided, codes } of preparedEntries) if (codeProvided) after.set(`${departmentId}:${entry.userId}:${entry.workDate}`, codes ?? []);
+        const entriesOf = (cells: Map<string, string[]>, personId: number) => [...cells.entries()].flatMap(([cell, selectedCodes]) => {
+          const item = this.historyCell(cell);
+          return item.userId === personId ? selectedCodes.map((code) => ({ date: item.workDate, code })) : [];
+        });
+        const number = (value: number) => String(value).replace('.', ',');
+        for (const personId of personIds) {
+          const previous = attendanceRestBalance({ codes: allStoredCodes, entries: entriesOf(before, personId) });
+          const next = attendanceRestBalance({ codes: allStoredCodes, entries: entriesOf(after, personId) });
+          // Dữ liệu cũ có thể đã âm: vẫn cho sửa ô khác hoặc bỏ bớt nghỉ bù, chỉ chặn khi làm âm thêm.
+          if (next.remaining < 0 && next.remaining < previous.remaining) {
+            throw new BadRequestException(`Không thể lưu: tổng nghỉ bù tích lũy (${number(next.rest)}) sẽ vượt tổng ca Trực tích lũy (${number(next.duty)}) của nhân viên. Hiện chỉ còn được nghỉ bù ${number(Math.max(0, previous.remaining))} ngày; hãy bỏ bớt nghỉ bù trước khi thêm nghỉ hoặc xóa/sửa ca Trực.`);
           }
         }
       }

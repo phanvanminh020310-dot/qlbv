@@ -2,16 +2,19 @@ import type { DutyAttendanceCalculationRole, DutyAttendanceRestSource } from '..
 
 export type AttendanceDayClass = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY';
 
-/** Cấu hình tối thiểu cần dùng chung cho ghép ca trực với nghỉ bù. */
+/** Cấu hình tối thiểu của ký hiệu dùng cho tổng hợp nghiệp vụ và số dư nghỉ bù. */
 export type AttendancePairingCode = {
   code: string;
   countValue: string | number;
   calculationRole: DutyAttendanceCalculationRole;
   deductsWorkday: boolean;
-  restSource: DutyAttendanceRestSource;
+  restSource?: DutyAttendanceRestSource;
 };
-/** Một ký hiệu trong dòng thời gian của một nhân viên. */
-export type AttendancePairingEntry = { date: string; code: string };
+/**
+ * Một ký hiệu trong dòng thời gian của một nhân viên. `current = false` là dữ liệu
+ * ngoài bảng đang xem (khoa khác/tháng khác): chỉ dùng để tính số dư nghỉ bù tích lũy.
+ */
+export type AttendancePairingEntry = { date: string; code: string; current?: boolean };
 type MetricCode = AttendancePairingCode;
 type MetricEntry = AttendancePairingEntry;
 
@@ -20,16 +23,19 @@ export const ATTENDANCE_SYSTEM_METRICS = [
   { key: 'SYS_TRUC_NGAY_THUONG', label: 'Trực ngày thường', description: 'Ký hiệu vai trò Trực vào ngày làm việc.' },
   { key: 'SYS_TRUC_NGAY_NGHI', label: 'Trực ngày nghỉ', description: 'Ký hiệu vai trò Trực vào Thứ Bảy/Chủ nhật không phải ngày lễ.' },
   { key: 'SYS_TRUC_NGAY_LE', label: 'Trực ngày lễ', description: 'Ký hiệu vai trò Trực vào ngày lễ; ngày lễ luôn ưu tiên hơn cuối tuần.' },
-  { key: 'SYS_NGHI_TRUC_NGAY_THUONG', label: 'Nghỉ trực ngày thường', description: 'Nghỉ bù được ghép với ca Trực gần nhất trước đó vào ngày thường.' },
-  { key: 'SYS_NGHI_TRUC_NGAY_NGHI', label: 'Nghỉ trực ngày nghỉ', description: 'Nghỉ bù được ghép với ca Trực gần nhất trước đó vào ngày nghỉ.' },
-  { key: 'SYS_NGHI_TRUC_NGAY_LE', label: 'Nghỉ trực ngày lễ', description: 'Nghỉ bù được ghép với ca Trực gần nhất trước đó vào ngày lễ.' },
+  { key: 'SYS_NGHI_TRUC_NGAY_THUONG', label: 'Nghỉ trực ngày thường', description: 'Phần nghỉ bù trong tháng được trừ vào ca Trực ngày thường (trừ dần ca Trực cũ nhất chưa nghỉ).' },
+  { key: 'SYS_NGHI_TRUC_NGAY_NGHI', label: 'Nghỉ trực ngày nghỉ', description: 'Phần nghỉ bù trong tháng được trừ vào ca Trực ngày nghỉ (trừ dần ca Trực cũ nhất chưa nghỉ).' },
+  { key: 'SYS_NGHI_TRUC_NGAY_LE', label: 'Nghỉ trực ngày lễ', description: 'Phần nghỉ bù trong tháng được trừ vào ca Trực ngày lễ (trừ dần ca Trực cũ nhất chưa nghỉ).' },
   { key: 'SYS_TANG_CUONG_NGAY_THUONG', label: 'Tăng cường ngày thường', description: 'Ký hiệu vai trò Tăng cường vào ngày làm việc.' },
   { key: 'SYS_TANG_CUONG_NGAY_NGHI', label: 'Tăng cường ngày nghỉ', description: 'Ký hiệu vai trò Tăng cường vào ngày nghỉ.' },
   { key: 'SYS_TANG_CUONG_NGAY_LE', label: 'Tăng cường ngày lễ', description: 'Ký hiệu vai trò Tăng cường vào ngày lễ.' },
-  { key: 'SYS_NGHI_TANG_CUONG_NGAY_THUONG', label: 'Nghỉ tăng cường ngày thường', description: 'Nghỉ bù được ghép với ca Tăng cường gần nhất trước đó vào ngày thường.' },
-  { key: 'SYS_NGHI_TANG_CUONG_NGAY_NGHI', label: 'Nghỉ tăng cường ngày nghỉ', description: 'Nghỉ bù được ghép với ca Tăng cường gần nhất trước đó vào ngày nghỉ.' },
-  { key: 'SYS_NGHI_TANG_CUONG_NGAY_LE', label: 'Nghỉ tăng cường ngày lễ', description: 'Nghỉ bù được ghép với ca Tăng cường gần nhất trước đó vào ngày lễ.' },
-  { key: 'SYS_NGHI_BU_CHUA_GAN', label: 'Nghỉ bù chưa ghép ca', description: 'Ký hiệu nghỉ bù không tìm thấy ca phù hợp trong khoảng dò đã cấu hình; cần kiểm tra lại dữ liệu.' },
+  { key: 'SYS_NGHI_TANG_CUONG_NGAY_THUONG', label: 'Nghỉ tăng cường ngày thường', description: 'Không còn phát sinh: Tăng cường không được tính để nghỉ bù. Giữ mã để công thức cũ không lỗi (luôn bằng 0).' },
+  { key: 'SYS_NGHI_TANG_CUONG_NGAY_NGHI', label: 'Nghỉ tăng cường ngày nghỉ', description: 'Không còn phát sinh: Tăng cường không được tính để nghỉ bù. Giữ mã để công thức cũ không lỗi (luôn bằng 0).' },
+  { key: 'SYS_NGHI_TANG_CUONG_NGAY_LE', label: 'Nghỉ tăng cường ngày lễ', description: 'Không còn phát sinh: Tăng cường không được tính để nghỉ bù. Giữ mã để công thức cũ không lỗi (luôn bằng 0).' },
+  { key: 'SYS_NGHI_BU_CHUA_GAN', label: 'Nghỉ bù vượt số trực', description: 'Phần nghỉ bù trong tháng vượt quá tổng ca Trực tích lũy (thường là dữ liệu cũ); cần rà soát.' },
+  { key: 'SYS_TRUC_TICH_LUY', label: 'Tổng Trực tích lũy', description: 'Tổng ca Trực (theo giá trị đếm) của nhân viên từ trước đến nay, mọi khoa/phòng.' },
+  { key: 'SYS_NGHI_BU_TICH_LUY', label: 'Tổng nghỉ bù tích lũy', description: 'Tổng nghỉ bù (NB = 1, NB2 = 0,5…) của nhân viên từ trước đến nay, mọi khoa/phòng.' },
+  { key: 'SYS_CON_DUOC_BU', label: 'Còn được nghỉ bù', description: 'Tổng Trực tích lũy trừ tổng nghỉ bù tích lũy. Không được lưu thay đổi làm số này âm.' },
 ] as const;
 
 export const ATTENDANCE_SYSTEM_METRIC_KEYS = new Set<string>(ATTENDANCE_SYSTEM_METRICS.map((metric) => metric.key));
@@ -40,7 +46,6 @@ const count = (value: string | number) => {
   return Number.isFinite(number) && number >= 0 ? rounded(number) : 0;
 };
 const toDate = (value: string) => new Date(`${value}T00:00:00Z`);
-const formatDate = (value: string) => `${value.slice(8, 10)}/${value.slice(5, 7)}`;
 
 /**
  * Ngày lễ ưu tiên hơn cuối tuần. Ngày làm bù/hoán đổi chỉ chuyển ngày cuối tuần thành
@@ -56,81 +61,56 @@ export function attendanceDayClass(date: string, holidayDates: Set<string>, work
 const metricKey = (prefix: 'SYS_TRUC' | 'SYS_NGHI_TRUC' | 'SYS_TANG_CUONG' | 'SYS_NGHI_TANG_CUONG', dayClass: AttendanceDayClass) =>
   `${prefix}_${dayClass === 'WEEKDAY' ? 'NGAY_THUONG' : dayClass === 'WEEKEND' ? 'NGAY_NGHI' : 'NGAY_LE'}`;
 
-function isMatchedDuty(role: DutyAttendanceCalculationRole, source: DutyAttendanceRestSource) {
-  return role === 'DUTY' || role === 'REINFORCEMENT'
-    ? source === 'ANY_DUTY' || source === role
-    : false;
-}
-
-const calendarGap = (later: string, earlier: string) => Math.round((toDate(later).getTime() - toDate(earlier).getTime()) / 86_400_000);
-type DutyRole = 'DUTY' | 'REINFORCEMENT';
-type PairingCandidate = { entry: AttendancePairingEntry; index: number; role: DutyRole };
+export type AttendanceRestBalance = { duty: number; rest: number; remaining: number };
 
 /**
- * Ghép nghỉ bù theo dòng thời gian của một nhân viên.
- *
- * Mỗi loại ca chỉ giữ một nguồn chờ: một ca mới cùng loại thay thế ca cũ chưa được nghỉ
- * bù. Khi nghỉ bù nguồn ANY_DUTY lấy ca mới nhất, mọi nguồn cũ hơn cũng hết hiệu lực.
- * Vì vậy T thứ Hai, T thứ Ba, NB thứ Sáu chỉ tiêu thụ T thứ Ba; NB tiếp theo không
- * được quay lại dùng T thứ Hai. Hàm này là nguồn chân lý dùng đồng thời cho hiển thị
- * tổng hợp và kiểm tra trước khi lưu, để hai nơi không thể ghép khác nhau.
+ * Số dư nghỉ bù theo số lượng: tổng giá trị đếm của ký hiệu vai trò Trực trừ tổng
+ * giá trị đếm của ký hiệu vai trò Nghỉ bù. Tăng cường không được tính. Không xét ngày:
+ * nghỉ bù có thể đặt ở bất kỳ ngày nào miễn tổng nghỉ không vượt tổng trực.
+ * Đây là nguồn chân lý dùng chung cho bảng tổng hợp và kiểm tra trước khi lưu.
  */
-export function pairAttendanceRestEntries(input: {
-  codes: AttendancePairingCode[];
-  entries: AttendancePairingEntry[];
-  restPairLookbackDays: number;
-}) {
+export function attendanceRestBalance(input: { codes: AttendancePairingCode[]; entries: AttendancePairingEntry[] }): AttendanceRestBalance {
   const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
-  const pairLimit = Math.max(1, Math.min(62, Math.floor(input.restPairLookbackDays)));
+  let duty = 0; let rest = 0;
+  for (const entry of input.entries) {
+    const code = codes.get(entry.code.toUpperCase());
+    if (code?.calculationRole === 'DUTY') duty += count(code.countValue);
+    else if (code?.calculationRole === 'REST') rest += count(code.countValue);
+  }
+  return { duty: rounded(duty), rest: rounded(rest), remaining: rounded(duty - rest) };
+}
+
+/**
+ * Phân bổ nghỉ bù vào ca Trực chỉ để phân loại báo cáo (nghỉ trực ngày thường/nghỉ/lễ):
+ * nghỉ bù theo thứ tự ngày lần lượt trừ dần ca Trực cũ nhất còn dư, cho phép tách lẻ
+ * 0,5. Phần không còn ca Trực để trừ được trả về `unallocated`.
+ */
+export function allocateAttendanceRest(input: { codes: AttendancePairingCode[]; entries: AttendancePairingEntry[] }) {
+  const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
   const timeline = input.entries
     .map((entry, index) => ({ entry, index, code: codes.get(entry.code.toUpperCase()) }))
     .filter((item): item is { entry: AttendancePairingEntry; index: number; code: AttendancePairingCode } => !!item.code)
     .sort((left, right) => left.entry.date.localeCompare(right.entry.date) || left.index - right.index);
-  const available: Partial<Record<DutyRole, PairingCandidate>> = {};
-  const pairs: Array<{ rest: AttendancePairingEntry; source?: AttendancePairingEntry }> = [];
-
-  for (let start = 0; start < timeline.length;) {
-    const date = timeline[start]!.entry.date;
-    let end = start + 1;
-    while (end < timeline.length && timeline[end]!.entry.date === date) end += 1;
-    const dayEntries = timeline.slice(start, end);
-
-    // Xử lý nghỉ trước rồi mới đưa ca của ngày này vào nguồn chờ, nên không thể ghép
-    // nghỉ bù với Trực/Tăng cường của chính ngày đó, bất kể thứ tự tick các ký hiệu.
-    for (const item of dayEntries) {
-      if (item.code.calculationRole !== 'REST') continue;
-      const candidates = (['DUTY', 'REINFORCEMENT'] as const)
-        .map((role) => available[role])
-        .filter((candidate): candidate is PairingCandidate => !!candidate)
-        .filter((candidate) => isMatchedDuty(candidate.role, item.code.restSource))
-        .filter((candidate) => calendarGap(item.entry.date, candidate.entry.date) <= pairLimit)
-        .sort((left, right) => right.entry.date.localeCompare(left.entry.date) || right.index - left.index);
-      const matched = candidates[0];
-      if (!matched) {
-        pairs.push({ rest: item.entry });
-        continue;
-      }
-      pairs.push({ rest: item.entry, source: matched.entry });
-      delete available[matched.role];
-      // Nghỉ bù ANY_DUTY đã chốt tại nguồn gần nhất thì các nguồn cũ hơn không còn
-      // là lựa chọn dự phòng cho một ngày nghỉ bù tiếp theo.
-      if (item.code.restSource === 'ANY_DUTY') {
-        for (const role of ['DUTY', 'REINFORCEMENT'] as const) {
-          const candidate = available[role];
-          if (candidate && candidate.entry.date <= matched.entry.date) delete available[role];
-        }
-      }
+  const duties = timeline.filter((item) => item.code.calculationRole === 'DUTY').map((item) => ({ entry: item.entry, left: count(item.code.countValue) }));
+  let cursor = 0;
+  const allocations: Array<{ rest: AttendancePairingEntry; value: number; sources: Array<{ entry: AttendancePairingEntry; value: number }>; unallocated: number }> = [];
+  for (const item of timeline) {
+    if (item.code.calculationRole !== 'REST') continue;
+    const value = count(item.code.countValue);
+    let need = value;
+    const sources: Array<{ entry: AttendancePairingEntry; value: number }> = [];
+    while (need > 1e-9 && cursor < duties.length) {
+      const duty = duties[cursor]!;
+      const used = Math.min(need, duty.left);
+      if (used > 0) { sources.push({ entry: duty.entry, value: rounded(used) }); duty.left = rounded(duty.left - used); need = rounded(need - used); }
+      if (duty.left <= 1e-9) cursor += 1;
     }
-
-    for (const item of dayEntries) {
-      if (item.code.calculationRole !== 'DUTY' && item.code.calculationRole !== 'REINFORCEMENT') continue;
-      // Một ca mới cùng loại thay thế nguồn cũ: không tích lũy rồi quay lại lấy ca xa hơn.
-      available[item.code.calculationRole] = { entry: item.entry, index: item.index, role: item.code.calculationRole };
-    }
-    start = end;
+    allocations.push({ rest: item.entry, value, sources, unallocated: rounded(Math.max(0, need)) });
   }
-  return { pairs, pairLimit };
+  return { allocations };
 }
+
+const formatNumber = (value: number) => String(rounded(value)).replace('.', ',');
 
 /**
  * Tính các biến nghiệp vụ theo từng người/tháng. Hàm thuần để có thể kiểm thử kế toán độc lập với CSDL/UI.
@@ -142,8 +122,8 @@ export function calculateAttendanceMetrics(input: {
   /** Ngày được quyết định là làm việc bù/hoán đổi, kể cả khi rơi vào cuối tuần. */
   workdayDates?: Iterable<string>;
   codes: MetricCode[];
+  /** Toàn bộ ký hiệu của nhân viên (mọi tháng, mọi khoa) để tính số dư nghỉ bù tích lũy. */
   entries: MetricEntry[];
-  restPairLookbackDays: number;
 }) {
   const holidaySet = new Set(input.holidayDates);
   const workdaySet = new Set(input.workdayDates ?? []);
@@ -151,7 +131,7 @@ export function calculateAttendanceMetrics(input: {
   const warnings: string[] = [];
   const codes = new Map(input.codes.map((code) => [code.code.toUpperCase(), code]));
   const currentDates = new Set(input.monthDates);
-  const currentEntries = input.entries.filter((entry) => currentDates.has(entry.date));
+  const currentEntries = input.entries.filter((entry) => entry.current !== false && currentDates.has(entry.date));
 
   for (const date of input.monthDates) {
     const kind = attendanceDayClass(date, holidaySet, workdaySet);
@@ -168,21 +148,16 @@ export function calculateAttendanceMetrics(input: {
   }
   values.SYS_NGAY_CONG = Math.max(0, values.SYS_NGAY_CONG);
 
-  const { pairs, pairLimit } = pairAttendanceRestEntries({ codes: input.codes, entries: input.entries, restPairLookbackDays: input.restPairLookbackDays });
-  for (const { rest, source } of pairs) {
-    if (!currentDates.has(rest.date)) continue;
-    const restCode = codes.get(rest.code.toUpperCase());
-    if (!restCode) continue;
-    const value = count(restCode.countValue);
-    if (!source) {
-      values.SYS_NGHI_BU_CHUA_GAN += value;
-      warnings.push(`${restCode.code} ngày ${formatDate(rest.date)} chưa tìm được ca trực phù hợp trong ${pairLimit} ngày trước`);
-      continue;
-    }
-    const dutyCode = codes.get(source.code.toUpperCase())!;
-    const kind = attendanceDayClass(source.date, holidaySet, workdaySet);
-    values[metricKey(dutyCode.calculationRole === 'DUTY' ? 'SYS_NGHI_TRUC' : 'SYS_NGHI_TANG_CUONG', kind)] += value;
+  const balance = attendanceRestBalance({ codes: input.codes, entries: input.entries });
+  values.SYS_TRUC_TICH_LUY = balance.duty;
+  values.SYS_NGHI_BU_TICH_LUY = balance.rest;
+  values.SYS_CON_DUOC_BU = balance.remaining;
+  for (const { rest, sources, unallocated } of allocateAttendanceRest({ codes: input.codes, entries: input.entries }).allocations) {
+    if (rest.current === false || !currentDates.has(rest.date)) continue;
+    values.SYS_NGHI_BU_CHUA_GAN += unallocated;
+    for (const source of sources) values[metricKey('SYS_NGHI_TRUC', attendanceDayClass(source.entry.date, holidaySet, workdaySet))] += source.value;
   }
+  if (balance.remaining < 0) warnings.push(`Tổng nghỉ bù tích lũy (${formatNumber(balance.rest)}) đang vượt tổng ca Trực tích lũy (${formatNumber(balance.duty)}); cần bỏ bớt ${formatNumber(-balance.remaining)} ngày nghỉ bù`);
 
   for (const key of Object.keys(values)) values[key] = rounded(values[key]);
   return { values, warnings };

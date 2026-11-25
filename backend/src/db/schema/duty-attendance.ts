@@ -9,7 +9,7 @@ export type DutyAttendanceDataType = 'NUMBER' | 'TEXT';
 /** Vai trò nghiệp vụ của ký hiệu, dùng cho công thức chấm công theo ngày thay vì suy đoán từ mã T/N/TC. */
 export const DUTY_ATTENDANCE_CALCULATION_ROLES = ['NONE', 'DUTY', 'REINFORCEMENT', 'REST'] as const;
 export type DutyAttendanceCalculationRole = (typeof DUTY_ATTENDANCE_CALCULATION_ROLES)[number];
-/** Ký hiệu nghỉ bù có thể dò ca trực thường, tăng cường hoặc bất kỳ ca trực gần nhất. */
+/** Trường cũ của ký hiệu nghỉ bù, không còn dùng khi tính: nghỉ bù trừ theo số lượng vào tổng ca Trực tích lũy. */
 export const DUTY_ATTENDANCE_REST_SOURCES = ['ANY_DUTY', 'DUTY', 'REINFORCEMENT'] as const;
 export type DutyAttendanceRestSource = (typeof DUTY_ATTENDANCE_REST_SOURCES)[number];
 

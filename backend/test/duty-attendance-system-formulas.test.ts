@@ -50,18 +50,23 @@ test('cột công thức nghiệp vụ mặc định và công thức cũ cùng 
     { userId: 1, workDate: '2026-10-11', code: 'T' },
     { userId: 1, workDate: '2026-10-12', code: 'N' },
     { userId: 1, workDate: '2026-10-13', code: 'TC' },
+    // Nghỉ bù được đặt trước ca Trực ngày 15: chỉ cần tổng nghỉ ≤ tổng Trực.
     { userId: 1, workDate: '2026-10-14', code: 'N' },
+    { userId: 1, workDate: '2026-10-15', code: 'T' },
   ] });
+  await assert.rejects(service.save(actor, { departmentId: 10, entries: [{ userId: 1, workDate: '2026-10-16', code: 'N' }] }), /vượt tổng ca Trực tích lũy/, 'Tăng cường không được tính để nghỉ bù');
 
   const beforeRetiringT = await service.month(actor, { departmentId: 10, month: '2026-10' });
   assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGAY_CONG, 20, '22 ngày làm việc trong tháng, trừ hai ngày nghỉ bù');
   assert.equal(beforeRetiringT.rowValues['1']?.NGAY_CONG, 20, 'cột Ngày công mặc định dùng biến SYS_NGAY_CONG');
   assert.equal(beforeRetiringT.rowValues['1']?.SYS_TRUC_NGAY_LE, 1, 'lễ trùng Chủ nhật ưu tiên phân loại ngày lễ');
-  assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGHI_TRUC_NGAY_LE, 1, 'nghỉ bù lấy loại của ca trực trước đó');
+  assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGHI_TRUC_NGAY_LE, 1, 'nghỉ bù trừ vào ca Trực cũ nhất còn dư (ngày lễ)');
+  assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGHI_TRUC_NGAY_THUONG, 1);
+  assert.equal(beforeRetiringT.rowValues['1']?.SYS_CON_DUOC_BU, 0);
   assert.equal(beforeRetiringT.rowValues['1']?.SYS_TANG_CUONG_NGAY_THUONG, 1);
-  assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGHI_TANG_CUONG_NGAY_THUONG, 1);
-  assert.equal(beforeRetiringT.rowValues['1']?.[oldFormula.key], 2, 'công thức cũ theo mã ký hiệu tiếp tục hoạt động');
-  assert.equal(beforeRetiringT.rowValues['1']?.[derivedFormula.key], 4, 'công thức mới có thể kết hợp các biến hệ thống');
+  assert.equal(beforeRetiringT.rowValues['1']?.SYS_NGHI_TANG_CUONG_NGAY_THUONG, 0);
+  assert.equal(beforeRetiringT.rowValues['1']?.[oldFormula.key], 3, 'công thức cũ theo mã ký hiệu tiếp tục hoạt động');
+  assert.equal(beforeRetiringT.rowValues['1']?.[derivedFormula.key], 3, 'công thức mới có thể kết hợp các biến hệ thống');
   assert.deepEqual(beforeRetiringT.calculationWarnings, {});
   const exported = await service.exportExcel(actor, '2026-10', 10); const workbook = new ExcelJS.Workbook();
   const bytes = exported.buffer.buffer.slice(exported.buffer.byteOffset, exported.buffer.byteOffset + exported.buffer.byteLength) as ArrayBuffer; await workbook.xlsx.load(bytes);
@@ -76,6 +81,7 @@ test('cột công thức nghiệp vụ mặc định và công thức cũ cùng 
   const afterRetiringT = await service.month(actor, { departmentId: 10, month: '2026-10' });
   assert.equal(afterRetiringT.codes.some((code) => code.code === 'T'), false, 'mã ngừng dùng không còn là lựa chọn nhập mới');
   assert.equal(afterRetiringT.entries['1:2026-10-11']?.code, 'T', 'ký hiệu lịch sử không bị ghi đè hay xóa');
-  assert.equal(afterRetiringT.rowValues['1']?.SYS_NGHI_TRUC_NGAY_LE, 1, 'nghỉ bù vẫn dò được ca trực lịch sử đã ngừng dùng');
+  assert.equal(afterRetiringT.rowValues['1']?.SYS_NGHI_TRUC_NGAY_LE, 1, 'nghỉ bù vẫn trừ vào ca trực lịch sử đã ngừng dùng');
+  assert.equal(afterRetiringT.rowValues['1']?.SYS_CON_DUOC_BU, 0, 'mã ngừng dùng vẫn được tính vào số dư');
   assert.equal(rest.calculationRole, 'REST');
 });
