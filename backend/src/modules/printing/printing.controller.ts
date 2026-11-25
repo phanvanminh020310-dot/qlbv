@@ -21,7 +21,7 @@ import { AdvancedQueryDto } from '../../common/dto/query.dto';
 import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 import type { PrintDocument } from '../../db/schema/printing';
 import { PrintingService } from './printing.service';
-import { AUTO_PARAMS, PRINT_SQL_PERMISSION, PrintSqlService, normalizeSqlSource } from './print-sql-source';
+import { AUTO_PARAMS, PRINT_SQL_PERMISSION, PrintSqlService, buildSqlExport, normalizeSqlSource } from './print-sql-source';
 import {
   DEFAULT_FONT_FAMILY,
   FONT_VARIANTS,
@@ -257,6 +257,27 @@ export class PrintingController {
       queries: out.queries.map((q) => ({ ...q, rows: out.data.ds[q.key] ?? [] })),
       params: out.data.params,
     };
+  }
+
+  @Post('sql/export')
+  @RequirePermissions(PRINT_SQL_PERMISSION)
+  @ApiOperation({ summary: 'Xuất Excel (mỗi truy vấn một sheet) hoặc CSV dữ liệu nguồn SQL (tối đa 5.000 dòng mỗi truy vấn)' })
+  async exportSql(
+    @Body() body: { sqlSource?: unknown; params?: Record<string, unknown>; format?: string; queryKey?: string },
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const source = normalizeSqlSource(body.sqlSource);
+    if (!source) throw new BadRequestException('Chưa có truy vấn nào');
+    const format = body.format === 'csv' ? 'csv' : 'xlsx';
+    const out = await this.sqlSource.run(user, source, body.params ?? {}, { meta: client, purpose: 'export' });
+    const file = await buildSqlExport(out, format, typeof body.queryKey === 'string' ? body.queryKey : undefined);
+    res.set({
+      'Content-Type': file.mime,
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(file.fileName)}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    });
+    return new StreamableFile(file.buffer);
   }
 
   @Get('sql/catalog')

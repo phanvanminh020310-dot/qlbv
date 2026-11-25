@@ -20,6 +20,7 @@
  * tối đa 5000 dòng mỗi truy vấn; soạn SQL cần quyền `print.datasource.sql`; mọi lần chạy đều ghi audit.
  */
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
 import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 import { DbService } from '../../db/db.service';
 import { AuditService } from '../audit/audit.service';
@@ -353,11 +354,12 @@ export class PrintSqlService {
       userId: user.id,
       username: user.username,
       fullName: user.fullName,
-      action: opts.purpose === 'test' ? 'SQL_TEST' : 'SQL_RENDER',
+      action: opts.purpose === 'test' ? 'SQL_TEST' : opts.purpose === 'export' ? 'SQL_EXPORT' : 'SQL_RENDER',
       module: 'PRINT',
       entity: 'print_template',
       entityId: opts.templateId ? String(opts.templateId) : '',
-      description: opts.purpose === 'test' ? 'Chạy thử nguồn dữ liệu SQL của mẫu in' : 'Kết xuất mẫu in có nguồn dữ liệu SQL',
+      description: opts.purpose === 'test' ? 'Chạy thử nguồn dữ liệu SQL của mẫu in'
+        : opts.purpose === 'export' ? 'Xuất Excel/CSV dữ liệu nguồn SQL của mẫu in' : 'Kết xuất mẫu in có nguồn dữ liệu SQL',
       afterData: { queries: source.queries.map((q) => ({ key: q.key, sql: q.sql.slice(0, 20_000) })), params, ...detail },
       departmentId: user.departmentId,
       ip: opts.meta?.ip ?? '',
@@ -373,4 +375,67 @@ function normalizeSqlSourceLoose(input: unknown): PrintSqlSource | null {
   } catch {
     return { queries: [{ key: '__invalid__', sql: JSON.stringify(input) }] };
   }
+}
+
+/* ------------------------------------------------------------ Xuất dữ liệu */
+
+function cellValue(v: unknown): string | number | boolean | Date | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number' || typeof v === 'boolean' || v instanceof Date) return v;
+  if (typeof v === 'bigint') return Number(v);
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+function csvCell(v: unknown): string {
+  const c = cellValue(v);
+  if (c === null) return '';
+  const s = c instanceof Date ? c.toISOString() : String(c);
+  // Chống CSV/Excel formula injection
+  const safe = /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? `'${s}` : s;
+  return /[",\n\r;]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/** Xuất kết quả nguồn SQL: Excel (mỗi truy vấn một sheet) hoặc CSV (một truy vấn). */
+export async function buildSqlExport(
+  result: PrintSqlResult,
+  format: 'xlsx' | 'csv',
+  queryKey?: string,
+): Promise<{ buffer: Buffer; fileName: string; mime: string }> {
+  const stamp = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const columnsOf = (q: PrintSqlResult['queries'][number]) => {
+    const rows = result.data.ds[q.key] ?? [];
+    return q.columns.length ? q.columns : rows[0] ? Object.keys(rows[0]) : [];
+  };
+  if (format === 'csv') {
+    const q = result.queries.find((x) => x.key === queryKey) ?? result.queries[0];
+    if (!q) throw new BadRequestException('Không có truy vấn để xuất');
+    const cols = columnsOf(q);
+    const lines = [cols.map(csvCell).join(','), ...(result.data.ds[q.key] ?? []).map((r) => cols.map((c) => csvCell(r[c])).join(','))];
+    return { buffer: Buffer.from('\uFEFF' + lines.join('\r\n'), 'utf8'), fileName: `nguon_sql_${q.key}_${stamp}.csv`, mime: 'text/csv; charset=utf-8' };
+  }
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'QLBS';
+  const used = new Set<string>();
+  for (const q of result.queries) {
+    let name = (q.label || q.key).replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31) || q.key.slice(0, 31);
+    for (let i = 2; used.has(name.toLowerCase()); i++) name = `${name.slice(0, 27)} (${i})`;
+    used.add(name.toLowerCase());
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    const cols = columnsOf(q);
+    const rows = result.data.ds[q.key] ?? [];
+    ws.columns = cols.map((c) => ({
+      header: c,
+      key: c,
+      width: Math.min(60, Math.max(10, c.length + 2, ...rows.slice(0, 200).map((r) => String(cellValue(r[c]) ?? '').length + 2))),
+    }));
+    for (const r of rows) ws.addRow(cols.map((c) => cellValue(r[c])));
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    if (cols.length) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    if (q.truncated) ws.addRow([`… đã cắt ở ${q.rowCount} dòng (giới hạn ${PRINT_SQL_MAX_ROWS})`]).font = { italic: true, color: { argb: 'FFB45309' } };
+  }
+  if (!result.queries.length) wb.addWorksheet('Trống');
+  const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+  return { buffer, fileName: `nguon_sql_${stamp}.xlsx`, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 }

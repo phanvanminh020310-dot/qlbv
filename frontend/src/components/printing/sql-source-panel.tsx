@@ -1,13 +1,13 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Database, Play, Plus, Table2, Trash2, Type as TypeIcon } from 'lucide-react';
+import { Database, FileDown, FileSpreadsheet, Play, Plus, Table2, Trash2, Type as TypeIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Select } from '@/components/ui/input';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, downloadFile } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { nextId, type PrintElement } from './print-types';
 
@@ -149,6 +149,22 @@ export function SqlSourceDialog({
     }
   };
 
+  const [exporting, setExporting] = useState<'xlsx' | 'csv' | null>(null);
+  const exportData = async (format: 'xlsx' | 'csv') => {
+    setExporting(format);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      await downloadFile('/print/sql/export', format === 'csv' ? `nguon_sql_${q?.key ?? 'du_lieu'}_${stamp}.csv` : `nguon_sql_${stamp}.xlsx`, {
+        method: 'POST',
+        body: { sqlSource: draft, params: testParams, format, queryKey: q?.key },
+      });
+    } catch (e) {
+      toast.error((e as Error).message || 'Không xuất được dữ liệu');
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const activeResult = result?.queries.find((x) => x.key === q?.key);
   const columnsOf = (key: string): string[] => {
     const r = result?.queries.find((x) => x.key === key);
@@ -274,6 +290,16 @@ export function SqlSourceDialog({
 
           <div className="flex flex-wrap items-center gap-2">
             {canAuthor ? <Button onClick={test} loading={running} disabled={problems.length > 0}><Play /> Chạy thử (Ctrl+Enter)</Button> : null}
+            {canAuthor ? (
+              <>
+                <Button variant="outline" onClick={() => exportData('xlsx')} loading={exporting === 'xlsx'} disabled={problems.length > 0 || !!exporting} title="Mỗi truy vấn một sheet, tối đa 5.000 dòng/truy vấn">
+                  <FileSpreadsheet /> Xuất Excel
+                </Button>
+                <Button variant="outline" onClick={() => exportData('csv')} loading={exporting === 'csv'} disabled={problems.length > 0 || !!exporting || !q} title="Xuất truy vấn đang chọn ra CSV (UTF-8)">
+                  <FileDown /> CSV{q ? ` “${q.key}”` : ''}
+                </Button>
+              </>
+            ) : null}
             {problems.length ? <span className="text-xs text-red-600">{problems[0]}</span> : null}
             {q && result ? (
               <>

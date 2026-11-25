@@ -132,3 +132,33 @@ test('3 mẫu in mặc định chạy được SQL theo phạm vi khoa, kết xu
     /password_hash/,
   );
 });
+
+test('xuất Excel/CSV dữ liệu nguồn SQL: BOM, chống formula injection, mỗi truy vấn một sheet', async () => {
+  const { buildSqlExport } = await import('../src/modules/printing/print-sql-source');
+  const ExcelJS = ((await import('exceljs')) as unknown as { default: typeof import('exceljs') }).default;
+  const result = {
+    data: {
+      ds: { a: [{ ten: '=HYPERLINK("x")', so: -5, ghi_chu: 'có, dấu "nháy"' }], b: [{ x: 1 }] },
+      one: {},
+      params: {},
+    },
+    rows: [],
+    queries: [
+      { key: 'a', label: 'Danh sách/việc', columns: ['ten', 'so', 'ghi_chu'], rowCount: 1, truncated: false, ms: 1 },
+      { key: 'b', label: 'Danh sách/việc', columns: [], rowCount: 1, truncated: true, ms: 1 },
+    ],
+  };
+  const csv = await buildSqlExport(result, 'csv', 'a');
+  const text = csv.buffer.toString('utf8');
+  assert.ok(text.startsWith('\uFEFFten,so,ghi_chu\r\n'));
+  assert.ok(text.includes(`"'=HYPERLINK(""x"")"`), 'công thức bị vô hiệu hoá');
+  assert.ok(text.includes(',-5,'), 'số âm giữ nguyên');
+  assert.ok(text.includes('"có, dấu ""nháy"""'));
+  const xlsx = await buildSqlExport(result, 'xlsx');
+  assert.match(xlsx.fileName, /\.xlsx$/);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(xlsx.buffer as unknown as ArrayBuffer);
+  assert.deepEqual(wb.worksheets.map((w) => w.name), ['Danh sách việc', 'Danh sách việc (2)']);
+  assert.equal(wb.worksheets[1]!.getCell('A1').value, 'x');
+  assert.match(String(wb.worksheets[1]!.getCell('A3').value), /đã cắt/);
+});
