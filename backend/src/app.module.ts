@@ -43,6 +43,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { StudioModule } from './modules/studio/studio.module';
 import { KioskModule } from './modules/kiosk/kiosk.module';
 import { SqlConsoleModule } from './modules/sql-console/sql-console.module';
+import { TasksModule } from './modules/tasks/tasks.module';
 
 const envFile = [
   path.resolve(process.cwd(), '.env'),
@@ -95,6 +96,7 @@ const envFile = [
     KioskModule,
     // Công cụ kỹ thuật chỉ dành cho quản trị hệ thống
     SqlConsoleModule,
+    TasksModule,
     // Kiểm tra tình trạng
     HealthModule,
   ],

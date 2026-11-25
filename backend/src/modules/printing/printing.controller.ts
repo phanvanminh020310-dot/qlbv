@@ -16,11 +16,12 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
-import { Audit, CurrentUser, RequirePermissions } from '../../common/decorators';
+import { Audit, ClientInfo, CurrentUser, RequirePermissions } from '../../common/decorators';
 import { AdvancedQueryDto } from '../../common/dto/query.dto';
-import type { AccessContext } from '../../common/types/access-context';
+import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 import type { PrintDocument } from '../../db/schema/printing';
 import { PrintingService } from './printing.service';
+import { AUTO_PARAMS, PRINT_SQL_PERMISSION, PrintSqlService, normalizeSqlSource } from './print-sql-source';
 import {
   DEFAULT_FONT_FAMILY,
   FONT_VARIANTS,
@@ -35,13 +36,18 @@ interface RenderBody {
   rows?: Record<string, unknown>[];
   /** Thiết kế trực tiếp (trình thiết kế gửi lên để xem trước) */
   document?: PrintDocument;
+  /** Giá trị tham số cho nguồn dữ liệu SQL của mẫu */
+  params?: Record<string, unknown>;
 }
 
 @ApiTags('Thiết kế bản in')
 @ApiBearerAuth()
 @Controller('print')
 export class PrintingController {
-  constructor(private readonly service: PrintingService) {}
+  constructor(
+    private readonly service: PrintingService,
+    private readonly sqlSource: PrintSqlService,
+  ) {}
 
   /* -------------------------------------------------------------- Mẫu in */
 
@@ -189,10 +195,18 @@ export class PrintingController {
   @Post('preview')
   @RequirePermissions('print.render.view')
   @ApiOperation({ summary: 'Xem trước bản in từ thiết kế đang chỉnh (trả về PDF)' })
-  async preview(@Body() body: RenderBody, @Res({ passthrough: true }) res: Response) {
+  async preview(
+    @Body() body: RenderBody,
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const document = body.document;
     if (!document) return { error: 'Thiếu thiết kế bản in (document)' };
-    const result = await this.service.renderRaw(document, body.data ?? {}, body.rows ?? []);
+    // SQL trong thiết kế chưa lưu chỉ chạy cho người có quyền soạn nguồn dữ liệu SQL
+    const sqlContext = this.sqlSource.canAuthor(user) ? { user, params: body.params, meta: client } : undefined;
+    const resolved = await this.service.resolveSqlData(document, body.data ?? {}, body.rows ?? [], sqlContext, null);
+    const result = await this.service.renderRaw(document, resolved.data, resolved.rows);
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'inline; filename="xem-truoc.pdf"',
@@ -208,12 +222,15 @@ export class PrintingController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: RenderBody,
     @Query('download') download: string | undefined,
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { template, result } = await this.service.renderTemplate(
       id,
       body.data ?? {},
       body.rows ?? [],
+      { user, params: body.params, meta: client },
     );
     res.set({
       'Content-Type': 'application/pdf',
@@ -221,6 +238,32 @@ export class PrintingController {
       'X-Print-Pages': String(result.pages),
     });
     return new StreamableFile(result.buffer);
+  }
+
+  /* ------------------------------------------------------ Nguồn dữ liệu SQL */
+
+  @Post('sql/test')
+  @RequirePermissions(PRINT_SQL_PERMISSION)
+  @ApiOperation({ summary: 'Chạy thử nguồn dữ liệu SQL của mẫu in (tối đa 100 dòng mỗi truy vấn)' })
+  async testSql(
+    @Body() body: { sqlSource?: unknown; params?: Record<string, unknown> },
+    @CurrentUser() user: AccessContext,
+    @ClientInfo() client: ClientMeta,
+  ) {
+    const source = normalizeSqlSource(body.sqlSource);
+    if (!source) throw new BadRequestException('Chưa có truy vấn nào');
+    const out = await this.sqlSource.run(user, source, body.params ?? {}, { maxRows: 100, meta: client, purpose: 'test' });
+    return {
+      queries: out.queries.map((q) => ({ ...q, rows: out.data.ds[q.key] ?? [] })),
+      params: out.data.params,
+    };
+  }
+
+  @Get('sql/catalog')
+  @RequirePermissions(PRINT_SQL_PERMISSION)
+  @ApiOperation({ summary: 'Danh mục view/bảng gợi ý khi soạn SQL cho mẫu in' })
+  sqlCatalog() {
+    return this.service.sqlCatalog().then((items) => ({ items, autoParams: AUTO_PARAMS }));
   }
 
   /** Mẫu in mặc định theo loại chứng từ — dùng cho các nút "In" ở phân hệ khác */
@@ -233,8 +276,16 @@ export class PrintingController {
       departmentId ? Number(departmentId) : null,
     );
     if (!found) return { found: false, docType };
+    const source = (() => {
+      try {
+        return normalizeSqlSource((found.document as { sqlSource?: unknown }).sqlSource);
+      } catch {
+        return null;
+      }
+    })();
     return {
       found: true,
+      params: source?.params ?? [],
       id: found.id,
       code: found.code,
       name: found.name,

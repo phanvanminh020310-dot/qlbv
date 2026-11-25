@@ -5,10 +5,11 @@
 import { Module } from '@nestjs/common';
 import { PrintingController } from './printing.controller';
 import { PrintingService } from './printing.service';
+import { PrintSqlService } from './print-sql-source';
 
 @Module({
   controllers: [PrintingController],
-  providers: [PrintingService],
-  exports: [PrintingService],
+  providers: [PrintingService, PrintSqlService],
+  exports: [PrintingService, PrintSqlService],
 })
 export class PrintingModule {}

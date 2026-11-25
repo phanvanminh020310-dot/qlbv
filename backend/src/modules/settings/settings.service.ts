@@ -297,6 +297,9 @@ export function defaultSettings(): SettingItem[] {
     { key: 'notify.channel.appUrl', value: '', group: 'notification', label: 'Địa chỉ web hệ thống (ghép vào liên kết trong tin nhắn)', description: 'Ví dụ: http://192.168.1.10:3000 — bỏ trống thì tin nhắn không kèm liên kết' },
     { key: 'telegram.enabled', value: false, group: 'notification', label: 'Gửi thông báo qua Telegram Bot', valueType: 'boolean' },
     { key: 'telegram.botToken', value: '', group: 'notification', label: 'Telegram Bot Token', valueType: 'password', description: 'Tạo miễn phí bằng /newbot tại @BotFather trên Telegram' },
+    { key: 'telegram.linkByPhone', value: true, group: 'notification', label: 'Cho phép liên kết Telegram bằng số điện thoại đã khai báo', valueType: 'boolean', description: 'Nhân viên mở bot, bấm “Chia sẻ số điện thoại”; nếu trùng số điện thoại trong hồ sơ người dùng thì tự liên kết để nhận thông báo' },
+    { key: 'task.reminder.hoursBefore', value: 24, group: 'notification', label: 'Nhắc hạn công việc trước (giờ)', valueType: 'number', description: 'Gởi thông báo web + Telegram cho người thực hiện khi công việc sắp đến hạn; 0 = tắt nhắc trước hạn' },
+    { key: 'task.overdue.notify', value: true, group: 'notification', label: 'Cảnh báo công việc quá hạn', valueType: 'boolean', description: 'Gởi một lần cho người thực hiện và người giao khi công việc quá hạn' },
 
     // Chấm công
     {

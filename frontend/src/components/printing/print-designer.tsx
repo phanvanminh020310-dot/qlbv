@@ -95,6 +95,8 @@ import { FontManager } from './font-manager';
 import { cssFontFamily, usePrintFonts } from './print-fonts';
 import { buildSampleData } from './print-format';
 import { PreviewDialog } from './preview-dialog';
+import { SqlSourceDialog, SqlSourceSummary, defaultParamValues, readSqlSource, type SqlSource } from './sql-source-panel';
+import { useAuth } from '@/lib/auth';
 import {
   DEFAULT_FONT,
   ELEMENT_TYPES,
@@ -133,7 +135,7 @@ interface DesignerProps {
   canManageFonts?: boolean;
 }
 
-type LeftTab = 'tools' | 'fields' | 'layers' | 'pages' | 'json';
+type LeftTab = 'tools' | 'fields' | 'layers' | 'pages' | 'sql' | 'json';
 type RibbonTab = 'home' | 'insert' | 'arrange' | 'page' | 'view';
 
 const BASE_PX_PER_MM = 96 / 25.4;
@@ -237,6 +239,9 @@ export function PrintDesigner({
   const [helpOpen, setHelpOpen] = useState(false);
   const [previewData, setPreviewData] = useState<string>(() => JSON.stringify(buildSampleData(normalizeDocument(initial)), null, 2));
   const [jsonText, setJsonText] = useState('');
+  const canAuthorSql = useAuth((s) => s.can)('print.datasource.sql');
+  const [sqlOpen, setSqlOpen] = useState(false);
+  const [sqlParams, setSqlParams] = useState<Record<string, string>>(() => defaultParamValues(readSqlSource(normalizeDocument(initial))));
   const [fieldQuery, setFieldQuery] = useState('');
   const [withLabel, setWithLabel] = useState(true);
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
@@ -1252,13 +1257,14 @@ export function PrintDesigner({
         {/* Cột trái */}
         {showLeft ? (
           <div className="flex w-64 shrink-0 flex-col border-r bg-[var(--card)]">
-            <div className="grid shrink-0 grid-cols-5 border-b">
+            <div className="grid shrink-0 grid-cols-6 border-b">
               {(
                 [
                   ['tools', 'Công cụ', <Square key="i" className="size-3.5" />],
                   ['fields', 'Trường', <Database key="i" className="size-3.5" />],
                   ['layers', 'Đối tượng', <Layers key="i" className="size-3.5" />],
                   ['pages', 'Trang', <Files key="i" className="size-3.5" />],
+                  ['sql', 'SQL', <Database key="i" className="size-3.5" />],
                   ['json', 'JSON', <Braces key="i" className="size-3.5" />],
                 ] as [LeftTab, string, ReactNode][]
               ).map(([k, l, icon]) => (
@@ -1436,6 +1442,7 @@ export function PrintDesigner({
                 </div>
               ) : null}
 
+              {leftTab === 'sql' ? <SqlSourceSummary source={readSqlSource(doc)} canAuthor={canAuthorSql} onOpen={() => setSqlOpen(true)} /> : null}
               {leftTab === 'json' ? (
                 <div className="flex h-full flex-col gap-2">
                   <textarea
@@ -1681,7 +1688,23 @@ export function PrintDesigner({
         </div>
       ) : null}
 
-      <PreviewDialog open={previewOpen} onClose={() => setPreviewOpen(false)} doc={doc} data={previewData} setData={setPreviewData} title={title} />
+      <PreviewDialog open={previewOpen} onClose={() => setPreviewOpen(false)} doc={doc} data={previewData} setData={setPreviewData} title={title} params={sqlParams} />
+      <SqlSourceDialog
+        open={sqlOpen}
+        onClose={() => setSqlOpen(false)}
+        source={readSqlSource(doc)}
+        canAuthor={canAuthorSql}
+        readOnly={readOnly}
+        testParams={sqlParams}
+        setTestParams={setSqlParams}
+        onChange={(next: SqlSource | null) => {
+          const { sqlSource: _old, ...rest } = docRef.current;
+          void _old;
+          apply(next ? { ...rest, sqlSource: next } : (rest as PrintDocument));
+          setSqlParams((cur) => ({ ...defaultParamValues(next), ...cur }));
+        }}
+        onInsert={(els) => addToPage(els)}
+      />
       <FontManager open={fontsOpen} onClose={() => setFontsOpen(false)} canEdit={canManageFonts && !readOnly} />
       {infoPanel ? (
         <Dialog

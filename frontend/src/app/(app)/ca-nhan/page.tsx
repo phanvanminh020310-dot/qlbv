@@ -91,7 +91,7 @@ function TelegramCard() {
   const status = useQuery({
     queryKey: ['telegram-status'],
     queryFn: () =>
-      apiFetch<{ enabled: boolean; botUsername: string; linked: boolean; deepLink: string }>(
+      apiFetch<{ enabled: boolean; botUsername: string; linked: boolean; deepLink: string; linkByPhone?: boolean; hasPhone?: boolean }>(
         '/notify-channels/telegram/status',
       ),
   });
@@ -142,8 +142,23 @@ function TelegramCard() {
         ) : (
           <>
             <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-              Nhận thông báo ký số, phân công ca trực và thông tin bệnh viện tức thì qua ứng dụng Telegram trên điện thoại cá nhân.
+              Nhận thông báo ký số, phân công ca trực, giao việc — nhắc hạn công việc và thông tin bệnh viện tức thì qua ứng dụng Telegram trên điện thoại cá nhân.
             </p>
+
+            {!st.linked && st.linkByPhone ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs leading-relaxed text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <b>Cách nhanh nhất:</b> mở bot{st.botUsername ? <> <span className="font-mono">@{st.botUsername}</span></> : null}, bấm <b>Bắt đầu</b> rồi chọn
+                {' '}<b>“📱 Chia sẻ số điện thoại để liên kết”</b>. Nếu số điện thoại Telegram trùng với số trong hồ sơ của bạn, hệ thống tự liên kết — không cần mã.
+                {st.hasPhone === false ? (
+                  <div className="mt-1 font-medium text-amber-700 dark:text-amber-300">Hồ sơ của bạn chưa có số điện thoại — hãy cập nhật số điện thoại ở phần thông tin cá nhân (hoặc dùng mã liên kết bên dưới).</div>
+                ) : null}
+                {st.deepLink ? (
+                  <Button size="sm" variant="outline" className="mt-2 text-xs" onClick={() => window.open(st.deepLink, '_blank')}>
+                    <Send className="size-3.5 mr-1" /> Mở bot Telegram
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
 
             {createCode.data && !st.linked ? (
               <div className="space-y-2.5 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/50 dark:bg-sky-950/30 p-3">

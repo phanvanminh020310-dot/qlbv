@@ -27,6 +27,7 @@ export function PreviewDialog({
   data,
   setData,
   title,
+  params,
 }: {
   open: boolean;
   onClose: () => void;
@@ -34,6 +35,8 @@ export function PreviewDialog({
   data: string;
   setData: (json: string) => void;
   title?: string;
+  /** Giá trị tham số cho nguồn dữ liệu SQL (nếu mẫu có) */
+  params?: Record<string, string>;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -57,7 +60,7 @@ export function PreviewDialog({
       try {
         const res = await apiFetch<Response>('/print/preview', {
           method: 'POST',
-          body: { document: doc, data: parsed, rows: Array.isArray(parsed.rows) ? parsed.rows : [] },
+          body: { document: doc, data: parsed, rows: Array.isArray(parsed.rows) ? parsed.rows : [], params: params ?? {} },
           raw: true,
         });
         const blob = await res.blob();
@@ -73,7 +76,7 @@ export function PreviewDialog({
         setLoading(false);
       }
     },
-    [doc],
+    [doc, params],
   );
 
   useEffect(() => {

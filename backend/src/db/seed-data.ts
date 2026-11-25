@@ -202,6 +202,12 @@ export const PERMISSIONS: PermissionSeed[] = [
   P('duty-attendance', 'update', 'Nhập bảng chấm công trực', 'Nhập/sửa ô chấm công của nhân viên thuộc đúng khoa/phòng được gán'),
   P('duty-attendance', 'export', 'Xuất bảng chấm công trực', 'Xuất bảng chấm công tháng ra Excel, Word hoặc PDF'),
   P('duty-attendance', 'catalog.manage', 'Quản lý danh mục chấm công', 'Khai báo ký hiệu chấm công và ngày nghỉ/lễ để tính NN, NT'),
+  // Quản lý công việc — mọi nhân viên thao tác việc liên quan đến mình; quyền dưới đây dành cho người giao/quản lý.
+  P('task', 'assign', 'Giao việc / tạo dự án', 'Giao việc, tạo dự án và mẫu công việc cho nhân viên trong phạm vi khoa/phòng'),
+  P('task', 'manage', 'Quản lý công việc của khoa/phòng', 'Xem, duyệt, trả lại, hủy, sửa mọi công việc thuộc phạm vi khoa/phòng'),
+  P('task', 'report', 'Xem báo cáo công việc', 'Xem tổng quan, thống kê, hiệu suất công việc theo phạm vi'),
+  P('task', 'export', 'Xuất báo cáo công việc', 'Xuất Excel/CSV/Word/PDF báo cáo công việc'),
+  P('print.datasource', 'sql', 'Soạn nguồn dữ liệu SQL cho bản in', 'Soạn và chạy truy vấn SQL chỉ đọc làm nguồn dữ liệu bản in'),
 ];
 
 /* ------------------------------------------------------------------------ Vai trò */
@@ -256,7 +262,7 @@ export const ROLES: RoleSeed[] = [
       'hsba.workflow.view', 'hsba.workflow.create', 'hsba.workflow.update', 'hsba.workflow.delete',
       'report.template.view', 'report.template.create', 'report.template.update', 'report.template.delete',
       'print.template.view', 'print.template.create', 'print.template.update', 'print.template.delete', 'print.template.publish',
-      'print.render.view', 'print.render.export',
+      'print.render.view', 'print.render.export', 'print.datasource.sql',
       // Tiện ích & tác vụ nền
       'utility.view', 'utility.create', 'utility.update', 'utility.delete',
       'job.view', 'job.create', 'job.update', 'job.delete', 'job.run',
@@ -306,6 +312,8 @@ export const ROLES: RoleSeed[] = [
       'asset.report.view',
       'print.render.view', 'print.render.export',
       'utility.view',
+      // Giao việc & theo dõi hiệu suất toàn viện
+      'task.assign', 'task.manage', 'task.report', 'task.export',
     ],
   },
   {
@@ -419,6 +427,8 @@ export const ROLES: RoleSeed[] = [
       'asset.inventory.view', 'asset.inventory.scan',
       'asset.report.view',
       'utility.view', 'file.upload',
+      // Giao việc & duyệt kết quả trong khoa
+      'task.assign', 'task.manage', 'task.report', 'task.export',
     ],
   },
 
@@ -498,6 +508,17 @@ export const ROLES: RoleSeed[] = [
     color: '#0f766e',
     isSystem: true,
     permissions: ['staff-learning.view', 'staff-learning.register', 'staff-learning.export'],
+  },
+  {
+    code: 'QUAN_LY_CONG_VIEC',
+    name: 'Quản lý giao việc khoa/phòng',
+    description:
+      'Giao việc, tạo dự án, duyệt/trả lại/hủy công việc và xem báo cáo hiệu suất của nhân viên trong đúng các khoa/phòng được gán.',
+    dataScope: 'DEPT',
+    priority: 32,
+    color: '#2563eb',
+    isSystem: true,
+    permissions: ['task.assign', 'task.manage', 'task.report', 'task.export', 'print.render.view', 'print.render.export'],
   },
   {
     code: 'NGUOI_XEP_LICH_TRUC_KHOA',

@@ -11,7 +11,28 @@ import { SettingsModule } from '../settings/settings.module';
 import { NotifyChannelsController } from './notify-channels.controller';
 import { TelegramService } from './telegram.service';
 
-export type NotifyEventKind = 'hsba.nextStep' | 'hsba.returned' | 'hsba.completed';
+export type NotifyEventKind =
+  | 'hsba.nextStep'
+  | 'hsba.returned'
+  | 'hsba.completed'
+  // Quản lý công việc
+  | 'task.assigned'
+  | 'task.statusChanged'
+  | 'task.submitted'
+  | 'task.approved'
+  | 'task.returned'
+  | 'task.cancelled'
+  | 'task.mention'
+  | 'task.dueSoon'
+  | 'task.overdue'
+  | 'project.memberAdded';
+
+/** Nhãn liên kết trong tin nhắn ngoài theo loại sự kiện. */
+export function externalLinkLabel(kind: NotifyEventKind): string {
+  if (kind.startsWith('task.')) return 'Mở công việc';
+  if (kind.startsWith('project.')) return 'Mở dự án';
+  return 'Mở phiếu';
+}
 
 export interface ExternalNotifyPayload {
   kind: NotifyEventKind;
@@ -36,7 +57,7 @@ export class NotifyDeliveryService {
       if (userIds.length === 0) return;
       const appUrl = String((await this.settings.get<string>('notify.channel.appUrl', '')) ?? '').replace(/\/+$/, '');
       const lines = [`🔔 ${payload.title}`, payload.body];
-      if (appUrl && payload.link) lines.push(`Mở phiếu: ${appUrl}${payload.link}`);
+      if (appUrl && payload.link) lines.push(`${externalLinkLabel(payload.kind)}: ${appUrl}${payload.link}`);
       const text = lines.filter(Boolean).join('\n');
 
       await this.telegram.sendToUsers(userIds, text);

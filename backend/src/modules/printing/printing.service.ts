@@ -5,27 +5,24 @@
  * không cần sửa mã nguồn. Mỗi lần sửa tạo một phiên bản (`print_template_versions`)
  * để khôi phục lại thiết kế cũ.
  */
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { PrintSqlService, normalizeSqlSource } from './print-sql-source';
 import { and, asc, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { printTemplateVersions, printTemplates } from '../../db/schema';
 import type { PrintDocument } from '../../db/schema/printing';
+import type { PrintModule } from '../../db/schema/types';
 import { buildPage, type AdvancedQueryDto, type Paginated, parseFilters } from '../../common/dto/query.dto';
 import { renderPrintDocument, type RenderContext } from '../../infra/rendering/pdf-renderer';
 import { pushFilters, type FilterTarget } from '../../common/filters/apply-filter';
 
-import type { AccessContext } from '../../common/types/access-context';
+import type { AccessContext, ClientMeta } from '../../common/types/access-context';
 
 export interface PrintTemplateInput {
   code: string;
   name: string;
   description?: string;
-  module?: 'HSBA' | 'REPORT' | 'ASSET' | 'UTILITY' | 'GENERIC';
+  module?: PrintModule;
   docType?: string;
   paperSize?: string;
   orientation?: 'portrait' | 'landscape';
@@ -49,7 +46,10 @@ const PRINT_FILTERS: Record<string, FilterTarget> = {
 
 @Injectable()
 export class PrintingService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    @Optional() private readonly sqlSource?: PrintSqlService,
+  ) {}
 
   /* --------------------------------------------------------------- Mẫu in */
 
@@ -148,7 +148,9 @@ export class PrintingService {
     return defaultTemplate ?? null;
   }
 
-  async create(dto: PrintTemplateInput, user?: AccessContext) {
+  async create(dto: PrintTemplateInput, user?: AccessContext, opts: { copiedFrom?: PrintDocument } = {}) {
+    // Nhân bản giữ nguyên SQL đã được người có quyền soạn — chỉ chặn khi SQL khác bản gốc
+    if (user && this.sqlSource) this.sqlSource.assertCanSave(user, dto.document, opts.copiedFrom);
     const [dup] = await this.db.db
       .select({ id: printTemplates.id })
       .from(printTemplates)
@@ -196,6 +198,7 @@ export class PrintingService {
   /** Cập nhật thiết kế — tự động tăng phiên bản và lưu lại bản cũ */
   async update(id: number, dto: Partial<PrintTemplateInput>, user?: AccessContext) {
     const current = await this.findOne(id);
+    if (user && this.sqlSource && dto.document !== undefined) this.sqlSource.assertCanSave(user, dto.document, current.document);
     const documentChanged =
       dto.document !== undefined &&
       JSON.stringify(dto.document) !== JSON.stringify(current.document);
@@ -277,6 +280,7 @@ export class PrintingService {
         versionNote: `Sao chép từ ${src.code} v${src.version}`,
       },
       user,
+      { copiedFrom: src.document },
     );
   }
 
@@ -338,19 +342,53 @@ export class PrintingService {
     idOrCode: number | string,
     data: Record<string, unknown>,
     rows: Record<string, unknown>[] = [],
+    sqlContext?: { user: AccessContext; params?: Record<string, unknown>; meta?: ClientMeta },
   ) {
     const template =
       typeof idOrCode === 'number'
         ? await this.findOne(idOrCode)
         : await this.findByCode(String(idOrCode));
     if (!template) throw new NotFoundException('Không tìm thấy mẫu in đang hoạt động');
+    const resolved = await this.resolveSqlData(template.document, data, rows, sqlContext, template.id);
     return {
       template,
       result: await renderPrintDocument(template.document, {
-        data,
-        rows,
+        data: resolved.data,
+        rows: resolved.rows,
         fileName: template.name,
       }),
     };
+  }
+
+  /** View/bảng (không nhạy cảm) cùng cột — gợi ý cho trình soạn SQL mẫu in. Ưu tiên view tiếng Việt v_*. */
+  async sqlCatalog(): Promise<Array<{ name: string; kind: string; columns: Array<{ name: string; type: string }> }>> {
+    const res = await this.db.db.execute(sql`
+      select c.table_name as name, t.table_type as kind, json_agg(json_build_object('name', c.column_name, 'type', c.data_type) order by c.ordinal_position) as columns
+        from information_schema.columns c
+        join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name
+       where c.table_schema = 'public'
+         and c.table_name not in ('user_biometrics', 'integration_keys', 'settings', 'login_logs', '_qlbs_migrations', 'user_sessions', 'refresh_tokens')
+         and c.column_name not in ('password_hash', 'two_factor_secret', 'key_hash', 'secret_hash', 'telegram_chat_id', 'token_hash')
+       group by c.table_name, t.table_type
+       order by (t.table_type = 'VIEW') desc, c.table_name`);
+    const rows = ((res as unknown as { rows?: unknown[] }).rows ?? (res as unknown as unknown[])) as Array<{ name: string; kind: string; columns: Array<{ name: string; type: string }> }>;
+    return rows.map((r) => ({ name: r.name, kind: r.kind === 'VIEW' ? 'view' : 'table', columns: r.columns }));
+  }
+
+  /**
+   * Chạy nguồn dữ liệu SQL (nếu mẫu khai báo) rồi trộn vào dữ liệu in.
+   * Dữ liệu do phân hệ gửi lên được giữ nguyên; `ds`, `one`, `params` lấy từ máy chủ.
+   */
+  async resolveSqlData(
+    document: PrintDocument,
+    data: Record<string, unknown>,
+    rows: Record<string, unknown>[],
+    sqlContext: { user: AccessContext; params?: Record<string, unknown>; meta?: ClientMeta } | undefined,
+    templateId: number | null,
+  ): Promise<{ data: Record<string, unknown>; rows: Record<string, unknown>[] }> {
+    const source = normalizeSqlSource((document as { sqlSource?: unknown }).sqlSource);
+    if (!source || !sqlContext || !this.sqlSource) return { data, rows };
+    const out = await this.sqlSource.run(sqlContext.user, source, sqlContext.params ?? {}, { meta: sqlContext.meta, templateId });
+    return { data: { ...data, ...out.data }, rows: rows.length ? rows : out.rows };
   }
 }

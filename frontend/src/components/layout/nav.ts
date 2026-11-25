@@ -33,6 +33,11 @@ import {
   Terminal,
   Network,
   Unlock,
+  ListTodo,
+  KanbanSquare,
+  FolderKanban,
+  ListChecks,
+  Copy,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -71,6 +76,17 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard, permission: 'dashboard.view' },
       { href: '/thong-bao', label: 'Thông báo', icon: Bell },
+    ],
+  },
+  {
+    label: 'Quản lý công việc',
+    items: [
+      { href: '/cong-viec', label: 'Tổng quan công việc', icon: ListTodo },
+      { href: '/cong-viec/danh-sach', label: 'Danh sách công việc', icon: ListChecks },
+      { href: '/cong-viec/kanban', label: 'Bảng Kanban', icon: KanbanSquare },
+      { href: '/cong-viec/du-an', label: 'Dự án', icon: FolderKanban },
+      { href: '/cong-viec/bao-cao', label: 'Báo cáo hiệu suất', icon: BarChart3, permission: 'task.report' },
+      { href: '/cong-viec/mau', label: 'Mẫu công việc', icon: Copy, permission: 'task.assign' },
     ],
   },
   {

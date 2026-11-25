@@ -14,3 +14,4 @@ export * from './duty';
 export * from './duty-attendance';
 export * from './integration';
 export * from './kiosk-attendance';
+export * from './tasks';

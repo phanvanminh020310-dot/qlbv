@@ -11,7 +11,7 @@
  *    không nhận lặp tin cũ.
  */
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { users } from '../../db/schema';
 import { SettingsService } from '../settings/settings.service';
@@ -22,14 +22,34 @@ const POLL_INTERVAL_MS = 3_000;
 const LINK_CODE_TTL_MS = 10 * 60_000;
 const LONG_POLL_TIMEOUT = 25; // giây — phía Telegram giữ kết nối chờ tin mới
 
-interface TgUpdate {
+export interface TgUpdate {
   update_id: number;
   message?: {
     text?: string;
-    chat?: { id: number };
+    chat?: { id: number; type?: string };
     from?: { id: number; username?: string; first_name?: string };
+    /** Danh thiếp do người dùng bấm nút "Chia sẻ số điện thoại" gửi lên */
+    contact?: { phone_number?: string; user_id?: number; first_name?: string };
   };
 }
+
+/**
+ * Chuẩn hoá số điện thoại Việt Nam để so khớp: bỏ ký tự không phải số,
+ * đổi tiền tố quốc tế 84 → 0. Trả về chuỗi rỗng nếu không đủ 9 số.
+ */
+export function normalizeVnPhone(raw: string | null | undefined): string {
+  let digits = String(raw ?? '').replace(/\D/g, '');
+  if (digits.startsWith('0084')) digits = digits.slice(4);
+  else if (digits.startsWith('84') && digits.length >= 11) digits = digits.slice(2);
+  if (!digits.startsWith('0')) digits = `0${digits}`;
+  return digits.length >= 10 ? digits : '';
+}
+
+const SHARE_PHONE_KEYBOARD = {
+  keyboard: [[{ text: '📱 Chia sẻ số điện thoại để liên kết', request_contact: true }]],
+  resize_keyboard: true,
+  one_time_keyboard: true,
+};
 
 interface LinkCode {
   userId: number;
@@ -84,13 +104,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Trạng thái liên kết hiện tại của một Người dùng. */
-  async statusOf(userId: number): Promise<{ enabled: boolean; botUsername: string; linked: boolean }> {
+  async statusOf(userId: number): Promise<{ enabled: boolean; botUsername: string; linked: boolean; linkByPhone: boolean; hasPhone: boolean }> {
     const { enabled, token } = await this.config();
     const [row] = await this.db.db
-      .select({ chatId: users.telegramChatId })
+      .select({ chatId: users.telegramChatId, phone: users.phone })
       .from(users)
       .where(eq(users.id, userId));
-    return { enabled: enabled && !!token, botUsername: this.botUsername, linked: !!row?.chatId };
+    const linkByPhone = (await this.settings.get<boolean>('telegram.linkByPhone', true)) !== false;
+    return { enabled: enabled && !!token, botUsername: this.botUsername, linked: !!row?.chatId, linkByPhone, hasPhone: !!normalizeVnPhone(row?.phone) };
   }
 
   async unlink(userId: number): Promise<void> {
@@ -201,9 +222,24 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private async handleUpdate(up: TgUpdate, token: string): Promise<void> {
     const chatId = up.message?.chat?.id;
     const text = up.message?.text?.trim() ?? '';
-    if (!chatId || !text.startsWith('/start')) return;
+    if (!chatId) return;
+    if (up.message?.contact) {
+      await this.linkByContact(up, token);
+      return;
+    }
+    const linkByPhone = (await this.settings.get<boolean>('telegram.linkByPhone', true)) !== false;
+    if (!text.startsWith('/start')) {
+      if (linkByPhone && up.message?.chat?.type === 'private' && /^\/(lienket|link|phone)\b/i.test(text)) {
+        await this.askForContact(token, chatId);
+      }
+      return;
+    }
     const code = text.replace('/start', '').trim().toUpperCase();
     if (!code) {
+      if (linkByPhone) {
+        await this.askForContact(token, chatId);
+        return;
+      }
       await this.api(token, 'sendMessage', {
         chat_id: chatId,
         text: 'Chào bạn! Để nhận thông báo từ hệ thống QLBS, vào trang Cá nhân trong phần mềm, bấm "Tạo mã liên kết Telegram", rồi gởi: /start <MÃ>',
@@ -231,6 +267,58 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       text: `Liên kết thành công với tài khoản "${link.username}". Từ nay thông báo ký/duyệt phiếu sẽ được gởi tức thời về đây.`,
     });
     this.logger.log(`Người dùng ${link.username} (#${link.userId}) đã liên kết Telegram ${chatId}`);
+  }
+
+  /* --------------------------------------------- liên kết bằng số điện thoại */
+
+  private async askForContact(token: string, chatId: number): Promise<void> {
+    await this.api(token, 'sendMessage', {
+      chat_id: chatId,
+      text:
+        'Chào bạn! Bấm nút "📱 Chia sẻ số điện thoại để liên kết" bên dưới. Nếu số điện thoại trùng với số đã khai báo trong hồ sơ người dùng của phần mềm, tài khoản sẽ được liên kết để nhận thông báo công việc và ký duyệt.\n\nHoặc vào trang Cá nhân → "Tạo mã liên kết Telegram" rồi gởi: /start <MÃ>',
+      reply_markup: SHARE_PHONE_KEYBOARD,
+    });
+  }
+
+  /** Người dùng bấm "Chia sẻ số điện thoại": chỉ chấp nhận số của chính họ và khớp đúng một tài khoản. */
+  async linkByContact(up: TgUpdate, token: string): Promise<'linked' | 'not-own' | 'not-found' | 'ambiguous' | 'disabled'> {
+    const chatId = up.message?.chat?.id;
+    const contact = up.message?.contact;
+    if (!chatId || !contact) return 'not-found';
+    const reply = (text: string) => this.api(token, 'sendMessage', { chat_id: chatId, text, reply_markup: { remove_keyboard: true } });
+    if ((await this.settings.get<boolean>('telegram.linkByPhone', true)) === false) {
+      await reply('Hệ thống chưa bật liên kết bằng số điện thoại. Vào trang Cá nhân để tạo mã liên kết.');
+      return 'disabled';
+    }
+    // Chặn chia sẻ danh thiếp của người khác để chiếm thông báo
+    if (!contact.user_id || contact.user_id !== up.message?.from?.id) {
+      await reply('Vui lòng dùng nút "Chia sẻ số điện thoại" để gởi số điện thoại của chính bạn.');
+      return 'not-own';
+    }
+    const phone = normalizeVnPhone(contact.phone_number);
+    if (!phone) {
+      await reply('Số điện thoại không hợp lệ.');
+      return 'not-found';
+    }
+    const tail = phone.slice(-9);
+    const candidates = await this.db.db
+      .select({ id: users.id, username: users.username, phone: users.phone })
+      .from(users)
+      .where(and(eq(users.active, true), isNull(users.deletedAt), sql`right(regexp_replace(${users.phone}, '[^0-9]', '', 'g'), 9) = ${tail}`));
+    const matched = candidates.filter((row) => normalizeVnPhone(row.phone) === phone);
+    if (matched.length === 0) {
+      await reply('Không tìm thấy tài khoản có số điện thoại này. Hãy nhờ quản trị cập nhật số điện thoại trong hồ sơ người dùng, hoặc dùng mã liên kết ở trang Cá nhân.');
+      return 'not-found';
+    }
+    if (matched.length > 1) {
+      await reply('Số điện thoại này đang khai báo cho nhiều tài khoản. Vui lòng dùng mã liên kết ở trang Cá nhân.');
+      return 'ambiguous';
+    }
+    const [target] = matched;
+    await this.db.db.update(users).set({ telegramChatId: String(chatId) }).where(eq(users.id, target!.id));
+    await reply(`Liên kết thành công với tài khoản "${target!.username}". Từ nay thông báo công việc, ký/duyệt phiếu sẽ được gởi tức thời về đây.`);
+    this.logger.log(`Người dùng ${target!.username} (#${target!.id}) đã liên kết Telegram ${chatId} bằng số điện thoại`);
+    return 'linked';
   }
 
   /* ------------------------------------------------- lưu offset vào bảng settings */

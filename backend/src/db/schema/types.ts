@@ -76,7 +76,7 @@ export const DATA_SCOPES = ['OWN', 'DEPT', 'ALL'] as const;
 export type DataScope = (typeof DATA_SCOPES)[number];
 
 /* ----------------------------------------------------------------- Mẫu in */
-export const PRINT_MODULES = ['HSBA', 'REPORT', 'ASSET', 'UTILITY', 'GENERIC'] as const;
+export const PRINT_MODULES = ['HSBA', 'REPORT', 'ASSET', 'UTILITY', 'TASK', 'GENERIC'] as const;
 export type PrintModule = (typeof PRINT_MODULES)[number];
 
 export const PAPER_SIZES = ['A4', 'A5', 'A3', 'Letter', 'Legal', 'Custom'] as const;
