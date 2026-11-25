@@ -19,6 +19,7 @@ import type { NotificationCenterService } from '../src/modules/notifications/not
 import { normalizeVnPhone } from '../src/modules/notify-channels/telegram.service';
 import type { RealtimeService } from '../src/modules/realtime/realtime.service';
 import type { SettingsService } from '../src/modules/settings/settings.service';
+import { TaskDigestService, composeDigest } from '../src/modules/tasks/task-digest.service';
 import { TaskProjectsService } from '../src/modules/tasks/task-projects.service';
 import { TaskRemindersService } from '../src/modules/tasks/task-reminders.service';
 import { TaskReportsService, buildBuckets, bucketStart } from '../src/modules/tasks/task-reports.service';
@@ -59,10 +60,10 @@ async function setup() {
   `);
   const db = drizzle(pg, { schema });
   const dbs = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
-  const sent: Array<{ userIds: number[]; title: string; kind?: string }> = [];
+  const sent: Array<{ userIds: number[]; title: string; kind?: string; body?: string }> = [];
   const notifications = {
-    notify: async (userIds: number[], input: { title: string; externalKind?: string }) => {
-      sent.push({ userIds, title: input.title, kind: input.externalKind });
+    notify: async (userIds: number[], input: { title: string; body?: string; externalKind?: string }) => {
+      sent.push({ userIds, title: input.title, kind: input.externalKind, body: input.body });
     },
   } as unknown as NotificationCenterService;
   const realtime = { publish: () => undefined } as unknown as RealtimeService;
@@ -73,6 +74,7 @@ async function setup() {
     projects: new TaskProjectsService(dbs, service),
     reports: new TaskReportsService(dbs),
     reminders: new TaskRemindersService(dbs, settings, service),
+    digest: new TaskDigestService(dbs, settings, notifications),
   };
 }
 
@@ -280,4 +282,91 @@ test('dự án: thành viên, ai làm việc gì, tiến độ; xuất Excel/Wor
   assert.ok(csv.buffer.toString('utf8').includes('Bảng kiểm A'));
   const perf = await reports.performance(manager, {});
   assert.equal(perf.people.find((x) => x.key === 2)!.score, 100);
+});
+
+test('sửa tin nhắn, lọc theo hạn chót (lịch), khối lượng công việc, số việc khi chọn người', async (t) => {
+  const { pg, service, reports, sent } = await setup();
+  t.after(() => pg.close());
+  const a = await service.create(manager, { title: 'Việc hạn 15/10', assigneeId: 2, dueAt: '2026-10-15T09:00:00+07:00', priority: 'HIGH', estimateHours: 4 });
+  await service.create(manager, { title: 'Việc hạn 20/11', assigneeId: 2, dueAt: '2026-11-20T09:00:00+07:00' });
+  await service.create(manager, { title: 'Việc của NV3', assigneeId: 3 });
+
+  // Lịch: chỉ lấy việc có hạn trong tháng 10
+  const oct = await service.list(manager, { dueFrom: '2026-10-01', dueTo: '2026-10-31', pageSize: '500' });
+  assert.deepEqual(oct.items.map((i) => i.title), ['Việc hạn 15/10']);
+
+  // Sửa tin nhắn: chỉ người viết; nhắc tên mới được thông báo; đánh dấu đã sửa
+  const c = await service.addComment(staff2, a.id, { content: 'Em đang làm' });
+  await assert.rejects(service.editComment(manager, a.id, c.id, { content: 'sửa hộ' }), /người viết/i);
+  await assert.rejects(service.editComment(staff2, a.id, c.id, { content: '   ' }), /trống/i);
+  await new Promise((r) => setTimeout(r, 1100));
+  sent.length = 0;
+  const edited = await service.editComment(staff2, a.id, c.id, { content: 'Em đang làm, nhờ @truongkhoa xem giúp' });
+  assert.equal(edited?.content, 'Em đang làm, nhờ @truongkhoa xem giúp');
+  assert.equal(edited?.edited, true);
+  assert.ok(sent.some((x) => x.kind === 'task.mention' && x.userIds.includes(1)));
+  const hist = await service.history(manager, a.id);
+  assert.ok(hist.logs.some((l) => l.action === 'COMMENT_EDIT'));
+  const list = await service.listComments(manager, a.id);
+  assert.equal(list[0]!.canEdit, false);
+  assert.equal(list[0]!.canDelete, true, 'người giao việc vẫn xóa được');
+
+  // Khối lượng
+  await assert.rejects(reports.workload(staff2, {}), /quyền/i);
+  const wl = await reports.workload(manager, {});
+  const p2 = wl.people.find((p) => p.userId === 2)!;
+  assert.equal(p2.waiting, 2);
+  assert.equal(p2.urgent, 1);
+  assert.equal(p2.remainingHours, 4);
+  assert.ok(wl.people.some((p) => p.userId === 1 && p.active === 0 && p.level === 'idle'), 'liệt kê cả người rảnh trong khoa');
+  assert.ok(!wl.people.some((p) => p.userId === 4), 'không lộ người khoa khác');
+  await assert.rejects(reports.workload(manager, { departmentId: '11' }), /phạm vi/i);
+
+  const people = await service.assignableUsers(manager, {});
+  assert.equal(people.find((u) => u.id === 2)!.openCount, 2);
+});
+
+test('tổng hợp công việc hàng tuần: soạn nội dung, đúng ngày giờ, không gởi trùng, tắt theo người', async (t) => {
+  const { pg, service, digest, sent } = await setup();
+  t.after(() => pg.close());
+  const text = composeDigest(
+    { open: 3, toAccept: 1, inProgress: 2, onHold: 0, returned: 0, overdue: 1, dueWeek: 2, mySubmitted: 0, doneWeek: 4, doneOnTime: 3, doneLate: 1, toReview: 2, assignedOpen: 5, assignedOverdue: 1 },
+    [{ code: 'CV-2026-00001', title: 'Báo cáo quý', dueAt: '2026-10-01T02:00:00Z', status: 'IN_PROGRESS', priority: 'URGENT' }],
+    new Date('2026-10-12T00:30:00Z'),
+  );
+  assert.match(text.title, /12\/10/);
+  assert.match(text.body, /3 đang mở · 1 chờ nhận · 2 đang làm/);
+  assert.match(text.body, /hoàn thành 4 việc \(đúng hạn 3, trễ 1\)/);
+  assert.match(text.body, /Chờ tôi duyệt: 2/);
+  assert.match(text.body, /🔴 CV-2026-00001 Báo cáo quý — hạn 01\/10 \(quá hạn\)/);
+
+  // 12/10/2026 là Thứ Hai: 06:59 chưa gởi, 07:00 mới gởi
+  assert.equal(TaskDigestService.dueWindow(new Date('2026-10-11T23:59:00Z'), 1, 7), null);
+  assert.ok(TaskDigestService.dueWindow(new Date('2026-10-12T00:00:00Z'), 1, 7));
+  assert.equal(TaskDigestService.dueWindow(new Date('2026-10-13T01:00:00Z'), 1, 7), null, 'Thứ Ba không gởi');
+
+  await service.create(manager, { title: 'Lập kế hoạch tháng', assigneeId: 2, dueAt: new Date(Date.now() + 2 * 86400_000).toISOString() });
+  sent.length = 0;
+  const monday = new Date('2026-10-12T01:00:00Z');
+  const r1 = await digest.run(monday);
+  assert.equal(r1.sent, 2, 'người được giao + người giao việc; người không có việc bỏ qua');
+  const toStaff = sent.find((x) => x.userIds.includes(2))!;
+  assert.equal(toStaff.kind, 'task.weeklyDigest');
+  assert.match(toStaff.body ?? '', /Lập kế hoạch tháng/);
+  assert.match(sent.find((x) => x.userIds.includes(1))!.body ?? '', /Tôi đã giao: 1 đang thực hiện/);
+  assert.equal((await digest.run(new Date('2026-10-12T05:00:00Z'))).sent, 0, 'không gởi trùng trong ngày');
+
+  await digest.setEnabled(2, false);
+  const st = await digest.myStatus(2);
+  assert.equal(st.enabled, false);
+  assert.match(st.schedule, /Thứ Hai/);
+  sent.length = 0;
+  await digest.run(new Date('2026-10-19T01:00:00Z'));
+  assert.ok(!sent.some((x) => x.userIds.includes(2)), 'đã tắt thì không nhận');
+  assert.ok(sent.some((x) => x.userIds.includes(1)), 'tuần sau người khác vẫn nhận');
+
+  const pv = await digest.preview(2);
+  assert.equal(pv.hasContent, true);
+  await digest.sendTest(2);
+  assert.ok(sent.some((x) => x.userIds.includes(2) && x.kind === 'task.weeklyDigest'), 'gửi thử vẫn được dù đã tắt');
 });

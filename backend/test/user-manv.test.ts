@@ -40,6 +40,7 @@ async function setup() {
   await pg.exec(migration('0034_ma_nhan_vien_lien_thong.sql'));
   await pg.exec(migration('0036_tach_chuc_danh_chuyen_mon_va_chuc_vu.sql'));
   await pg.exec(migration('0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'));
+  await pg.exec(migration('0045_tong_hop_cong_viec_hang_tuan.sql'));
   const db = drizzle(pg, { schema });
   const dbService = { db, transaction: db.transaction.bind(db) } as unknown as DbService;
   const auth = {

@@ -38,6 +38,7 @@ import {
   FolderKanban,
   ListChecks,
   Copy,
+  Gauge,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -84,6 +85,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/cong-viec', label: 'Tổng quan công việc', icon: ListTodo },
       { href: '/cong-viec/danh-sach', label: 'Danh sách công việc', icon: ListChecks },
       { href: '/cong-viec/kanban', label: 'Bảng Kanban', icon: KanbanSquare },
+      { href: '/cong-viec/lich', label: 'Lịch công việc', icon: CalendarDays },
+      { href: '/cong-viec/khoi-luong', label: 'Khối lượng công việc', icon: Gauge, anyPermissions: ['task.assign', 'task.manage', 'task.report'] },
       { href: '/cong-viec/du-an', label: 'Dự án', icon: FolderKanban },
       { href: '/cong-viec/bao-cao', label: 'Báo cáo hiệu suất', icon: BarChart3, permission: 'task.report' },
       { href: '/cong-viec/mau', label: 'Mẫu công việc', icon: Copy, permission: 'task.assign' },

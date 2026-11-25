@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Audit, ClientInfo, CurrentUser, RequirePermissions } from '../../common/decorators';
 import type { AccessContext, ClientMeta } from '../../common/types/access-context';
+import { TaskDigestService } from './task-digest.service';
 import { TaskProjectsService } from './task-projects.service';
 import { TaskReportsService } from './task-reports.service';
 import {
@@ -12,6 +13,8 @@ import {
   ProjectMembersDto,
   TaskAttachmentsDto,
   TaskCommentDto,
+  TaskCommentEditDto,
+  TaskDigestPrefDto,
   TaskIdsDto,
   TaskReportQueryDto,
   TaskTemplateDto,
@@ -36,6 +39,7 @@ export class TasksController {
     private readonly service: TasksService,
     private readonly projects: TaskProjectsService,
     private readonly reports: TaskReportsService,
+    private readonly digest: TaskDigestService,
   ) {}
 
   /* ------------------------------------------------------------ Danh mục & tổng quan */
@@ -50,6 +54,31 @@ export class TasksController {
   @ApiOperation({ summary: 'Số liệu nhanh: việc của tôi, chờ nhận, chờ duyệt, quá hạn…' })
   summary(@CurrentUser() user: AccessContext) {
     return this.service.mySummary(user);
+  }
+
+  @Get('workload')
+  @ApiOperation({ summary: 'Khối lượng công việc hiện tại theo người thực hiện (cần quyền giao việc/quản lý/báo cáo)' })
+  workload(@CurrentUser() user: AccessContext, @Query() q: { departmentId?: string; projectId?: string }) {
+    return this.reports.workload(user, q);
+  }
+
+  @Get('digest/me')
+  @ApiOperation({ summary: 'Thiết lập & bản xem trước tổng hợp công việc hàng tuần của tôi' })
+  async myDigest(@CurrentUser() user: AccessContext) {
+    const [status, preview] = await Promise.all([this.digest.myStatus(user.id), this.digest.preview(user.id)]);
+    return { ...status, preview };
+  }
+
+  @Put('digest/me')
+  @ApiOperation({ summary: 'Bật/tắt nhận tổng hợp công việc hàng tuần' })
+  setMyDigest(@CurrentUser() user: AccessContext, @Body() dto: TaskDigestPrefDto) {
+    return this.digest.setEnabled(user.id, dto.enabled);
+  }
+
+  @Post('digest/me/send')
+  @ApiOperation({ summary: 'Gửi thử bản tổng hợp công việc cho chính tôi (chuông + Telegram)' })
+  sendMyDigest(@CurrentUser() user: AccessContext) {
+    return this.digest.sendTest(user.id);
   }
 
   @Get('assignable-users')
@@ -211,6 +240,17 @@ export class TasksController {
   @Post(':id/comments')
   addComment(@CurrentUser() user: AccessContext, @Param('id', ParseIntPipe) id: number, @Body() dto: TaskCommentDto, @ClientInfo() client: ClientMeta) {
     return this.service.addComment(user, id, dto, client);
+  }
+
+  @Patch(':id/comments/:commentId')
+  editComment(
+    @CurrentUser() user: AccessContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('commentId', ParseIntPipe) commentId: number,
+    @Body() dto: TaskCommentEditDto,
+    @ClientInfo() client: ClientMeta,
+  ) {
+    return this.service.editComment(user, id, commentId, dto, client);
   }
 
   @Delete(':id/comments/:commentId')

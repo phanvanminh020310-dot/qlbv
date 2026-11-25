@@ -54,6 +54,10 @@ export const users = pgTable(
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     /** Mã chat Telegram đã liên kết — kênh nhận thông báo tức thời */
     telegramChatId: text('telegram_chat_id'),
+    /** Nhận bản tổng hợp công việc hàng tuần (web + Telegram) */
+    taskDigestEnabled: boolean('task_digest_enabled').default(true).notNull(),
+    /** Lần gởi tổng hợp công việc gần nhất — chống gởi trùng */
+    taskDigestSentAt: timestamp('task_digest_sent_at', { withTimezone: true }),
     active: boolean('active').default(true).notNull(),
     note: text('note').default('').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

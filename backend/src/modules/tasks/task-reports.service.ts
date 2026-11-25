@@ -284,6 +284,118 @@ export class TaskReportsService {
     };
   }
 
+  /**
+   * KHỐI LƯỢNG CÔNG VIỆC HIỆN TẠI theo người thực hiện (không theo kỳ) — giúp người giao việc
+   * phân bổ cân bằng. Ai có quyền giao việc / quản lý / báo cáo đều xem được trong phạm vi khoa.
+   * Có chọn khoa (hoặc phạm vi giới hạn theo khoa) thì liệt kê cả người đang rảnh (0 việc).
+   */
+  async workload(user: AccessContext, q: { departmentId?: string; projectId?: string }) {
+    const scopes = [deptScope(user, TASK_PERMS.assign), deptScope(user, TASK_PERMS.manage), deptScope(user, TASK_PERMS.report)];
+    const scope = scopes.some((s) => s === null) ? null : [...new Set(scopes.flatMap((s) => s ?? []))];
+    if (scope !== null && scope.length === 0) throw new ForbiddenException('Cần quyền giao việc, quản lý hoặc báo cáo công việc để xem khối lượng');
+    const departmentId = q.departmentId && /^\d+$/.test(q.departmentId) ? Number(q.departmentId) : null;
+    if (departmentId && !inScope(scope, departmentId)) throw new ForbiddenException('Khoa/phòng ngoài phạm vi của bạn');
+    const projectId = q.projectId && /^\d+$/.test(q.projectId) ? Number(q.projectId) : null;
+
+    const userWhere: SQL[] = [sql`u.deleted_at is null`, sql`u.active`];
+    if (departmentId) userWhere.push(sql`u.department_id = ${departmentId}`);
+    else if (scope !== null) userWhere.push(sql`u.department_id in (${sql.join(scope.map((id) => sql`${id}`), sql`, `)})`);
+    const projTask = projectId ? sql` and project_id = ${projectId}` : sql``;
+    // Người rảnh (0 việc) chỉ liệt kê khi danh sách người đã được giới hạn (theo khoa / thành viên dự án)
+    const includeIdle = projectId
+      ? sql`(agg.uid is not null or exists (select 1 from task_project_members pm where pm.project_id = ${projectId} and pm.user_id = u.id))`
+      : departmentId || scope !== null ? sql`true` : sql`agg.uid is not null`;
+
+    const res = await this.db.db.execute(sql`
+      with agg as (
+        select assignee_id as uid,
+          count(*) filter (where status = 'ASSIGNED')::int as "waiting",
+          count(*) filter (where status in ('ACCEPTED', 'IN_PROGRESS', 'RETURNED'))::int as "inProgress",
+          count(*) filter (where status = 'ON_HOLD')::int as "onHold",
+          count(*) filter (where status = 'SUBMITTED')::int as "submitted",
+          count(*) filter (where status <> 'SUBMITTED' and due_at < now())::int as "overdue",
+          count(*) filter (where status <> 'SUBMITTED' and due_at >= now() and due_at < now() + interval '7 days')::int as "dueWeek",
+          count(*) filter (where status <> 'SUBMITTED' and priority in ('URGENT', 'HIGH'))::int as "urgent",
+          coalesce(sum(estimate_hours * (100 - progress) / 100.0) filter (where status <> 'SUBMITTED'), 0)::float8 as "remainingHours",
+          count(*) filter (where status <> 'SUBMITTED' and estimate_hours is null)::int as "noEstimate"
+        from tasks
+        where deleted_at is null and assignee_id is not null
+          and status in ('ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'RETURNED', 'ON_HOLD', 'SUBMITTED')${projTask}
+        group by assignee_id
+      ),
+      done as (
+        select assignee_id as uid, count(*)::int as n,
+          count(*) filter (where due_at is not null and completed_at <= due_at)::int as "onTime",
+          count(*) filter (where due_at is not null)::int as "withDue"
+        from tasks where deleted_at is null and status = 'DONE' and completed_at >= now() - interval '30 days'${projTask}
+        group by assignee_id
+      ),
+      wl as (
+        select user_id as uid, sum(hours)::float8 as h from task_worklogs
+        where deleted_at is null and work_date >= ((now() at time zone ${TZ})::date - 6)
+        group by user_id
+      )
+      select u.id, u.full_name as "name", u.title, coalesce(d.name, '') as "dept",
+        coalesce(agg.waiting, 0) as "waiting", coalesce(agg."inProgress", 0) as "inProgress", coalesce(agg."onHold", 0) as "onHold",
+        coalesce(agg.submitted, 0) as "submitted", coalesce(agg.overdue, 0) as "overdue", coalesce(agg."dueWeek", 0) as "dueWeek",
+        coalesce(agg.urgent, 0) as "urgent", coalesce(agg."remainingHours", 0) as "remainingHours", coalesce(agg."noEstimate", 0) as "noEstimate",
+        coalesce(done.n, 0) as "done30", coalesce(done."onTime", 0) as "onTime30", coalesce(done."withDue", 0) as "withDue30",
+        coalesce(wl.h, 0) as "hours7"
+      from users u
+      left join departments d on d.id = u.department_id
+      left join agg on agg.uid = u.id
+      left join done on done.uid = u.id
+      left join wl on wl.uid = u.id
+      where ${sql.join(userWhere, sql` and `)} and ${includeIdle}
+      order by (coalesce(agg.waiting, 0) + coalesce(agg."inProgress", 0) + coalesce(agg."onHold", 0)) desc, u.full_name
+      limit 500`);
+
+    const people = rowsOf<Record<string, unknown>>(res).map((r) => {
+      const waiting = num(r['waiting']);
+      const inProgress = num(r['inProgress']);
+      const onHold = num(r['onHold']);
+      return {
+        userId: num(r['id']),
+        name: String(r['name'] ?? ''),
+        extra: [r['title'], r['dept']].filter(Boolean).join(' · '),
+        waiting,
+        inProgress,
+        onHold,
+        submitted: num(r['submitted']),
+        active: waiting + inProgress + onHold,
+        overdue: num(r['overdue']),
+        dueWeek: num(r['dueWeek']),
+        urgent: num(r['urgent']),
+        remainingHours: Math.round(num(r['remainingHours']) * 10) / 10,
+        noEstimate: num(r['noEstimate']),
+        done30: num(r['done30']),
+        onTimeRate30: rate(num(r['onTime30']), num(r['withDue30'])),
+        hours7: Math.round(num(r['hours7']) * 10) / 10,
+        level: 'normal' as 'idle' | 'low' | 'normal' | 'high',
+      };
+    });
+    const busy = people.filter((p) => p.active > 0);
+    const avg = busy.length ? people.reduce((a, p) => a + p.active, 0) / Math.max(1, people.length) : 0;
+    for (const p of people) {
+      if (p.active === 0) p.level = 'idle';
+      else if (p.active >= Math.max(avg * 1.5, avg + 3)) p.level = 'high';
+      else if (p.active <= avg * 0.5) p.level = 'low';
+    }
+    return {
+      people,
+      totals: {
+        people: people.length,
+        active: people.reduce((a, p) => a + p.active, 0),
+        overdue: people.reduce((a, p) => a + p.overdue, 0),
+        submitted: people.reduce((a, p) => a + p.submitted, 0),
+        idle: people.filter((p) => p.level === 'idle').length,
+        high: people.filter((p) => p.level === 'high').length,
+        avgActive: Math.round(avg * 10) / 10,
+      },
+      note: 'Việc đang xử lý = chờ nhận + đang làm (kể cả bị trả lại) + tạm hoãn; việc đã gửi duyệt hiển thị riêng. “Quá tải” khi số việc đang xử lý ≥ max(1,5 × trung bình, trung bình + 3).',
+    };
+  }
+
   /** Danh sách chi tiết công việc trong kỳ (phục vụ xuất tệp). */
   async details(user: AccessContext, q: TaskReportQueryDto, limit = 20000) {
     const f = this.filters(user, q);

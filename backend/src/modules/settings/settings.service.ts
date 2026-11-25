@@ -299,6 +299,9 @@ export function defaultSettings(): SettingItem[] {
     { key: 'telegram.botToken', value: '', group: 'notification', label: 'Telegram Bot Token', valueType: 'password', description: 'Tạo miễn phí bằng /newbot tại @BotFather trên Telegram' },
     { key: 'telegram.linkByPhone', value: true, group: 'notification', label: 'Cho phép liên kết Telegram bằng số điện thoại đã khai báo', valueType: 'boolean', description: 'Nhân viên mở bot, bấm “Chia sẻ số điện thoại”; nếu trùng số điện thoại trong hồ sơ người dùng thì tự liên kết để nhận thông báo' },
     { key: 'task.reminder.hoursBefore', value: 24, group: 'notification', label: 'Nhắc hạn công việc trước (giờ)', valueType: 'number', description: 'Gởi thông báo web + Telegram cho người thực hiện khi công việc sắp đến hạn; 0 = tắt nhắc trước hạn' },
+    { key: 'task.digest.enabled', value: true, group: 'notification', label: 'Gởi tổng hợp công việc hàng tuần', valueType: 'boolean', description: 'Mỗi tuần gởi mỗi người (web + Telegram) bản tóm tắt: việc đang làm, quá hạn, sắp đến hạn, chờ duyệt, kết quả tuần qua. Người dùng có thể tự tắt ở trang Cá nhân' },
+    { key: 'task.digest.weekday', value: 1, group: 'notification', label: 'Ngày gởi tổng hợp công việc (1 = Thứ Hai … 7 = Chủ nhật)', valueType: 'number' },
+    { key: 'task.digest.hour', value: 7, group: 'notification', label: 'Giờ gởi tổng hợp công việc (0–23)', valueType: 'number' },
     { key: 'task.overdue.notify', value: true, group: 'notification', label: 'Cảnh báo công việc quá hạn', valueType: 'boolean', description: 'Gởi một lần cho người thực hiện và người giao khi công việc quá hạn' },
 
     // Chấm công

@@ -117,8 +117,11 @@ export interface TaskComment {
   content: string;
   mentions: number[];
   createdAt: string;
+  updatedAt: string;
   mine: boolean;
   canDelete: boolean;
+  canEdit: boolean;
+  edited: boolean;
   files: Array<{ id: number; fileName: string; mimeType: string; sizeBytes: number }>;
 }
 
@@ -153,7 +156,7 @@ export interface TaskMeta {
   permissions: { canAssign: boolean; canManage: boolean; canReport: boolean; canExport: boolean; canPrint: boolean; seesAll: boolean };
 }
 
-export interface AssignableUser { id: number; fullName: string; username: string; title: string; departmentId: number | null; departmentName: string | null; hasTelegram: boolean; hasPhone: boolean }
+export interface AssignableUser { id: number; fullName: string; username: string; title: string; departmentId: number | null; departmentName: string | null; hasTelegram: boolean; hasPhone: boolean; openCount?: number; overdueCount?: number }
 
 export interface TaskSummary {
   counts: Partial<Record<'myOpen' | 'myToAccept' | 'myInProgress' | 'myReturned' | 'mySubmitted' | 'myOverdue' | 'myDueToday' | 'myDoneThisMonth' | 'toReview' | 'assignedOpen' | 'assignedOverdue', number>>;
@@ -438,7 +441,42 @@ const qs = (o: Record<string, string | number | undefined | null>) => {
 
 /* ================================================================ API */
 
-export type TaskListQuery = Partial<Record<'view' | 'status' | 'priority' | 'departmentId' | 'projectId' | 'assigneeId' | 'label' | 'q' | 'due' | 'from' | 'to' | 'includeSubtasks' | 'sort' | 'page' | 'pageSize' | 'parentId', string>>;
+export type TaskListQuery = Partial<Record<'view' | 'status' | 'priority' | 'departmentId' | 'projectId' | 'assigneeId' | 'label' | 'q' | 'due' | 'from' | 'to' | 'dueFrom' | 'dueTo' | 'includeSubtasks' | 'sort' | 'page' | 'pageSize' | 'parentId', string>>;
+
+export interface WorkloadPerson {
+  userId: number;
+  name: string;
+  extra: string;
+  waiting: number;
+  inProgress: number;
+  onHold: number;
+  submitted: number;
+  active: number;
+  overdue: number;
+  dueWeek: number;
+  urgent: number;
+  remainingHours: number;
+  noEstimate: number;
+  done30: number;
+  onTimeRate30: number | null;
+  hours7: number;
+  level: 'idle' | 'low' | 'normal' | 'high';
+}
+
+export interface WorkloadReport {
+  people: WorkloadPerson[];
+  totals: { people: number; active: number; overdue: number; submitted: number; idle: number; high: number; avgActive: number };
+  note: string;
+}
+
+export interface DigestStatus {
+  enabled: boolean;
+  lastSentAt: string | null;
+  hasTelegram: boolean;
+  globalEnabled: boolean;
+  schedule: string;
+  preview?: { hasContent: boolean; title: string; body: string };
+}
 
 export const tasksApi = {
   meta: () => apiFetch<TaskMeta>('/tasks/meta'),
@@ -456,6 +494,11 @@ export const tasksApi = {
   comments: (id: number) => apiFetch<TaskComment[]>(`/tasks/${id}/comments`),
   addComment: (id: number, body: { content: string; files?: TaskFileInput[] }) => apiFetch<TaskComment>(`/tasks/${id}/comments`, { method: 'POST', body }),
   deleteComment: (id: number, commentId: number) => apiFetch(`/tasks/${id}/comments/${commentId}`, { method: 'DELETE' }),
+  editComment: (id: number, commentId: number, content: string) => apiFetch<TaskComment>(`/tasks/${id}/comments/${commentId}`, { method: 'PATCH', body: { content } }),
+  workload: (q: { departmentId?: string; projectId?: string }) => apiFetch<WorkloadReport>(`/tasks/workload${qs(q)}`),
+  digest: () => apiFetch<DigestStatus>('/tasks/digest/me'),
+  setDigest: (enabled: boolean) => apiFetch<DigestStatus>('/tasks/digest/me', { method: 'PUT', body: { enabled } }),
+  sendDigest: () => apiFetch<{ title: string; body: string; hasContent: boolean }>('/tasks/digest/me/send', { method: 'POST' }),
   upload: (id: number, files: TaskFileInput[]) => apiFetch(`/tasks/${id}/attachments`, { method: 'POST', body: { files } }),
   attachmentUrl: (id: number, attachmentId: number) => `/api/tasks/${id}/attachments/${attachmentId}`,
   deleteAttachment: (id: number, attachmentId: number) => apiFetch(`/tasks/${id}/attachments/${attachmentId}`, { method: 'DELETE' }),
@@ -489,6 +532,9 @@ export const taskKeys = {
   summary: ['tasks', 'summary'] as const,
   list: (q: unknown) => ['tasks', 'list', q] as const,
   board: (q: unknown) => ['tasks', 'board', q] as const,
+  calendar: (q: unknown) => ['tasks', 'calendar', q] as const,
+  workload: (q: unknown) => ['tasks', 'workload', q] as const,
+  digest: ['tasks', 'digest'] as const,
   detail: (id: number) => ['tasks', 'detail', id] as const,
   comments: (id: number) => ['tasks', 'comments', id] as const,
   worklogs: (id: number) => ['tasks', 'worklogs', id] as const,

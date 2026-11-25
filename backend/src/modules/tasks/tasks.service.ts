@@ -59,6 +59,7 @@ import type {
   ChecklistItemDto,
   CreateTaskDto,
   TaskCommentDto,
+  TaskCommentEditDto,
   TaskFileDto,
   TaskTemplateDto,
   TaskWorklogDto,
@@ -90,6 +91,9 @@ export interface TaskListQuery {
   due?: string;
   from?: string;
   to?: string;
+  /** Lọc theo NGÀY HẠN CHÓT (giờ VN) — dùng cho xem lịch */
+  dueFrom?: string;
+  dueTo?: string;
   includeSubtasks?: string;
   sort?: string;
   page?: string;
@@ -286,6 +290,8 @@ export class TasksService {
     }
     if (q.from && /^\d{4}-\d{2}-\d{2}$/.test(q.from)) where.push(sql`(coalesce(${tasks.assignedAt}, ${tasks.createdAt}) at time zone ${TZ})::date >= ${q.from}::date`);
     if (q.to && /^\d{4}-\d{2}-\d{2}$/.test(q.to)) where.push(sql`(coalesce(${tasks.assignedAt}, ${tasks.createdAt}) at time zone ${TZ})::date <= ${q.to}::date`);
+    if (q.dueFrom && /^\d{4}-\d{2}-\d{2}$/.test(q.dueFrom)) where.push(sql`(${tasks.dueAt} at time zone ${TZ})::date >= ${q.dueFrom}::date`);
+    if (q.dueTo && /^\d{4}-\d{2}-\d{2}$/.test(q.dueTo)) where.push(sql`(${tasks.dueAt} at time zone ${TZ})::date <= ${q.dueTo}::date`);
 
     const condition = and(...where);
     const page = Math.max(1, intOrNull(q.page) ?? 1);
@@ -1054,8 +1060,37 @@ export class TasksService {
       ...c,
       mine: c.userId === user.id,
       canDelete: c.userId === user.id || manager,
+      canEdit: c.userId === user.id,
+      edited: new Date(c.updatedAt).getTime() - new Date(c.createdAt).getTime() > 1000,
       files: files.filter((f) => f.commentId === c.id),
     }));
+  }
+
+  /** Sửa tin nhắn: chỉ người viết; nhắc tên mới (@) được thông báo, nội dung cũ lưu ở nhật ký. */
+  async editComment(user: AccessContext, id: number, commentId: number, dto: TaskCommentEditDto, client?: ClientMeta) {
+    const ctx = await this.requireView(user, id);
+    const [comment] = await this.db.db.select().from(taskComments).where(and(eq(taskComments.id, commentId), eq(taskComments.taskId, id), isNull(taskComments.deletedAt))).limit(1);
+    if (!comment) throw new NotFoundException('Không tìm thấy tin nhắn');
+    if (comment.userId !== user.id) throw new ForbiddenException('Chỉ người viết mới sửa được tin nhắn');
+    const content = (dto.content ?? '').trim();
+    if (!content) {
+      const [file] = await this.db.db.select({ id: taskAttachments.id }).from(taskAttachments)
+        .where(and(eq(taskAttachments.commentId, commentId), isNull(taskAttachments.deletedAt))).limit(1);
+      if (!file) throw new BadRequestException('Nội dung tin nhắn không được để trống — hãy xóa tin nhắn nếu không cần nữa');
+    }
+    if (content === comment.content) return this.listComments(user, id).then((list) => list.find((c) => c.id === commentId));
+    const directory = await this.participantDirectory(ctx);
+    const mentionNames = new Set([...content.matchAll(/@([A-Za-z0-9_.-]{2,64})/g)].map((m) => m[1]!.toLowerCase()));
+    const mentions = directory.filter((p) => mentionNames.has(p.username.toLowerCase()) && p.id !== user.id).map((p) => p.id);
+    await this.db.db.update(taskComments).set({ content, mentions, updatedAt: new Date() }).where(eq(taskComments.id, commentId));
+    await this.writeLog(this.db.db, id, user, 'COMMENT_EDIT', ctx.task.status, ctx.task.status, `Sửa tin nhắn: ${content.slice(0, 200)}`,
+      { 'Nội dung tin nhắn': [comment.content.slice(0, 2000), content.slice(0, 2000)] }, client);
+    const fresh = mentions.filter((m) => !comment.mentions.includes(m));
+    if (fresh.length) {
+      await this.notify(fresh, ctx.task, { title: `${user.fullName} nhắc đến bạn`, body: `${ctx.task.code} · ${ctx.task.title}: ${content.slice(0, 200)}`, level: 'INFO', kind: 'task.mention' });
+    }
+    this.publish(ctx.task, 'comment', ctx.watcherIds);
+    return this.listComments(user, id).then((list) => list.find((c) => c.id === commentId));
   }
 
   async addComment(user: AccessContext, id: number, dto: TaskCommentDto, client?: ClientMeta) {
@@ -1081,7 +1116,7 @@ export class TasksService {
       await this.notify(others, ctx.task, { title: 'Tin nhắn mới trong công việc', body: `${user.fullName} — ${head}: ${content.slice(0, 160) || 'đã gửi tệp'}`, level: 'INFO' });
     }
     this.publish(ctx.task, 'comment', ctx.watcherIds);
-    return { ...comment!, mine: true, canDelete: true, files: [] };
+    return { ...comment!, mine: true, canDelete: true, canEdit: true, edited: false, files: [] };
   }
 
   async deleteComment(user: AccessContext, id: number, commentId: number, client?: ClientMeta) {
@@ -1351,7 +1386,9 @@ export class TasksService {
     }
     const rows = await this.db.db
       .select({ id: users.id, fullName: users.fullName, username: users.username, title: users.title, departmentId: users.departmentId,
-        departmentName: departments.name, hasTelegram: sql<boolean>`coalesce(${users.telegramChatId}, '') <> ''`, hasPhone: sql<boolean>`coalesce(${users.phone}, '') <> ''` })
+        departmentName: departments.name, hasTelegram: sql<boolean>`coalesce(${users.telegramChatId}, '') <> ''`, hasPhone: sql<boolean>`coalesce(${users.phone}, '') <> ''`,
+        openCount: sql<number>`(select count(*)::int from tasks wt where wt.deleted_at is null and wt.assignee_id = ${users.id} and wt.status in ('ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'RETURNED', 'ON_HOLD'))`,
+        overdueCount: sql<number>`(select count(*)::int from tasks wt where wt.deleted_at is null and wt.assignee_id = ${users.id} and wt.status in ('ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'RETURNED', 'ON_HOLD') and wt.due_at < now())` })
       .from(users)
       .leftJoin(departments, eq(departments.id, users.departmentId))
       .where(and(...where))

@@ -391,9 +391,16 @@ function CommentsTab({ task }: { task: TaskDetail }) {
     onSuccess: () => { setText(''); setFiles([]); void qc.invalidateQueries({ queryKey: taskKeys.all }); },
     onError: (e: Error) => toast.error(e.message),
   });
+  const [confirmDel, setConfirmDel] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
   const del = useMutation({
     mutationFn: (cid: number) => tasksApi.deleteComment(task.id, cid),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: taskKeys.all }),
+    onSuccess: () => { setConfirmDel(null); toast.success('Đã xóa tin nhắn'); void qc.invalidateQueries({ queryKey: taskKeys.all }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const edit = useMutation({
+    mutationFn: (v: { id: number; text: string }) => tasksApi.editComment(task.id, v.id, v.text.trim()),
+    onSuccess: () => { setEditing(null); void qc.invalidateQueries({ queryKey: taskKeys.comments(task.id) }); },
     onError: (e: Error) => toast.error(e.message),
   });
   const suggestions = useMemo(() => {
@@ -427,9 +434,37 @@ function CommentsTab({ task }: { task: TaskDetail }) {
             <div className={cn('max-w-[80%] rounded-xl px-3 py-2 text-sm', c.mine ? 'bg-teal-700 text-white' : 'bg-[var(--muted)]')}>
               <div className={cn('mb-0.5 flex items-center gap-2 text-[11px]', c.mine ? 'text-teal-100' : 'text-[var(--muted-foreground)]')}>
                 <b>{c.fullName}</b> {fmtShort(c.createdAt)}
-                {c.canDelete ? <button type="button" className="opacity-0 group-hover:opacity-100" title="Xoá" onClick={() => confirm('Xoá tin nhắn này?') && del.mutate(c.id)}><X className="size-3" /></button> : null}
+                {c.edited ? <span className="italic" title={`Sửa lúc ${fmtShort(c.updatedAt)}`}>(đã sửa)</span> : null}
+                {editing?.id !== c.id && (c.canEdit || c.canDelete) ? (
+                  <span className="ml-auto flex items-center gap-1.5 opacity-70 transition-opacity hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                    {c.canEdit ? (
+                      <button type="button" title="Sửa tin nhắn" aria-label="Sửa tin nhắn" className="p-0.5" onClick={() => setEditing({ id: c.id, text: c.content })}><Pencil className="size-3" /></button>
+                    ) : null}
+                    {c.canDelete ? (
+                      <button type="button" title="Xóa tin nhắn" aria-label="Xóa tin nhắn" className="p-0.5" onClick={() => setConfirmDel(c.id)}><Trash2 className="size-3" /></button>
+                    ) : null}
+                  </span>
+                ) : null}
               </div>
-              {c.content ? <div className="whitespace-pre-wrap break-words">{c.mine ? c.content : renderMentions(c.content)}</div> : null}
+              {editing?.id === c.id ? (
+                <div className="mt-1 min-w-[16rem] space-y-1.5">
+                  <Textarea
+                    autoFocus
+                    rows={3}
+                    value={editing.text}
+                    onChange={(e) => setEditing({ id: c.id, text: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) edit.mutate(editing);
+                      if (e.key === 'Escape') setEditing(null);
+                    }}
+                    className="bg-[var(--card)] text-[var(--foreground)]"
+                  />
+                  <div className="flex justify-end gap-1.5">
+                    <Button size="sm" variant="outline" onClick={() => setEditing(null)}>Hủy</Button>
+                    <Button size="sm" loading={edit.isPending} disabled={!editing.text.trim() && !c.files.length} onClick={() => edit.mutate(editing)}>Lưu</Button>
+                  </div>
+                </div>
+              ) : c.content ? <div className="whitespace-pre-wrap break-words">{c.mine ? c.content : renderMentions(c.content)}</div> : null}
               {c.files.map((f) => (
                 <button key={f.id} type="button" onClick={() => openFileUrl(tasksApi.attachmentUrl(task.id, f.id))} className={cn('mt-1 flex items-center gap-1 text-xs underline', c.mine ? 'text-teal-50' : 'text-[var(--primary)]')}>
                   <Paperclip className="size-3" /> {f.fileName} ({formatBytes(f.sizeBytes)})
@@ -440,6 +475,14 @@ function CommentsTab({ task }: { task: TaskDetail }) {
         ))}
         <div ref={endRef} />
       </div>
+      <ConfirmDialog
+        open={confirmDel !== null}
+        title="Xóa tin nhắn"
+        message="Tin nhắn và tệp đính kèm trong tin nhắn sẽ bị ẩn khỏi cuộc trao đổi. Việc xóa được ghi vào lịch sử công việc."
+        confirmText="Xóa"
+        onConfirm={() => { if (confirmDel !== null) del.mutate(confirmDel); }}
+        onClose={() => setConfirmDel(null)}
+      />
       <div className="relative mt-3 space-y-2 border-t pt-3">
         {suggestions.length ? (
           <div className="absolute bottom-full left-0 z-10 mb-1 w-72 rounded-lg border bg-[var(--card)] p-1 shadow-lg">
@@ -619,6 +662,7 @@ const ACTION_LOG_LABEL: Record<string, string> = {
   RECUR: 'tạo kỳ lặp tiếp theo',
   COMMENT: 'trao đổi',
   COMMENT_DELETE: 'xoá tin nhắn',
+  COMMENT_EDIT: 'sửa tin nhắn',
   ATTACHMENT: 'đính kèm tệp',
   ATTACHMENT_DELETE: 'xoá tệp',
   WORKLOG: 'ghi giờ công',

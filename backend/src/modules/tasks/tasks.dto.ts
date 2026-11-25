@@ -239,6 +239,17 @@ export class TransitionTaskDto {
   files?: TaskFileDto[];
 }
 
+export class TaskCommentEditDto {
+  @IsString()
+  @MaxLength(5000, { message: 'Tin nhắn tối đa 5000 ký tự' })
+  content!: string;
+}
+
+export class TaskDigestPrefDto {
+  @IsBoolean()
+  enabled!: boolean;
+}
+
 export class TaskCommentDto {
   @IsString()
   @MaxLength(5000, { message: 'Tin nhắn tối đa 5000 ký tự' })

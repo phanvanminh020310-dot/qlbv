@@ -32,6 +32,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { Badge, Card, Skeleton } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
+import { TaskDigestCard } from '@/components/tasks/task-digest-card';
 import { BiometricEnrollDialog } from '@/components/users/biometric-enroll-dialog';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -673,6 +674,9 @@ export default function ProfilePage() {
 
               {/* Thẻ liên kết Telegram */}
               <TelegramCard />
+
+              {/* Tổng hợp công việc hàng tuần */}
+              <TaskDigestCard />
 
               {/* Thẻ vai trò & phân quyền */}
               <Card className="overflow-hidden">

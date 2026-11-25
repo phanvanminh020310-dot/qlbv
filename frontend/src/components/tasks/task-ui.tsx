@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Check, ClipboardList, FolderKanban, LayoutDashboard, LayoutList, Paperclip, Search, SquareKanban, X, FileStack } from 'lucide-react';
+import { BarChart3, CalendarDays, Check, ClipboardList, FolderKanban, Gauge, LayoutDashboard, LayoutList, Paperclip, Search, SquareKanban, X, FileStack } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
@@ -67,7 +67,9 @@ const SUBNAV = [
   { href: '/cong-viec', label: 'Tổng quan', icon: LayoutDashboard, exact: true },
   { href: '/cong-viec/danh-sach', label: 'Danh sách', icon: LayoutList },
   { href: '/cong-viec/kanban', label: 'Kanban', icon: SquareKanban },
+  { href: '/cong-viec/lich', label: 'Lịch', icon: CalendarDays },
   { href: '/cong-viec/du-an', label: 'Dự án', icon: FolderKanban },
+  { href: '/cong-viec/khoi-luong', label: 'Khối lượng', icon: Gauge, permission: 'canSeeWorkload' as const },
   { href: '/cong-viec/bao-cao', label: 'Báo cáo', icon: BarChart3, permission: 'canReport' as const },
   { href: '/cong-viec/mau', label: 'Mẫu công việc', icon: FileStack, permission: 'canAssign' as const },
 ];
@@ -76,7 +78,8 @@ const SUBNAV = [
 export function TaskSubnav() {
   const pathname = usePathname() ?? '';
   const meta = useQuery({ queryKey: taskKeys.meta, queryFn: tasksApi.meta, staleTime: 60_000 });
-  const perms = meta.data?.permissions;
+  const p = meta.data?.permissions;
+  const perms = p ? { ...p, canSeeWorkload: p.canAssign || p.canManage || p.canReport } : undefined;
   return (
     <div className="thin-scroll -mt-1 mb-4 flex gap-1 overflow-x-auto border-b">
       {SUBNAV.filter((i) => !i.permission || perms?.[i.permission]).map((item) => {
@@ -189,6 +192,14 @@ export function UserPicker({
                 <span className="block truncate font-medium">{u.fullName}</span>
                 <span className="block truncate text-[11px] text-[var(--muted-foreground)]">{[u.title, u.departmentName].filter(Boolean).join(' · ')}</span>
               </span>
+              {u.openCount !== undefined ? (
+                <span
+                  className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', u.overdueCount ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : u.openCount >= 8 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : 'bg-[var(--muted)] text-[var(--muted-foreground)]')}
+                  title={`Đang có ${u.openCount} việc chưa xong${u.overdueCount ? `, ${u.overdueCount} quá hạn` : ''}`}
+                >
+                  {u.openCount} việc{u.overdueCount ? ` · ${u.overdueCount} trễ` : ''}
+                </span>
+              ) : null}
               {u.hasTelegram ? <span className="text-[10px] text-sky-600" title="Đã liên kết Telegram — nhận thông báo ngay">TG</span> : null}
               {value.includes(u.id) ? <Check className="size-4 text-teal-700" /> : null}
             </button>

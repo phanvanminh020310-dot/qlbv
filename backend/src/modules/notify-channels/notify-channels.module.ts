@@ -25,10 +25,12 @@ export type NotifyEventKind =
   | 'task.mention'
   | 'task.dueSoon'
   | 'task.overdue'
+  | 'task.weeklyDigest'
   | 'project.memberAdded';
 
 /** Nhãn liên kết trong tin nhắn ngoài theo loại sự kiện. */
 export function externalLinkLabel(kind: NotifyEventKind): string {
+  if (kind === 'task.weeklyDigest') return 'Xem công việc';
   if (kind.startsWith('task.')) return 'Mở công việc';
   if (kind.startsWith('project.')) return 'Mở dự án';
   return 'Mở phiếu';
