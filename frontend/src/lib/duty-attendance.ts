@@ -6,7 +6,9 @@ export type AttendanceRestSource = 'ANY_DUTY' | 'DUTY' | 'REINFORCEMENT';
 export interface AttendanceCode { id: number; code: string; name: string; group: string; color: string; countsAsDuty: boolean; showSummary: boolean; countValue: string; calculationRole: AttendanceCalculationRole; deductsWorkday: boolean; restSource: AttendanceRestSource; sortOrder: number; active: boolean; note: string }
 export interface AttendanceSystemMetric { key: string; label: string; description: string }
 export interface AttendanceSection { id: number; code: string; name: string; kind: 'ADMIN' | 'DAYS' | 'SYMBOLS' | 'REPORT' | 'CUSTOM'; color: string; sortOrder: number; active: boolean }
-export interface AttendanceColumn { id: number; sectionId: number; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
+/** Nhóm tiêu đề cột nhiều tầng; parentId null = nhóm cấp 1 ngay dưới phần. color rỗng = nền nhạt mặc định. */
+export interface AttendanceColumnGroup { id: number; sectionId: number; parentId: number | null; name: string; color: string; sortOrder: number; active: boolean }
+export interface AttendanceColumn { id: number; sectionId: number; groupId: number | null; key: string; name: string; columnType: 'FORMULA' | 'MANUAL'; dataType: 'NUMBER' | 'TEXT'; formula: string; placeholder: string; sortOrder: number; active: boolean }
 export interface AttendanceValidation { id: number; name: string; expression: string; message: string; sortOrder: number; active: boolean }
 export type AttendanceHolidaySource = 'HOSPITAL' | 'NATIONAL_TEMPLATE';
 export interface AttendanceHoliday { id: number; holidayDate: string; name: string; note: string; source: AttendanceHolidaySource; ruleKey: string; holidayYear: number | null }
@@ -17,7 +19,7 @@ export interface NationalHolidayPlan { year: number; tetStartOffset: number; tet
 export interface NationalHolidayCandidate { date: string; name: string; note: string; ruleKey: string; kind: 'STATUTORY' | 'SUBSTITUTE' | 'APPROVED_ADJUSTMENT' }
 export interface NationalWorkdayCandidate { date: string; name: string; note: string; ruleKey: string; kind: 'COMPENSATORY_WORKDAY' }
 export interface NationalHolidayProposal { plan: NationalHolidayPlan; lunarNewYear: string; candidates: NationalHolidayCandidate[]; workdayCandidates: NationalWorkdayCandidate[]; warnings: string[]; saved: boolean; added?: number; updated?: number; removed?: number; preservedHospital?: number; unchanged?: number; addedWorkdays?: number; updatedWorkdays?: number; removedWorkdays?: number; unchangedWorkdays?: number; templateConflicts?: number }
-export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
+export interface AttendanceLayout { sections: AttendanceSection[]; columns: AttendanceColumn[]; groups: AttendanceColumnGroup[]; validations: AttendanceValidation[]; systemMetrics: AttendanceSystemMetric[] }
 export type AttendanceLockPolicy = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 export type AttendanceStaffOrderMode = 'PROFESSIONAL' | 'MANAGEMENT_THEN_PROFESSIONAL';
 export interface AttendanceDate { date: string; day: number; weekday: string; isWeekend: boolean; isPast: boolean; isLocked: boolean; isRest: boolean; holidayName: string; workdayName: string; isWorkingOverride: boolean }
@@ -41,6 +43,8 @@ export interface AttendanceMonth {
   columns: AttendanceColumn[];
   validations: AttendanceValidation[];
   systemMetrics: AttendanceSystemMetric[];
+  /** Nhóm tiêu đề cột đang hiển thị (đã lọc nhánh bị ẩn). */
+  columnGroups: AttendanceColumnGroup[];
   staff: AttendanceStaff[];
   /** code là chuỗi hiển thị tương thích; codes là danh sách ký hiệu đầy đủ của ngày. */
   entries: Record<string, { code: string; codes: string[]; note: string }>;
@@ -59,6 +63,8 @@ type CodeGroupPayload = Omit<AttendanceCodeGroup, 'id'>;
 type CodePayload = Omit<AttendanceCode, 'id'>;
 type SectionPayload = Omit<AttendanceSection, 'id' | 'kind'> & { kind?: AttendanceSection['kind'] };
 type ColumnPayload = Omit<AttendanceColumn, 'id'>;
+export type ColumnGroupPayload = Omit<AttendanceColumnGroup, 'id'> & { columnIds?: number[] };
+export type DuplicateColumnGroupPayload = { name: string; parentId?: number | null; sortOrder?: number; replacements: Array<{ from: string; to: string }> };
 type ValidationPayload = Omit<AttendanceValidation, 'id'>;
 const get = <T,>(path: string) => apiFetch<T>(path);
 const put = <T,>(path: string, body: unknown) => apiFetch<T>(path, { method: 'PUT', body });
@@ -91,6 +97,10 @@ export const dutyAttendanceApi = {
   createColumn: (body: ColumnPayload) => post<AttendanceColumn>('/duty-attendance/columns', body),
   updateColumn: (id: number, body: ColumnPayload) => put<AttendanceColumn>(`/duty-attendance/columns/${id}`, body),
   deleteColumn: (id: number) => remove<{ deleted: true }>(`/duty-attendance/columns/${id}`),
+  createColumnGroup: (body: ColumnGroupPayload) => post<AttendanceColumnGroup>('/duty-attendance/column-groups', body),
+  updateColumnGroup: (id: number, body: ColumnGroupPayload) => put<AttendanceColumnGroup>(`/duty-attendance/column-groups/${id}`, body),
+  deleteColumnGroup: (id: number) => remove<{ deleted: true }>(`/duty-attendance/column-groups/${id}`),
+  duplicateColumnGroup: (id: number, body: DuplicateColumnGroupPayload) => post<{ group: AttendanceColumnGroup; groups: number; columns: number; keys: string[] }>(`/duty-attendance/column-groups/${id}/duplicate`, body),
   createValidation: (body: ValidationPayload) => post<AttendanceValidation>('/duty-attendance/validations', body),
   updateValidation: (id: number, body: ValidationPayload) => put<AttendanceValidation>(`/duty-attendance/validations/${id}`, body),
   deleteValidation: (id: number) => remove<{ deleted: true }>(`/duty-attendance/validations/${id}`),
@@ -114,3 +124,45 @@ export const attendanceKeys = {
   layout: ['duty-attendance', 'layout'] as const,
   codeGroups: ['duty-attendance', 'code-groups'] as const,
 };
+
+/* ------------------------------------------------------------------ tiêu đề nhiều tầng */
+
+/** Đường dẫn nhóm từ cấp 1 đến nhóm trực tiếp chứa cột (giống máy chủ). */
+export function attendanceGroupPath(groupId: number | null | undefined, groupsById: Map<number, AttendanceColumnGroup>): AttendanceColumnGroup[] {
+  const path: AttendanceColumnGroup[] = []; const seen = new Set<number>();
+  let current = groupId ? groupsById.get(groupId) : undefined;
+  while (current && !seen.has(current.id)) { seen.add(current.id); path.unshift(current); current = current.parentId ? groupsById.get(current.parentId) : undefined; }
+  return path;
+}
+
+export type AttendanceHeaderInput = { sectionId: number; name: string; path: Array<{ id: number; name: string; color: string }> };
+export type AttendanceHeaderCell = { kind: 'SECTION' | 'GROUP' | 'LEAF'; row: number; col: number; rowSpan: number; colSpan: number; text: string; color: string };
+
+/**
+ * Lưới tiêu đề giống Excel: hàng 0 = phần, hàng 1..depth = các tầng nhóm, tên cột đặt
+ * ngay dưới nhóm sâu nhất của nó và gộp dọc tới hàng cuối. Cùng thuật toán với máy chủ.
+ */
+export function buildAttendanceHeader(columns: AttendanceHeaderInput[], sectionOf: (sectionId: number) => { name: string; color: string }) {
+  const depth = columns.reduce((max, column) => Math.max(max, column.path.length), 0);
+  const cells: AttendanceHeaderCell[] = [];
+  for (let index = 0; index < columns.length;) {
+    let end = index + 1; while (end < columns.length && columns[end]!.sectionId === columns[index]!.sectionId) end += 1;
+    const section = sectionOf(columns[index]!.sectionId);
+    cells.push({ kind: 'SECTION', row: 0, col: index, rowSpan: 1, colSpan: end - index, text: section.name, color: section.color }); index = end;
+  }
+  for (let level = 0; level < depth; level++) {
+    for (let index = 0; index < columns.length;) {
+      const group = columns[index]!.path[level]; if (!group) { index += 1; continue; }
+      let end = index + 1; while (end < columns.length && columns[end]!.sectionId === columns[index]!.sectionId && columns[end]!.path[level]?.id === group.id) end += 1;
+      cells.push({ kind: 'GROUP', row: level + 1, col: index, rowSpan: 1, colSpan: end - index, text: group.name, color: group.color }); index = end;
+    }
+  }
+  columns.forEach((column, index) => { const row = column.path.length + 1; cells.push({ kind: 'LEAF', row, col: index, rowSpan: depth + 2 - row, colSpan: 1, text: column.name, color: '' }); });
+  return { depth, rows: depth + 2, cells: cells.sort((left, right) => left.row - right.row || left.col - right.col) };
+}
+
+/** Chữ đen trên nền nhạt, chữ trắng trên nền đậm. */
+export function attendanceForeground(hex: string) {
+  const raw = hex.replace('#', ''); const r = Number.parseInt(raw.slice(0, 2), 16); const g = Number.parseInt(raw.slice(2, 4), 16); const b = Number.parseInt(raw.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#0f172a' : '#ffffff';
+}

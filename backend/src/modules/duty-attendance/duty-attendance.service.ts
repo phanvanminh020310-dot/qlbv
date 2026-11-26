@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import * as ExcelJS from 'exceljs';
-import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
+import { Document, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, VerticalAlign, WidthType } from 'docx';
 import { DbService, type Executor } from '../../db/db.service';
 import {
   departments,
   dutyAttendanceCodeGroups,
   dutyAttendanceCodes,
+  dutyAttendanceColumnGroups,
   dutyAttendanceColumns,
   dutyAttendanceDailyNotes,
   dutyAttendanceDepartmentAssignments,
@@ -30,11 +31,14 @@ import { SettingsService } from '../settings/settings.service';
 import { bangkokToday } from '../duty/duty-rules';
 import { booleanExpression, evaluateExpression, expressionReferences, numericExpression } from './attendance-expression';
 import { ATTENDANCE_SYSTEM_METRICS, ATTENDANCE_SYSTEM_METRIC_KEYS, attendanceRestBalance, calculateAttendanceMetrics } from './attendance-metrics';
+import { MAX_COLUMN_GROUP_DEPTH, buildHeaderCells, groupPath, orderColumnsByTree, replaceFormulaReferences, applyReplacements, visibleGroupIds, type HeaderCell } from './attendance-layout';
 import { defaultNationalHolidayPlan, nationalHolidayProposal, type NationalHolidayPlanConfig } from './national-holiday-plan';
 import type {
   AttendanceCodeDto,
   AttendanceCodeGroupDto,
   AttendanceColumnDto,
+  AttendanceColumnGroupDto,
+  DuplicateAttendanceColumnGroupDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
   AttendanceWorkdayOverrideDto,
@@ -118,10 +122,11 @@ const hexToArgb = (value: string) => `FF${value.replace('#', '').toUpperCase()}`
 type ActiveLayout = {
   sections: Awaited<ReturnType<DutyAttendanceService['layout']>>['sections'];
   columns: Awaited<ReturnType<DutyAttendanceService['layout']>>['columns'];
+  groups: Awaited<ReturnType<DutyAttendanceService['layout']>>['groups'];
   validations: Awaited<ReturnType<DutyAttendanceService['layout']>>['validations'];
 };
 type Board = Awaited<ReturnType<DutyAttendanceService['month']>>;
-type DisplayColumn = { key: string; name: string; source: 'ADMIN' | 'DAY' | 'VALUE'; section: Board['sections'][number]; day?: Board['dates'][number]; column?: Board['columns'][number] };
+type DisplayColumn = { key: string; name: string; source: 'ADMIN' | 'DAY' | 'VALUE'; section: Board['sections'][number]; day?: Board['dates'][number]; column?: Board['columns'][number]; path: Array<{ id: number; name: string; color: string }> };
 
 export interface AttendanceExport { buffer: Buffer; fileName: string; mime: string; }
 
@@ -236,21 +241,28 @@ export class DutyAttendanceService {
 
   /** Layout đầy đủ (kể cả ngừng dùng) dành cho màn hình khai báo. */
   async layout() {
-    const [sections, columns, validations] = await Promise.all([
+    const [sections, columns, groups, validations] = await Promise.all([
       this.db.db.select().from(dutyAttendanceSections).orderBy(asc(dutyAttendanceSections.sortOrder), asc(dutyAttendanceSections.id)),
       this.db.db.select().from(dutyAttendanceColumns).orderBy(asc(dutyAttendanceColumns.sortOrder), asc(dutyAttendanceColumns.id)),
+      this.db.db.select().from(dutyAttendanceColumnGroups).orderBy(asc(dutyAttendanceColumnGroups.sortOrder), asc(dutyAttendanceColumnGroups.id)),
       this.db.db.select().from(dutyAttendanceValidations).orderBy(asc(dutyAttendanceValidations.sortOrder), asc(dutyAttendanceValidations.id)),
     ]);
-    return { sections, columns, validations, systemMetrics: ATTENDANCE_SYSTEM_METRICS };
+    // Cột trả về theo đúng thứ tự cây nhóm để màn hình khai báo và bảng hiển thị giống nhau.
+    return { sections, columns: orderColumnsByTree(sections.map((section) => section.id), groups, columns), groups, validations, systemMetrics: ATTENDANCE_SYSTEM_METRICS };
   }
 
   private async activeLayout(): Promise<ActiveLayout> {
-    const [sections, columns, validations] = await Promise.all([
+    const [sections, allColumns, allGroups, validations] = await Promise.all([
       this.db.db.select().from(dutyAttendanceSections).where(eq(dutyAttendanceSections.active, true)).orderBy(asc(dutyAttendanceSections.sortOrder), asc(dutyAttendanceSections.id)),
       this.db.db.select().from(dutyAttendanceColumns).where(eq(dutyAttendanceColumns.active, true)).orderBy(asc(dutyAttendanceColumns.sortOrder), asc(dutyAttendanceColumns.id)),
+      this.db.db.select().from(dutyAttendanceColumnGroups).orderBy(asc(dutyAttendanceColumnGroups.sortOrder), asc(dutyAttendanceColumnGroups.id)),
       this.db.db.select().from(dutyAttendanceValidations).where(eq(dutyAttendanceValidations.active, true)).orderBy(asc(dutyAttendanceValidations.sortOrder), asc(dutyAttendanceValidations.id)),
     ]);
-    return { sections, columns, validations };
+    // Ẩn một nhóm thì ẩn cả nhánh con của nó (nhóm con và cột) khỏi bảng/xuất file.
+    const visible = visibleGroupIds(allGroups);
+    const groups = allGroups.filter((group) => visible.has(group.id));
+    const columns = orderColumnsByTree(sections.map((section) => section.id), groups, allColumns.filter((column) => !column.groupId || visible.has(column.groupId)));
+    return { sections, columns, groups, validations };
   }
 
   private validateReferences(expression: string, codes: Array<{ code: string }>, columns: Array<{ key: string }>) {
@@ -278,9 +290,15 @@ export class DutyAttendanceService {
     if (!['REPORT', 'CUSTOM'].includes(section.kind)) throw new BadRequestException('Chỉ phần Báo cáo hoặc phần tự khai báo mới được thêm cột');
     const key = input.key.trim().toUpperCase();
     if (!COLUMN_KEY.test(key)) throw new BadRequestException('Mã cột chỉ gồm chữ in hoa, số và dấu gạch dưới');
+    if (input.groupId) {
+      const [group] = await this.db.db.select().from(dutyAttendanceColumnGroups).where(eq(dutyAttendanceColumnGroups.id, input.groupId));
+      if (!group) throw new NotFoundException('Không tìm thấy nhóm tiêu đề cột');
+      if (group.sectionId !== input.sectionId) throw new BadRequestException('Nhóm tiêu đề phải thuộc cùng phần với cột');
+    }
     if (ATTENDANCE_SYSTEM_METRIC_KEYS.has(key)) throw new ConflictException(`Mã cột “${key}” được hệ thống dành cho công thức nghiệp vụ`);
     const [codes, current] = await Promise.all([this.db.db.select({ code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes), this.db.db.select().from(dutyAttendanceColumns)]);
     if (codes.some((code) => code.code.toUpperCase() === key)) throw new ConflictException(`Mã cột “${key}” trùng mã ký hiệu chấm công`);
+    if (current.some((column) => column.id !== editingId && column.key.toUpperCase() === key)) throw new ConflictException(`Mã cột “${key}” đã được dùng`);
     const formula = input.columnType === 'FORMULA' ? (input.formula ?? '').trim() : '';
     if (input.columnType === 'FORMULA' && !formula) throw new BadRequestException('Cột công thức phải có biểu thức tính');
     const virtualColumns = [...current.filter((column) => column.id !== editingId), {
@@ -479,7 +497,7 @@ export class DutyAttendanceService {
       department: { id: currentDepartment.id, name: currentDepartment.name, hospital: currentDepartment.hospital },
       departments: [{ id: currentDepartment.id, name: currentDepartment.name }], multiDepartment: false,
       dates, codes, sections: layout.sections, columns: layout.columns, validations: layout.validations,
-      systemMetrics: ATTENDANCE_SYSTEM_METRICS,
+      systemMetrics: ATTENDANCE_SYSTEM_METRICS, columnGroups: layout.groups,
       staff: staff.map((person, index) => ({ stt: index + 1, id: person.id, fullName: person.fullName, title: person.title, titleSortOrder: person.titleSortOrder, managementPosition: person.managementPosition, managementPositionSortOrder: person.managementPositionSortOrder, managementPositions: person.managementPositions, manv: person.manv, username: person.username, key: String(person.id), departmentId, departmentName: currentDepartment.name })),
       entries, manualValues, manualViolations, calculationWarnings, rowValues, holidays, workdayOverrides,
     };
@@ -775,13 +793,13 @@ export class DutyAttendanceService {
   }
 
   async createColumn(dto: AttendanceColumnDto) {
-    const prepared = await this.assertColumnConfig(dto); const [item] = await this.db.db.insert(dutyAttendanceColumns).values({ sectionId: dto.sectionId, key: prepared.key, name: dto.name.trim(), columnType: dto.columnType, dataType: dto.columnType === 'FORMULA' ? 'NUMBER' : dto.dataType ?? 'NUMBER', formula: prepared.formula, placeholder: dto.columnType === 'MANUAL' ? (dto.placeholder?.trim() || 'Tự nhập') : '', sortOrder: dto.sortOrder ?? 100, active: dto.active ?? true }).returning(); return item;
+    const prepared = await this.assertColumnConfig(dto); const [item] = await this.db.db.insert(dutyAttendanceColumns).values({ sectionId: dto.sectionId, groupId: dto.groupId || null, key: prepared.key, name: dto.name.trim(), columnType: dto.columnType, dataType: dto.columnType === 'FORMULA' ? 'NUMBER' : dto.dataType ?? 'NUMBER', formula: prepared.formula, placeholder: dto.columnType === 'MANUAL' ? (dto.placeholder?.trim() || 'Tự nhập') : '', sortOrder: dto.sortOrder ?? 100, active: dto.active ?? true }).returning(); return item;
   }
   async updateColumn(id: number, dto: Partial<AttendanceColumnDto>) {
     const [current] = await this.db.db.select().from(dutyAttendanceColumns).where(eq(dutyAttendanceColumns.id, id)); if (!current) throw new NotFoundException('Không tìm thấy cột');
-    const full = { sectionId: dto.sectionId ?? current.sectionId, key: dto.key ?? current.key, name: dto.name ?? current.name, columnType: (dto.columnType ?? current.columnType) as DutyAttendanceColumnType, dataType: dto.dataType ?? current.dataType, formula: dto.formula ?? current.formula, placeholder: dto.placeholder ?? current.placeholder, sortOrder: dto.sortOrder ?? current.sortOrder, active: dto.active ?? current.active } as AttendanceColumnDto;
+    const full = { sectionId: dto.sectionId ?? current.sectionId, groupId: dto.groupId !== undefined ? dto.groupId || null : current.groupId, key: dto.key ?? current.key, name: dto.name ?? current.name, columnType: (dto.columnType ?? current.columnType) as DutyAttendanceColumnType, dataType: dto.dataType ?? current.dataType, formula: dto.formula ?? current.formula, placeholder: dto.placeholder ?? current.placeholder, sortOrder: dto.sortOrder ?? current.sortOrder, active: dto.active ?? current.active } as AttendanceColumnDto;
     const prepared = await this.assertColumnConfig(full, id);
-    const [item] = await this.db.db.update(dutyAttendanceColumns).set({ sectionId: full.sectionId, key: prepared.key, name: full.name.trim(), columnType: full.columnType, dataType: full.columnType === 'FORMULA' ? 'NUMBER' : full.dataType ?? 'NUMBER', formula: prepared.formula, placeholder: full.columnType === 'MANUAL' ? (full.placeholder?.trim() || 'Tự nhập') : '', sortOrder: full.sortOrder ?? 100, active: full.active ?? true, updatedAt: new Date() }).where(eq(dutyAttendanceColumns.id, id)).returning(); return item;
+    const [item] = await this.db.db.update(dutyAttendanceColumns).set({ sectionId: full.sectionId, groupId: full.groupId || null, key: prepared.key, name: full.name.trim(), columnType: full.columnType, dataType: full.columnType === 'FORMULA' ? 'NUMBER' : full.dataType ?? 'NUMBER', formula: prepared.formula, placeholder: full.columnType === 'MANUAL' ? (full.placeholder?.trim() || 'Tự nhập') : '', sortOrder: full.sortOrder ?? 100, active: full.active ?? true, updatedAt: new Date() }).where(eq(dutyAttendanceColumns.id, id)).returning(); return item;
   }
   async deleteColumn(id: number) {
     const [column] = await this.db.db.select().from(dutyAttendanceColumns).where(eq(dutyAttendanceColumns.id, id)); if (!column) throw new NotFoundException('Không tìm thấy cột');
@@ -792,6 +810,159 @@ export class DutyAttendanceService {
     const [{ checked }] = await this.db.db.select({ checked: sql<number>`count(*)::int` }).from(dutyAttendanceValidations).where(sql`${dutyAttendanceValidations.expression} like ${`%[${column.key}]%`}`);
     if (Number(checked) > 0) throw new ConflictException('Cột đang được một ràng buộc dữ liệu tham chiếu');
     await this.db.db.delete(dutyAttendanceColumns).where(eq(dutyAttendanceColumns.id, id)); return { deleted: true };
+  }
+
+  /** Chữ trắng trên nền đậm, chữ đen trên nền nhạt để tiêu đề Excel luôn đọc được. */
+  private excelForeground(hex: string) {
+    const raw = hex.replace('#', ''); const r = Number.parseInt(raw.slice(0, 2), 16); const g = Number.parseInt(raw.slice(2, 4), 16); const b = Number.parseInt(raw.slice(4, 6), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? 'FF0F172A' : 'FFFFFFFF';
+  }
+
+  /** Ô tiêu đề Word: gộp ngang (columnSpan) và gộp dọc (rowSpan) đúng như Excel. */
+  private wordHeaderCell(item: HeaderCell, totalColumns: number) {
+    const fill = item.kind === 'SECTION' ? item.color : item.kind === 'GROUP' ? item.color : '';
+    return new TableCell({
+      columnSpan: item.colSpan > 1 ? item.colSpan : undefined, rowSpan: item.rowSpan > 1 ? item.rowSpan : undefined,
+      width: { size: Math.max(180, Math.floor(9500 / totalColumns)) * item.colSpan, type: WidthType.DXA },
+      ...(fill ? { shading: { fill: fill.replace('#', ''), color: 'auto', type: ShadingType.CLEAR } } : {}),
+      verticalAlign: VerticalAlign.CENTER,
+      children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: item.text, bold: true, size: 14, ...(fill ? { color: this.excelForeground(fill).slice(2) } : {}) })] })],
+    });
+  }
+
+  /* ------------------------------------------------ nhóm tiêu đề cột nhiều tầng */
+
+  private async configurableSection(sectionId: number) {
+    const [section] = await this.db.db.select().from(dutyAttendanceSections).where(eq(dutyAttendanceSections.id, sectionId));
+    if (!section) throw new NotFoundException('Không tìm thấy phần của bảng chấm công');
+    if (!['REPORT', 'CUSTOM'].includes(section.kind)) throw new BadRequestException('Chỉ phần Báo cáo hoặc phần tự khai báo mới có nhóm tiêu đề cột');
+    return section;
+  }
+
+  /** Kiểm tra nhóm cha: cùng phần, không tạo vòng lặp và không vượt số tầng cho phép. */
+  private async assertGroupParent(sectionId: number, parentId: number | null, editingId?: number) {
+    const groups = await this.db.db.select().from(dutyAttendanceColumnGroups);
+    const byId = new Map(groups.map((group) => [group.id, group]));
+    const subtreeDepth = (id: number): number => { const kids = groups.filter((group) => group.parentId === id); return 1 + (kids.length ? Math.max(...kids.map((kid) => subtreeDepth(kid.id))) : 0); };
+    let parentDepth = 0;
+    if (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent) throw new NotFoundException('Không tìm thấy nhóm cha');
+      if (parent.sectionId !== sectionId) throw new BadRequestException('Nhóm cha phải thuộc cùng phần');
+      const path = groupPath(parentId, byId);
+      if (editingId && path.some((group) => group.id === editingId)) throw new BadRequestException('Không thể đặt nhóm vào chính nó hoặc nhóm con của nó');
+      parentDepth = path.length;
+    }
+    const ownDepth = editingId ? subtreeDepth(editingId) : 1;
+    if (parentDepth + ownDepth > MAX_COLUMN_GROUP_DEPTH) throw new BadRequestException(`Tiêu đề chỉ hỗ trợ tối đa ${MAX_COLUMN_GROUP_DEPTH} tầng nhóm dưới một phần`);
+  }
+
+  /** Gán đúng danh sách cột vào nhóm (cột bỏ chọn được đưa về ngay dưới phần). */
+  private async assignGroupColumns(executor: Executor, groupId: number, sectionId: number, columnIds: number[]) {
+    const ids = [...new Set(columnIds)];
+    if (ids.length) {
+      const rows = await executor.select({ id: dutyAttendanceColumns.id, sectionId: dutyAttendanceColumns.sectionId }).from(dutyAttendanceColumns).where(inArray(dutyAttendanceColumns.id, ids));
+      if (rows.length !== ids.length) throw new NotFoundException('Có cột được chọn không còn tồn tại');
+      if (rows.some((row) => row.sectionId !== sectionId)) throw new BadRequestException('Chỉ gán được các cột cùng phần với nhóm');
+    }
+    await executor.update(dutyAttendanceColumns).set({ groupId: null, updatedAt: new Date() }).where(and(eq(dutyAttendanceColumns.groupId, groupId), ...(ids.length ? [sql`${dutyAttendanceColumns.id} not in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`] : [])));
+    if (ids.length) await executor.update(dutyAttendanceColumns).set({ groupId, updatedAt: new Date() }).where(inArray(dutyAttendanceColumns.id, ids));
+  }
+
+  async createColumnGroup(dto: AttendanceColumnGroupDto) {
+    await this.configurableSection(dto.sectionId);
+    const parentId = dto.parentId || null;
+    await this.assertGroupParent(dto.sectionId, parentId);
+    return this.db.transaction(async (tx) => {
+      const [item] = await tx.insert(dutyAttendanceColumnGroups).values({ sectionId: dto.sectionId, parentId, name: dto.name.trim(), color: dto.color ?? '', sortOrder: dto.sortOrder ?? 100, active: dto.active ?? true }).returning();
+      if (dto.columnIds) await this.assignGroupColumns(tx, item!.id, dto.sectionId, dto.columnIds);
+      return item!;
+    });
+  }
+
+  async updateColumnGroup(id: number, dto: Partial<AttendanceColumnGroupDto>) {
+    const [current] = await this.db.db.select().from(dutyAttendanceColumnGroups).where(eq(dutyAttendanceColumnGroups.id, id));
+    if (!current) throw new NotFoundException('Không tìm thấy nhóm tiêu đề cột');
+    const sectionId = dto.sectionId ?? current.sectionId;
+    const parentId = dto.parentId !== undefined ? dto.parentId || null : current.parentId;
+    if (sectionId !== current.sectionId) {
+      await this.configurableSection(sectionId);
+      const [[{ kids }], [{ cols }]] = await Promise.all([
+        this.db.db.select({ kids: sql<number>`count(*)::int` }).from(dutyAttendanceColumnGroups).where(eq(dutyAttendanceColumnGroups.parentId, id)),
+        this.db.db.select({ cols: sql<number>`count(*)::int` }).from(dutyAttendanceColumns).where(eq(dutyAttendanceColumns.groupId, id)),
+      ]);
+      if (Number(kids) || (Number(cols) && !dto.columnIds)) throw new BadRequestException('Nhóm còn nhóm con/cột; hãy chuyển chúng ra trước khi đổi sang phần khác');
+    }
+    await this.assertGroupParent(sectionId, parentId, id);
+    return this.db.transaction(async (tx) => {
+      const [item] = await tx.update(dutyAttendanceColumnGroups).set({ sectionId, parentId, name: (dto.name ?? current.name).trim(), color: dto.color ?? current.color, sortOrder: dto.sortOrder ?? current.sortOrder, active: dto.active ?? current.active, updatedAt: new Date() }).where(eq(dutyAttendanceColumnGroups.id, id)).returning();
+      if (dto.columnIds) await this.assignGroupColumns(tx, id, sectionId, dto.columnIds);
+      return item!;
+    });
+  }
+
+  /** Xóa nhóm chỉ xóa tầng tiêu đề: nhóm con và cột được đưa lên nhóm cha, không mất cột hay số liệu. */
+  async deleteColumnGroup(id: number) {
+    const [current] = await this.db.db.select().from(dutyAttendanceColumnGroups).where(eq(dutyAttendanceColumnGroups.id, id));
+    if (!current) throw new NotFoundException('Không tìm thấy nhóm tiêu đề cột');
+    await this.db.transaction(async (tx) => {
+      await tx.update(dutyAttendanceColumnGroups).set({ parentId: current.parentId, updatedAt: new Date() }).where(eq(dutyAttendanceColumnGroups.parentId, id));
+      await tx.update(dutyAttendanceColumns).set({ groupId: current.parentId, updatedAt: new Date() }).where(eq(dutyAttendanceColumns.groupId, id));
+      await tx.delete(dutyAttendanceColumnGroups).where(eq(dutyAttendanceColumnGroups.id, id));
+    });
+    return { deleted: true };
+  }
+
+  /**
+   * Nhân bản một nhóm cùng toàn bộ nhóm con và cột để mở rộng bảng nhanh, ví dụ chép
+   * “Ngày lễ” thành “Ngày nghỉ” với quy tắc NGAY_LE → NGAY_NGHI. Quy tắc thay thế áp dụng
+   * cho mã cột và tham chiếu trong công thức; tên nhóm con/cột giữ nguyên để tự sửa sau.
+   */
+  async duplicateColumnGroup(id: number, dto: DuplicateAttendanceColumnGroupDto) {
+    const [codes, groups, columns] = await Promise.all([
+      this.db.db.select({ code: dutyAttendanceCodes.code }).from(dutyAttendanceCodes),
+      this.db.db.select().from(dutyAttendanceColumnGroups),
+      this.db.db.select().from(dutyAttendanceColumns),
+    ]);
+    const source = groups.find((group) => group.id === id);
+    if (!source) throw new NotFoundException('Không tìm thấy nhóm tiêu đề cột');
+    const parentId = dto.parentId !== undefined ? dto.parentId || null : source.parentId;
+    await this.assertGroupParent(source.sectionId, parentId);
+    const replacements = (dto.replacements ?? []).map((rule) => ({ from: rule.from.trim().toUpperCase(), to: rule.to.trim().toUpperCase() })).filter((rule) => rule.from);
+    const subtree: typeof groups = []; const collect = (groupId: number) => { for (const group of groups.filter((item) => item.parentId === groupId)) { subtree.push(group); collect(group.id); } };
+    collect(id);
+    const depthOf = (groupId: number): number => { const kids = groups.filter((group) => group.parentId === groupId); return 1 + (kids.length ? Math.max(...kids.map((kid) => depthOf(kid.id))) : 0); };
+    if (groupPath(parentId, new Map(groups.map((group) => [group.id, group]))).length + depthOf(id) > MAX_COLUMN_GROUP_DEPTH) throw new BadRequestException(`Tiêu đề chỉ hỗ trợ tối đa ${MAX_COLUMN_GROUP_DEPTH} tầng nhóm dưới một phần`);
+    const groupIds = new Set([id, ...subtree.map((group) => group.id)]);
+    const sourceColumns = columns.filter((column) => column.groupId && groupIds.has(column.groupId));
+    const existingKeys = new Set(columns.map((column) => column.key.toUpperCase()));
+    const codeKeys = new Set(codes.map((code) => code.code.toUpperCase()));
+    const newColumns = sourceColumns.map((column) => {
+      const key = applyReplacements(column.key.toUpperCase(), replacements);
+      if (!COLUMN_KEY.test(key)) throw new BadRequestException(`Mã cột mới “${key}” không hợp lệ (chỉ chữ in hoa, số, dấu gạch dưới, tối đa 32 ký tự)`);
+      if (existingKeys.has(key)) throw new ConflictException(`Mã cột “${key}” (chép từ ${column.key}) đã tồn tại. Hãy khai báo quy tắc thay thế mã, ví dụ NGAY_LE → NGAY_NGHI.`);
+      if (codeKeys.has(key) || ATTENDANCE_SYSTEM_METRIC_KEYS.has(key)) throw new ConflictException(`Mã cột mới “${key}” trùng mã ký hiệu/biến hệ thống`);
+      return { source: column, key, formula: column.columnType === 'FORMULA' ? replaceFormulaReferences(column.formula, replacements) : '' };
+    });
+    const newKeys = newColumns.map((column) => column.key);
+    if (new Set(newKeys).size !== newKeys.length) throw new ConflictException('Sau khi thay thế, có hai cột mới trùng mã; hãy điều chỉnh quy tắc thay thế');
+    const virtualColumns = [...columns.map((column) => ({ key: column.key, columnType: column.columnType, formula: column.formula, active: column.active })), ...newColumns.map((column) => ({ key: column.key, columnType: column.source.columnType, formula: column.formula, active: column.source.active }))];
+    for (const column of newColumns) if (column.formula) this.validateReferences(column.formula, codes, virtualColumns);
+    this.assertFormulaGraph(virtualColumns);
+    return this.db.transaction(async (tx) => {
+      const idMap = new Map<number, number>();
+      const [root] = await tx.insert(dutyAttendanceColumnGroups).values({ sectionId: source.sectionId, parentId, name: dto.name.trim(), color: source.color, sortOrder: dto.sortOrder ?? source.sortOrder + 1, active: source.active }).returning();
+      idMap.set(id, root!.id);
+      for (const group of subtree) {
+        const [copy] = await tx.insert(dutyAttendanceColumnGroups).values({ sectionId: group.sectionId, parentId: idMap.get(group.parentId!)!, name: group.name, color: group.color, sortOrder: group.sortOrder, active: group.active }).returning();
+        idMap.set(group.id, copy!.id);
+      }
+      for (const column of newColumns) {
+        const item = column.source;
+        await tx.insert(dutyAttendanceColumns).values({ sectionId: item.sectionId, groupId: idMap.get(item.groupId!)!, key: column.key, name: item.name, columnType: item.columnType, dataType: item.dataType, formula: column.formula, placeholder: item.placeholder, sortOrder: item.sortOrder, active: item.active });
+      }
+      return { group: root!, groups: subtree.length + 1, columns: newColumns.length, keys: newKeys };
+    });
   }
 
   async createValidation(dto: AttendanceValidationDto) { const expression = dto.expression.trim(); await this.assertValidationConfig(expression); const [item] = await this.db.db.insert(dutyAttendanceValidations).values({ name: dto.name.trim(), expression, message: dto.message?.trim() ?? '', sortOrder: dto.sortOrder ?? 100, active: dto.active ?? true }).returning(); return item; }
@@ -918,16 +1089,21 @@ export class DutyAttendanceService {
 
   private displayColumns(data: Board): DisplayColumn[] {
     const columns: DisplayColumn[] = [];
+    const groupsById = new Map(data.columnGroups.map((group) => [group.id, group]));
     for (const section of data.sections) {
       if (section.kind === 'ADMIN') columns.push(...[
-        { key: 'STT', name: 'STT', source: 'ADMIN', section }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section }, { key: 'TITLE', name: 'Chức vụ', source: 'ADMIN', section },
-        ...(data.multiDepartment ? [{ key: 'DEPARTMENT', name: 'Khoa/Phòng', source: 'ADMIN' as const, section }] : []),
+        { key: 'STT', name: 'STT', source: 'ADMIN', section, path: [] }, { key: 'USERNAME', name: 'MANV', source: 'ADMIN', section, path: [] }, { key: 'FULL_NAME', name: 'Họ và tên', source: 'ADMIN', section, path: [] }, { key: 'TITLE', name: 'Chức vụ', source: 'ADMIN', section, path: [] },
+        ...(data.multiDepartment ? [{ key: 'DEPARTMENT', name: 'Khoa/Phòng', source: 'ADMIN' as const, section, path: [] }] : []),
       ] as DisplayColumn[]);
-      if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day })));
-      if (section.kind === 'SYMBOLS') columns.push(...data.codes.map((code) => ({ key: code.code.toUpperCase(), name: code.name, source: 'VALUE' as const, section })));
-      if (section.kind === 'REPORT' || section.kind === 'CUSTOM') columns.push(...data.columns.filter((column) => column.sectionId === section.id).map((column) => ({ key: column.key.toUpperCase(), name: column.name, source: 'VALUE' as const, section, column })));
+      if (section.kind === 'DAYS') columns.push(...data.dates.map((day) => ({ key: `DAY:${day.date}`, name: String(day.day), source: 'DAY' as const, section, day, path: [] })));
+      if (section.kind === 'SYMBOLS') columns.push(...data.codes.map((code) => ({ key: code.code.toUpperCase(), name: code.name, source: 'VALUE' as const, section, path: [] })));
+      if (section.kind === 'REPORT' || section.kind === 'CUSTOM') columns.push(...data.columns.filter((column) => column.sectionId === section.id).map((column) => ({ key: column.key.toUpperCase(), name: column.name, source: 'VALUE' as const, section, column, path: groupPath(column.groupId, groupsById).map((group) => ({ id: group.id, name: group.name, color: group.color })) })));
     }
     return columns;
+  }
+  /** Ô tiêu đề nhiều tầng (phần → nhóm → cột) theo đúng cấu hình nhóm tiêu đề. */
+  private headerCells(columns: DisplayColumn[]) {
+    return buildHeaderCells(columns.map((column) => ({ sectionId: column.section.id, sectionName: column.section.name, sectionColor: column.section.color, name: column.name, path: column.path })));
   }
   private groups(data: Board) { const columns = this.displayColumns(data); return data.sections.map((section) => ({ section, columns: columns.filter((column) => column.section.id === section.id) })).filter((group) => group.columns.length); }
   private cellValue(person: Board['staff'][number], column: DisplayColumn, data: Board) {
@@ -943,8 +1119,21 @@ export class DutyAttendanceService {
     sheet.mergeCells(1, 1, 1, total); sheet.getCell('A1').value = data.department.hospital.toUpperCase(); sheet.getCell('A1').font = { name: 'Times New Roman', bold: true, size: 12 }; sheet.getCell('A1').alignment = { horizontal: 'center' };
     sheet.mergeCells(2, 1, 2, total); sheet.getCell('A2').value = 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC'; sheet.getCell('A2').font = { name: 'Times New Roman', bold: true, size: 15 }; sheet.getCell('A2').alignment = { horizontal: 'center' };
     sheet.mergeCells(3, 1, 3, total); sheet.getCell('A3').value = `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`; sheet.getCell('A3').alignment = { horizontal: 'center' };
-    let start = 1; for (const group of groups) { const end = start + group.columns.length - 1; if (start !== end) sheet.mergeCells(4, start, 4, end); const cell = sheet.getCell(4, start); cell.value = group.section.name; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(group.section.color) } }; cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.alignment = { horizontal: 'center' }; start = end + 1; }
-    sheet.addRow(columns.map((column) => column.name)); sheet.addRow(columns.map((column) => column.source === 'DAY' ? column.day!.weekday : ''));
+    // Tiêu đề nhiều tầng: hàng 4 = phần, các hàng nhóm, rồi tên cột (gộp dọc tới hàng cuối), sau cùng là hàng thứ/ghi chú.
+    const header = this.headerCells(columns); const headerTop = 4; const infoRow = headerTop + header.rows; const firstDataRow = infoRow + 1;
+    const thin = { style: 'thin' as const }; const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    for (let row = headerTop; row <= infoRow; row++) for (let col = 1; col <= total; col++) { const cell = sheet.getCell(row, col); cell.border = borderAll; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF2F8' } }; }
+    for (const item of header.cells) {
+      const row = headerTop + item.row; const col = item.col + 1;
+      if (item.rowSpan > 1 || item.colSpan > 1) sheet.mergeCells(row, col, row + item.rowSpan - 1, col + item.colSpan - 1);
+      const cell = sheet.getCell(row, col); cell.value = item.text;
+      const fill = item.kind === 'SECTION' ? item.color : item.kind === 'GROUP' && item.color ? item.color : '';
+      if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(fill) } };
+      else if (item.kind === 'GROUP') cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      cell.font = { name: 'Times New Roman', bold: true, size: item.kind === 'LEAF' ? 9 : 10, ...(fill ? { color: { argb: this.excelForeground(fill) } } : {}) };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    }
+    columns.forEach((column, index) => { const cell = sheet.getCell(infoRow, index + 1); cell.value = column.source === 'DAY' ? column.day!.weekday : ''; cell.font = { name: 'Times New Roman', bold: true, size: 9 }; cell.alignment = { horizontal: 'center', vertical: 'middle' }; });
     const dailyNoteRows = new Set<number>();
     const fullNameColumn = columns.findIndex((column) => column.key === 'FULL_NAME');
     for (const person of data.staff) {
@@ -966,10 +1155,10 @@ export class DutyAttendanceService {
         }
       }
     }
-    sheet.views = [{ state: 'frozen', xSplit: Math.min(4, total), ySplit: 6 }];
+    sheet.views = [{ state: 'frozen', xSplit: Math.min(4, total), ySplit: infoRow }];
     columns.forEach((column, index) => { sheet.getColumn(index + 1).width = column.key === 'FULL_NAME' ? 28 : column.key === 'TITLE' ? 20 : column.key === 'USERNAME' ? 16 : column.source === 'DAY' ? 5 : 13; });
-    [4, 5, 6].forEach((row) => sheet.getRow(row).eachCell((cell) => { cell.font = { ...(cell.font ?? {}), bold: true, name: 'Times New Roman', size: 9 }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }; if (row !== 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EAF2F8' } }; }));
-    for (let row = 7; row <= sheet.rowCount; row++) {
+    for (let row = headerTop + 1; row < infoRow; row++) sheet.getRow(row).height = 30;
+    for (let row = firstDataRow; row <= sheet.rowCount; row++) {
       const isDailyNoteRow = dailyNoteRows.has(row); const excelRow = sheet.getRow(row);
       if (isDailyNoteRow) excelRow.height = 30;
       excelRow.eachCell((cell) => {
@@ -983,7 +1172,9 @@ export class DutyAttendanceService {
 
   async exportWord(user: AccessContext, month: string, departmentId?: number, departmentIds?: number[]): Promise<AttendanceExport> {
     const data = await this.exportData(user, month, departmentId, departmentIds); const groups = this.groups(data); const columns = groups.flatMap((group) => group.columns); const mkCell = (value: unknown, bold = false) => new TableCell({ width: { size: Math.max(180, Math.floor(9500 / columns.length)), type: WidthType.DXA }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: String(value ?? ''), bold, size: 14 })] })] });
-    const rows = [new TableRow({ children: columns.map((column) => mkCell(column.section.name, true)) }), new TableRow({ children: columns.map((column) => mkCell(column.name, true)) }), new TableRow({ children: columns.map((column) => mkCell(column.source === 'DAY' ? column.day!.weekday : '', true)) }), ...this.matrix(data).map((row) => new TableRow({ children: row.map((value) => mkCell(value)) }))];
+    const header = this.headerCells(columns);
+    const headerRows = Array.from({ length: header.rows }, (_, row) => new TableRow({ tableHeader: true, children: header.cells.filter((item) => item.row === row).map((item) => this.wordHeaderCell(item, columns.length)) }));
+    const rows = [...headerRows, new TableRow({ tableHeader: true, children: columns.map((column) => mkCell(column.source === 'DAY' ? column.day!.weekday : '', true)) }), ...this.matrix(data).map((row) => new TableRow({ children: row.map((value) => mkCell(value)) }))];
     const doc = new Document({ sections: [{ properties: { page: { size: { width: 16840, height: 11900 }, margin: { top: 600, right: 500, bottom: 600, left: 500 } } }, children: [new Paragraph({ alignment: 'center', children: [new TextRun({ text: data.department.hospital.toUpperCase(), bold: true, size: 20 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC', bold: true, size: 26 })] }), new Paragraph({ alignment: 'center', children: [new TextRun({ text: `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`, italics: true, size: 18 })] }), new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })] }] });
     return { buffer: await Packer.toBuffer(doc), fileName: `BANG_CHAM_CONG_${month}_${data.department.id}.docx`, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
   }
@@ -995,7 +1186,7 @@ export class DutyAttendanceService {
       { id: 'org', type: 'text', x: L, y: 7, w: W, h: 5, text: data.department.hospital.toUpperCase(), style: { bold: true, align: 'center', fontSize: 9 } },
       { id: 'title', type: 'text', x: L, y: 13, w: W, h: 7, text: 'BẢNG CHẤM CÔNG TRỰC VÀ CHẤM CÔNG KHÁC', style: { bold: true, align: 'center', fontSize: 12 } },
       { id: 'sub', type: 'text', x: L, y: 21, w: W, h: 5, text: `Khoa/Phòng: ${data.department.name} — Tháng ${month.slice(5)}/${month.slice(0, 4)}`, style: { italic: true, align: 'center', fontSize: 8 } },
-      { id: 'table', type: 'table', x: L, y: 29, w: W, h: 10, style: { fontSize: 5.8 }, table: { dataSource: 'rows', repeatHeader: true, minRowHeight: 5, columns: columns.map((column, index) => ({ id: `c${index}`, title: column.source === 'DAY' ? `${column.name}\n${column.day!.weekday}` : column.name, width: column.key === 'FULL_NAME' ? 24 : column.key === 'TITLE' ? 17 : width, align: ['FULL_NAME', 'TITLE'].includes(column.key) ? 'left' : 'center', binding: { source: 'row', path: `c${index}` } })) } },
+      { id: 'table', type: 'table', x: L, y: 29, w: W, h: 10, style: { fontSize: 5.8 }, table: { dataSource: 'rows', repeatHeader: true, minRowHeight: 5, columns: columns.map((column, index) => ({ id: `c${index}`, title: column.source === 'DAY' ? `${column.name}\n${column.day!.weekday}` : column.path.length ? `${column.path.map((group) => group.name).join(' › ')}\n${column.name}` : column.name, width: column.key === 'FULL_NAME' ? 24 : column.key === 'TITLE' ? 17 : width, align: ['FULL_NAME', 'TITLE'].includes(column.key) ? 'left' : 'center', binding: { source: 'row', path: `c${index}` } })) } },
       { id: 'legend', type: 'text', x: L, y: 185, w: W, h: 5, text: `Ký hiệu: ${data.codes.map((code) => `${code.code} – ${code.name} (${code.countValue})`).join('; ')}`, style: { fontSize: 7, wrap: true } },
     ] }] } as any;
     const output = await renderPrintDocument(doc, { data: { rows }, fileName: `BANG_CHAM_CONG_${month}` }); return { buffer: output.buffer, fileName: `BANG_CHAM_CONG_${month}_${data.department.id}.pdf`, mime: 'application/pdf' };

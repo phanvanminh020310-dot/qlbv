@@ -47,6 +47,7 @@ test('chấm công khóa cứng vai trò phạm vi khoa; SUPER_ADMIN và Điều
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0040_nhieu_ky_hieu_cham_cong_trong_ngay.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0047_nhom_tieu_de_cot_cham_cong.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true), (11, 'B', 'Khoa B', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES
@@ -132,6 +133,7 @@ test('ngày cuối tuần được đánh dấu riêng; ngày đã qua khóa ở
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0037_danh_muc_chuc_vu_va_thu_tu_cham_cong.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0039_ghi_chu_cham_cong_theo_ngay.sql'), 'utf8'));
   await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0040_nhieu_ky_hieu_cham_cong_trong_ngay.sql'), 'utf8'));
+  await pg.exec(readFileSync(resolve(__dirname, '..', 'drizzle', '0047_nhom_tieu_de_cot_cham_cong.sql'), 'utf8'));
   await pg.exec(`
     INSERT INTO departments (id, code, name, active) VALUES (10, 'A', 'Khoa A', true);
     INSERT INTO users (id, username, password_hash, full_name, department_id, active) VALUES

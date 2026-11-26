@@ -6,6 +6,8 @@ import {
   AttendanceCodeDto,
   AttendanceCodeGroupDto,
   AttendanceColumnDto,
+  AttendanceColumnGroupDto,
+  DuplicateAttendanceColumnGroupDto,
   AttendanceHolidayDto,
   AttendanceMonthQueryDto,
   AttendanceWorkdayOverrideDto,
@@ -74,6 +76,15 @@ export class DutyAttendanceController {
   updateColumn(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceColumnDto) { return this.service.updateColumn(id, dto); }
   @Delete('columns/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_columns', description: 'Xóa cột tự khai báo khi chưa có số liệu lịch sử' })
   deleteColumn(@Param('id', ParseIntPipe) id: number) { return this.service.deleteColumn(id); }
+
+  @Post('column-groups') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'CREATE', entity: 'duty_attendance_column_groups', description: 'Thêm nhóm tiêu đề cột bảng chấm công' })
+  createColumnGroup(@Body() dto: AttendanceColumnGroupDto) { return this.service.createColumnGroup(dto); }
+  @Put('column-groups/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_column_groups', description: 'Sửa nhóm tiêu đề cột bảng chấm công' })
+  updateColumnGroup(@Param('id', ParseIntPipe) id: number, @Body() dto: AttendanceColumnGroupDto) { return this.service.updateColumnGroup(id, dto); }
+  @Delete('column-groups/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'DELETE', entity: 'duty_attendance_column_groups', description: 'Xóa nhóm tiêu đề cột (cột được giữ nguyên)' })
+  deleteColumnGroup(@Param('id', ParseIntPipe) id: number) { return this.service.deleteColumnGroup(id); }
+  @Post('column-groups/:id/duplicate') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'CREATE', entity: 'duty_attendance_column_groups', description: 'Nhân bản nhóm tiêu đề cột cùng các cột con' })
+  duplicateColumnGroup(@Param('id', ParseIntPipe) id: number, @Body() dto: DuplicateAttendanceColumnGroupDto) { return this.service.duplicateColumnGroup(id, dto); }
 
   @Post('validations') @RequirePermissions('duty-attendance.catalog.manage') createValidation(@Body() dto: AttendanceValidationDto) { return this.service.createValidation(dto); }
   @Put('validations/:id') @RequirePermissions('duty-attendance.catalog.manage') @Audit({ module: 'DUTY_ATTENDANCE', action: 'UPDATE', entity: 'duty_attendance_validations', description: 'Sửa ràng buộc cột tự nhập bảng chấm công' })

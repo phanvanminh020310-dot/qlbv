@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, date, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, date, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { departments } from './org';
 import { users } from './system';
 
@@ -63,10 +63,30 @@ export const dutyAttendanceSections = pgTable('duty_attendance_sections', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [uniqueIndex('duty_attendance_sections_code_uq').on(t.code), index('duty_attendance_sections_order_idx').on(t.active, t.sortOrder)]);
 
+/**
+ * Nhóm tiêu đề cột nhiều tầng trong một phần Báo cáo/phần tự tạo. Nhóm lồng nhau qua
+ * parent_id; thứ tự hiển thị là cây: nhóm/cột cùng cấp xếp theo sort_order. Chỉ ảnh hưởng
+ * tiêu đề hiển thị (web, Excel, Word, PDF), không ảnh hưởng mã cột/công thức/số liệu.
+ */
+export const dutyAttendanceColumnGroups = pgTable('duty_attendance_column_groups', {
+  id: serial('id').primaryKey(),
+  sectionId: integer('section_id').notNull().references(() => dutyAttendanceSections.id, { onDelete: 'restrict' }),
+  parentId: integer('parent_id').references((): AnyPgColumn => dutyAttendanceColumnGroups.id, { onDelete: 'restrict' }),
+  name: text('name').notNull(),
+  /** Rỗng = dùng nền nhạt mặc định. */
+  color: text('color').default('').notNull(),
+  sortOrder: integer('sort_order').default(100).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('duty_attendance_column_groups_tree_idx').on(t.sectionId, t.parentId, t.sortOrder)]);
+
 /** Cột do người quản trị khai báo. Giá trị công thức luôn tính lại, chỉ giá trị MANUAL mới lưu CSDL. */
 export const dutyAttendanceColumns = pgTable('duty_attendance_columns', {
   id: serial('id').primaryKey(),
   sectionId: integer('section_id').notNull().references(() => dutyAttendanceSections.id, { onDelete: 'restrict' }),
+  /** Nhóm tiêu đề trực tiếp chứa cột; null = cột nằm ngay dưới phần. */
+  groupId: integer('group_id').references(() => dutyAttendanceColumnGroups.id, { onDelete: 'set null' }),
   key: text('key').notNull(),
   name: text('name').notNull(),
   columnType: text('column_type').$type<DutyAttendanceColumnType>().notNull(),
@@ -77,7 +97,7 @@ export const dutyAttendanceColumns = pgTable('duty_attendance_columns', {
   active: boolean('active').default(true).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, (t) => [uniqueIndex('duty_attendance_columns_key_uq').on(t.key), index('duty_attendance_columns_section_order_idx').on(t.sectionId, t.active, t.sortOrder)]);
+}, (t) => [uniqueIndex('duty_attendance_columns_key_uq').on(t.key), index('duty_attendance_columns_section_order_idx').on(t.sectionId, t.active, t.sortOrder), index('duty_attendance_columns_group_idx').on(t.groupId)]);
 
 /** Quy tắc kiểm tra số liệu tự nhập, dùng biểu thức tham chiếu an toàn [MA_COT]. */
 export const dutyAttendanceValidations = pgTable('duty_attendance_validations', {

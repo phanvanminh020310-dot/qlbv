@@ -83,6 +83,8 @@ export class AttendanceSectionDto {
 }
 export class AttendanceColumnDto {
   @Type(() => Number) @IsInt() sectionId!: number;
+  /** Nhóm tiêu đề trực tiếp chứa cột; null/0 = ngay dưới phần. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) groupId?: number | null;
   @IsString() @IsNotEmpty() @MaxLength(32) @Matches(COLUMN_KEY) key!: string;
   @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
   @IsIn(['FORMULA', 'MANUAL']) columnType!: 'FORMULA' | 'MANUAL';
@@ -91,6 +93,29 @@ export class AttendanceColumnDto {
   @IsOptional() @IsString() @MaxLength(80) placeholder?: string;
   @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
   @IsOptional() @IsBoolean() active?: boolean;
+}
+/** Nhóm tiêu đề cột nhiều tầng (chỉ thuộc phần Báo cáo/phần tự tạo). */
+export class AttendanceColumnGroupDto {
+  @Type(() => Number) @IsInt() sectionId!: number;
+  /** Nhóm cha; null/0 = nhóm cấp 1 ngay dưới phần. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) parentId?: number | null;
+  @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
+  /** Rỗng = nền nhạt mặc định. */
+  @IsOptional() @IsString() @Matches(/^(#[0-9a-fA-F]{6})?$/) color?: string;
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+  /** Khi gửi: đúng danh sách cột thuộc trực tiếp nhóm này (cột bỏ chọn về ngay dưới phần). */
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @Type(() => Number) @IsInt({ each: true }) columnIds?: number[];
+}
+export class ColumnKeyReplacementDto {
+  @IsString() @IsNotEmpty() @MaxLength(32) from!: string;
+  @IsString() @MaxLength(32) to!: string;
+}
+export class DuplicateAttendanceColumnGroupDto {
+  @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) parentId?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => ColumnKeyReplacementDto) replacements?: ColumnKeyReplacementDto[];
 }
 export class AttendanceValidationDto {
   @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
