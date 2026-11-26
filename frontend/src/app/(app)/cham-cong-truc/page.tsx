@@ -105,7 +105,7 @@ function RestBalanceBadge({ values, className = '' }: { values?: Record<string, 
   const duty = Number(values?.SYS_TRUC_TICH_LUY ?? 0); const rest = Number(values?.SYS_NGHI_BU_TICH_LUY ?? 0); const remaining = Number(values?.SYS_CON_DUOC_BU ?? 0);
   if (!duty && !rest) return null;
   const tone = remaining < 0 ? 'border-rose-300 bg-rose-50 text-rose-800' : remaining > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-600';
-  return <span title={`Còn được nghỉ bù = Tổng Trực tích lũy ${numberLabel(duty)} − Tổng nghỉ bù tích lũy ${numberLabel(rest)} (mọi khoa, từ trước đến nay)`} className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone} ${className}`}>Còn được bù: {numberLabel(remaining)}</span>;
+  return <span title={`Nghỉ bù trực còn lại = Tổng Trực tích lũy ${numberLabel(duty)} − Tổng nghỉ bù tích lũy ${numberLabel(rest)} (mọi khoa, từ trước đến nay)`} className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone} ${className}`}>Nghỉ bù trực còn lại: {numberLabel(remaining)}</span>;
 }
 
 function adminValue(person: AttendanceStaff, key: string) { if (key === 'STT') return person.stt; if (key === 'FULL_NAME') return person.fullName; if (key === 'TITLE') return person.managementPosition || person.title; if (key === 'DEPARTMENT') return person.departmentName; return person.manv; }

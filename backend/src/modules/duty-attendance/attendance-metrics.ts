@@ -35,7 +35,7 @@ export const ATTENDANCE_SYSTEM_METRICS = [
   { key: 'SYS_NGHI_BU_CHUA_GAN', label: 'Nghỉ bù vượt số trực', description: 'Phần nghỉ bù trong tháng vượt quá tổng ca Trực tích lũy (thường là dữ liệu cũ); cần rà soát.' },
   { key: 'SYS_TRUC_TICH_LUY', label: 'Tổng Trực tích lũy', description: 'Tổng ca Trực (theo giá trị đếm) của nhân viên từ trước đến nay, mọi khoa/phòng.' },
   { key: 'SYS_NGHI_BU_TICH_LUY', label: 'Tổng nghỉ bù tích lũy', description: 'Tổng nghỉ bù (NB = 1, NB2 = 0,5…) của nhân viên từ trước đến nay, mọi khoa/phòng.' },
-  { key: 'SYS_CON_DUOC_BU', label: 'Còn được nghỉ bù', description: 'Tổng Trực tích lũy trừ tổng nghỉ bù tích lũy. Không được lưu thay đổi làm số này âm.' },
+  { key: 'SYS_CON_DUOC_BU', label: 'Nghỉ bù trực còn lại', description: 'Tổng Trực tích lũy trừ tổng nghỉ bù tích lũy. Không được lưu thay đổi làm số này âm.' },
 ] as const;
 
 export const ATTENDANCE_SYSTEM_METRIC_KEYS = new Set<string>(ATTENDANCE_SYSTEM_METRICS.map((metric) => metric.key));
