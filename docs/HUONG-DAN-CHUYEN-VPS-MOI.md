@@ -83,11 +83,16 @@ grep '^AI_SERVICE_URL' /opt/qlbs/.env
 
 Trên **VPS mới**, đặt giá trị tương ứng. AI Engine chạy cùng máy, nên trỏ vào IP của chính VPS mới (hoặc `host.docker.internal`):
 ```bash
-cd /opt/qlbs
-sudo sed -i '/^AI_SERVICE_URL=/d' .env
+cd /opt/qlbs || exit 1
+sudo sed -i '/AI_SERVICE_URL=/d' .env                 # xóa mọi dòng cũ có AI_SERVICE_URL
+sudo sed -i -e '$a\' .env                            # bảo đảm cuối tệp có xuống dòng, tránh dính vào dòng trước
 echo 'AI_SERVICE_URL=http://172.16.13.76:8001' | sudo tee -a .env
+sudo grep -n 'AI_SERVICE_URL' .env                    # phải thấy đúng 1 dòng, đứng riêng
 sudo docker compose up -d api
+sudo docker compose exec api printenv AI_SERVICE_URL  # container phải in ra http://172.16.13.76:8001
 ```
+
+> Tệp `.env` thuộc root và đang ẩn (tên bắt đầu bằng dấu chấm). Hãy mở bằng `sudo nano /opt/qlbs/.env`, rồi bấm Ctrl+W để tìm. Nếu mở bằng WinSCP/MobaXterm với user thường, bạn có thể đang xem nhầm tệp `/opt/qlbs-ai-engine/.env` hoặc một bản cũ.
 
 > **Không** để VPS mới trỏ tới `172.16.13.75:8001`. Nếu để vậy, máy mới vẫn chạy được lúc đầu, nhưng sẽ hỏng ngay khi tắt VPS cũ.
 
