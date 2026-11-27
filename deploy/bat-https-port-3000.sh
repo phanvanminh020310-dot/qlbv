@@ -72,7 +72,10 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    client_max_body_size 50m;
+    client_max_body_size 20g;
+    proxy_request_buffering off;
+    proxy_read_timeout 1800s;
+    proxy_send_timeout 1800s;
 
     location / {
         proxy_pass http://127.0.0.1:3001;

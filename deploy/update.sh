@@ -288,7 +288,11 @@ server {
   ssl_session_timeout 1d;
   ssl_session_cache shared:QLBSTLS:10m;
 
-  client_max_body_size 50m;
+  # Sao lưu/phục hồi: tệp backup có thể vài GB và phục hồi mất nhiều phút.
+  client_max_body_size 20g;
+  proxy_request_buffering off;
+  proxy_read_timeout 1800s;
+  proxy_send_timeout 1800s;
   location / {
     proxy_pass http://127.0.0.1:$web_port;
     proxy_http_version 1.1;
@@ -363,6 +367,27 @@ EOF
   env_set CORS_ORIGINS "$current_cors"
   TLS_CHANGED=1
 }
+
+# Vhost HTTPS tự ký cổng 3000 (bat-https-port-3000.sh) cũ chỉ cho tệp 50 MB và chờ 60 giây:
+# tải lên/phục hồi bản sao lưu lớn bị Nginx cắt (413/504). Nâng giới hạn một lần, có kiểm tra
+# nginx -t và trả lại bản cũ nếu lỗi. Không đụng certificate, IP hay cổng.
+harden_legacy_nginx() {
+  local conf="${QLBS_NGINX_ROOT:-/etc/nginx}/sites-available/qlbs-ssl-3000.conf" backup
+  [[ -f "$conf" && $EUID -eq 0 ]] || return 0
+  grep -q 'proxy_read_timeout' "$conf" && return 0
+  command -v nginx >/dev/null 2>&1 || return 0
+  backup=$(mktemp); cp -p "$conf" "$backup"
+  sed -i -E 's|^([[:space:]]*)client_max_body_size[[:space:]]+[^;]+;|\1client_max_body_size 20g;\n\1proxy_request_buffering off;\n\1proxy_read_timeout 1800s;\n\1proxy_send_timeout 1800s;|' "$conf"
+  if ! grep -q 'proxy_read_timeout' "$conf"; then cp -p "$backup" "$conf"; rm -f "$backup"; warn "Không tìm thấy client_max_body_size trong $conf; giữ nguyên"; return 0; fi
+  if nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1; then
+    ok "Nginx cổng 3000: cho tệp tới 20 GB, chờ tới 30 phút (sao lưu/phục hồi lớn)"
+  else
+    cp -p "$backup" "$conf"; nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+    warn "Không áp được giới hạn mới cho $conf; đã trả lại cấu hình cũ"
+  fi
+  rm -f "$backup"
+}
+harden_legacy_nginx
 
 configure_domain_https
 

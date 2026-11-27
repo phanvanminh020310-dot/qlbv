@@ -22,6 +22,10 @@ const nextConfig = {
     webpackBuildWorker: false,
     // Sao lưu / phục hồi CSDL lớn có thể mất vài phút — mặc định proxy chỉ chờ 30 giây
     proxyTimeout: 15 * 60 * 1000,
+    // Proxy rewrites của Next 15 cắt thân yêu cầu ở 10 MB nhưng vẫn gửi nguyên Content-Length
+    // → API chờ mãi, Nginx báo 504. Nâng ngưỡng cho các tệp tải lên thông thường (HSBA, ảnh,
+    // nhập Excel). Tệp sao lưu lớn đi qua route streaming riêng: src/app/api/backups/upload.
+    middlewareClientMaxBodySize: '100mb',
   },
   async rewrites() {
     return [
