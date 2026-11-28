@@ -27,6 +27,8 @@
 #    --api        Chỉ dựng lại api        --web   Chỉ dựng lại web
 #    --no-pull    Bỏ qua git pull (dùng khi đã sửa code trực tiếp trên máy chủ)
 #    --backup     Sao lưu .env, compose, SSL và CSDL trước pull/build (data/upgrade-backups/)
+#  Sau mỗi lần chạy tự dọn build cache Docker, giữ ≤ 5GB dùng gần nhất
+#  (đổi bằng QLBS_BUILD_CACHE_KEEP=10GB trong .env, tắt bằng QLBS_BUILD_CACHE_KEEP=off).
 # ==============================================================================
 set -Eeuo pipefail
 
@@ -77,6 +79,29 @@ csv_add_once() { # csv_add_once csv value
   IFS=',' read -r -a items <<< "$csv"
   for item in "${items[@]}"; do [[ "$item" == "$value" ]] && { printf '%s' "$csv"; return; }; done
   [[ -n "$csv" ]] && printf '%s,%s' "$csv" "$value" || printf '%s' "$value"
+}
+# BuildKit build cache KHÔNG bị `docker image prune` xoá và cộng dồn sau mỗi lần build
+# (thực tế đã gặp 27 GB / 1252 bản ghi → mỗi lần update ổ đĩa giảm 100+ MB).
+# Giữ lại phần cache dùng gần nhất (mặc định 5GB) để lần build sau vẫn nhanh.
+# Đổi mức giữ: QLBS_BUILD_CACHE_KEEP=10GB trong .env; tắt: QLBS_BUILD_CACHE_KEEP=off.
+prune_build_cache() {
+  local keep out freed
+  keep=${QLBS_BUILD_CACHE_KEEP:-$(env_get QLBS_BUILD_CACHE_KEEP)}
+  keep=${keep:-5GB}
+  [[ "$keep" == off ]] && return 0
+  if [[ ! "$keep" =~ ^[0-9]+(\.[0-9]+)?([kKmMgGtT][bB]?)?$ ]]; then
+    warn "QLBS_BUILD_CACHE_KEEP='$keep' không hợp lệ — dùng 5GB"; keep=5GB
+  fi
+  # --keep-storage (Docker 18.09–27; Docker 28+ vẫn nhận nhưng báo deprecated) →
+  # --reserved-space (Docker 28+) → cuối cùng chỉ xoá cache cũ hơn 7 ngày.
+  if out=$(docker builder prune -af --keep-storage "$keep" 2>&1) \
+     || out=$(docker builder prune -af --reserved-space "$keep" 2>&1) \
+     || out=$(docker builder prune -af --filter until=168h 2>&1); then
+    freed=$(sed -n 's/^Total[^:]*:[[:space:]]*//p' <<<"$out" | tail -1)
+    ok "Dọn build cache Docker (giữ ≤ $keep dùng gần nhất): giải phóng ${freed:-0B}"
+  else
+    warn "Không dọn được build cache Docker — tự chạy: sudo docker builder prune -af --keep-storage $keep"
+  fi
 }
 is_hostname() {
   [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
@@ -412,6 +437,7 @@ grep -qE '^(docker-compose\.yml|\.env\.example)$' <<<"$CHANGED" && COMPOSE_CHANG
 if [[ ${#BUILD[@]} -eq 0 && ${#RECREATE[@]} -eq 0 && $COMPOSE_CHANGED -eq 0 ]]; then
   step "Không có thay đổi cần dựng lại"
   ok "Chỉ đổi tài liệu hoặc không có gì mới — hệ thống giữ nguyên"
+  prune_build_cache
   "${DC[@]}" ps
   exit 0
 fi
@@ -473,6 +499,7 @@ if [[ -n "$TLS_DOMAIN" ]]; then
 fi
 
 docker image prune -f >/dev/null 2>&1 || true
+prune_build_cache
 "${DC[@]}" ps
 
 ELAPSED=$(( $(date +%s) - START ))

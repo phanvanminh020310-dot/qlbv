@@ -19,6 +19,9 @@ name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 with open(os.environ['CALL_LOG'],'a') as f: f.write(name+' '+ ' '.join(a)+'\\n')
 if name=='docker':
  if 'version' in a: sys.exit(0)
+ if a[:2]==['builder','prune']:
+  if os.environ.get('PRUNE_OLD_FLAG_FAIL') and '--keep-storage' in a: sys.stderr.write('unknown flag: --keep-storage\\n'); sys.exit(125)
+  print('ID\\tRECLAIMABLE\\tSIZE\\nabc\\ttrue\\t1.2GB\\nTotal:\\t1.2GB'); sys.exit(0)
  if 'exec' in a and 'pg_restore' in a:
   data=sys.stdin.buffer.read();sys.exit(0 if data.startswith(b'PGDMP') and os.environ.get('DUMP_MODE')!='corrupt' else 1)
  if 'exec' in a:
@@ -106,6 +109,33 @@ class UpdateSafetyTests(unittest.TestCase):
             self.assertEqual((self.root / path).read_bytes(), content)
         self.assertEqual((snapshot / '.env').read_bytes(), originals['.env'])
         self.assertEqual((snapshot / 'ssl/server.crt').read_bytes(), originals['data/ssl/server.crt'])
+
+    def test_build_prunes_buildkit_cache_keeping_recent_5gb(self):
+        result, calls = self.run_update()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('docker builder prune -af --keep-storage 5GB', calls)
+        self.assertLess(calls.index('compose build web'), calls.index('builder prune'))
+        self.assertIn('giải phóng 1.2GB', result.stdout)
+
+    def test_no_change_run_still_prunes_build_cache(self):
+        result, calls = self.run_update(args=['--no-pull'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('compose build', calls)
+        self.assertIn('docker builder prune -af --keep-storage 5GB', calls)
+
+    def test_build_cache_keep_override_and_new_docker_flag_fallback(self):
+        result, calls = self.run_update(QLBS_BUILD_CACHE_KEEP='10GB', PRUNE_OLD_FLAG_FAIL='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('docker builder prune -af --reserved-space 10GB', calls)
+
+    def test_build_cache_prune_can_be_disabled_and_rejects_bad_value(self):
+        result, calls = self.run_update(QLBS_BUILD_CACHE_KEEP='off')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('builder prune', calls)
+        self.log.unlink()
+        result, calls = self.run_update(QLBS_BUILD_CACHE_KEEP='5GB; rm -rf /')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('docker builder prune -af --keep-storage 5GB', calls)
 
     def test_stash_conflict_stops_before_build_instead_of_warning_and_continuing(self):
         result, calls = self.run_update(args=['--all', '--backup'], DIRTY='1', STASH_CONFLICT='1')
