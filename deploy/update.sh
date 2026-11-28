@@ -92,6 +92,7 @@ prune_build_cache() {
   if [[ ! "$keep" =~ ^[0-9]+(\.[0-9]+)?([kKmMgGtT][bB]?)?$ ]]; then
     warn "QLBS_BUILD_CACHE_KEEP='$keep' không hợp lệ — dùng 5GB"; keep=5GB
   fi
+  step "Dọn build cache Docker (giữ ≤ $keep) — lần đầu cache lớn có thể mất 10–40 phút, cứ để chạy"
   # --keep-storage (Docker 18.09–27; Docker 28+ vẫn nhận nhưng báo deprecated) →
   # --reserved-space (Docker 28+) → cuối cùng chỉ xoá cache cũ hơn 7 ngày.
   if out=$(docker builder prune -af --keep-storage "$keep" 2>&1) \
