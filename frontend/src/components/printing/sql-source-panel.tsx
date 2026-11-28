@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Database, FileDown, FileSpreadsheet, Play, Plus, Table2, Trash2, Type as TypeIcon } from 'lucide-react';
+import { Code2, Database, FileDown, FileSpreadsheet, MousePointerClick, Play, Plus, Table2, Trash2, Type as TypeIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -10,18 +10,26 @@ import { Input, Select } from '@/components/ui/input';
 import { apiFetch, downloadFile } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { nextId, type PrintElement } from './print-types';
+import { makeTableElement, usePrintFields } from './print-fields';
+import { QueryBuilderEditor, builderProblems, type BuilderSpec, type CatalogTable } from './query-builder-editor';
 
 /* Khớp backend print-sql-source.ts */
 export type SqlParamType = 'text' | 'number' | 'date' | 'boolean';
 export interface SqlParam { name: string; label?: string; type: SqlParamType; required?: boolean; default?: string }
-export interface SqlQuery { key: string; label?: string; sql: string }
+export interface SqlQuery {
+  key: string;
+  label?: string;
+  sql: string;
+  /** Truy vấn dựng bằng “Chọn bảng” — máy chủ tự sinh `sql` */
+  builder?: BuilderSpec;
+}
 export interface SqlSource { queries: SqlQuery[]; params?: SqlParam[] }
 
 interface TestResult {
-  queries: Array<{ key: string; label?: string; rowCount: number; ms?: number; columns?: string[]; truncated?: boolean; rows: Record<string, unknown>[] }>;
+  queries: Array<{ key: string; label?: string; sql?: string; rowCount: number; ms?: number; columns?: string[]; truncated?: boolean; rows: Record<string, unknown>[] }>;
   params: Record<string, unknown>;
 }
-interface Catalog { items: Array<{ name: string; kind: 'view' | 'table'; columns: Array<{ name: string; type: string }> }>; autoParams: Record<string, { cast: string; label: string }> }
+interface Catalog { items: CatalogTable[]; autoParams: Record<string, { cast: string; label: string }> }
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
 const PARAM_TYPE_LABEL: Record<SqlParamType, string> = { text: 'Chữ', number: 'Số', date: 'Ngày', boolean: 'Có/Không' };
@@ -43,14 +51,17 @@ export function SqlSourceSummary({ source, onOpen, canAuthor }: { source: SqlSou
   return (
     <div className="space-y-2 text-xs">
       <p className="text-[11px] text-[var(--muted-foreground)]">
-        Lấy dữ liệu in trực tiếp từ CSDL bằng câu lệnh SELECT (chỉ đọc). Kết quả dùng trong mẫu: <code>ds.&lt;mã&gt;</code> (danh sách cho bảng),{' '}
-        <code>one.&lt;mã&gt;.&lt;cột&gt;</code> (dòng đầu), <code>params.&lt;tên&gt;</code>.
+        Lấy dữ liệu in trực tiếp từ CSDL (chỉ đọc): <b>chọn bảng</b> trên giao diện hoặc viết câu SELECT. Cột lấy được tự hiện ở tab <b>Trường</b>; dùng
+        trong mẫu: <code>ds.&lt;mã&gt;</code> (danh sách cho bảng), <code>one.&lt;mã&gt;.&lt;cột&gt;</code> (dòng đầu), <code>params.&lt;tên&gt;</code>.
       </p>
       {source ? (
         <ul className="space-y-1">
           {source.queries.map((q) => (
             <li key={q.key} className="rounded border bg-[var(--background)] px-2 py-1">
-              <div className="font-mono font-semibold">{q.key}</div>
+              <div className="flex items-center gap-1 font-mono font-semibold">
+                {q.key}
+                <span className="ml-auto rounded bg-[var(--muted)] px-1 font-sans text-[9px] font-normal">{q.builder ? `bảng ${q.builder.table}` : 'SQL'}</span>
+              </div>
               {q.label ? <div className="text-[var(--muted-foreground)]">{q.label}</div> : null}
             </li>
           ))}
@@ -60,7 +71,7 @@ export function SqlSourceSummary({ source, onOpen, canAuthor }: { source: SqlSou
         <p className="rounded border border-dashed p-2 text-center text-[var(--muted-foreground)]">Mẫu chưa dùng nguồn SQL</p>
       )}
       <Button size="sm" variant="outline" className="w-full" onClick={onOpen}>
-        <Database /> {canAuthor ? (source ? 'Mở trình soạn SQL' : 'Thêm nguồn dữ liệu SQL') : 'Xem nguồn dữ liệu'}
+        <Database /> {canAuthor ? (source ? 'Sửa nguồn dữ liệu' : 'Thêm nguồn dữ liệu (chọn bảng / SQL)') : 'Xem nguồn dữ liệu'}
       </Button>
       {!canAuthor ? <p className="text-[10px] text-amber-700">Cần quyền “Soạn nguồn dữ liệu SQL cho mẫu in” để chỉnh/chạy thử.</p> : null}
     </div>
@@ -98,7 +109,11 @@ export function SqlSourceDialog({
 
   useEffect(() => {
     if (!open) return;
-    setDraft(source ? { queries: source.queries.map((q) => ({ ...q })), params: (source.params ?? []).map((p) => ({ ...p })) } : { queries: [{ key: 'du_lieu', label: '', sql: 'select 1 as so' }], params: [] });
+    setDraft(
+      source
+        ? { queries: source.queries.map((q) => ({ ...q, ...(q.builder ? { builder: JSON.parse(JSON.stringify(q.builder)) as BuilderSpec } : {}) })), params: (source.params ?? []).map((p) => ({ ...p })) }
+        : { queries: [{ key: 'du_lieu', label: '', sql: '', builder: { table: '', columns: [] } }], params: [] },
+    );
     setActive(0);
     setResult(null);
     setError(null);
@@ -108,7 +123,11 @@ export function SqlSourceDialog({
   const catalog = useQuery({ queryKey: ['print', 'sql-catalog'], queryFn: () => apiFetch<Catalog>('/print/sql/catalog'), enabled: open && canAuthor, staleTime: 300_000 });
   const catItems = useMemo(() => {
     const q = catQ.trim().toLowerCase();
-    return (catalog.data?.items ?? []).filter((t) => !q || t.name.includes(q) || t.columns.some((c) => c.name.includes(q))).slice(0, 80);
+    const f = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
+    const qq = f(q);
+    return (catalog.data?.items ?? [])
+      .filter((t) => !qq || f(`${t.name} ${t.label ?? ''}`).includes(qq) || t.columns.some((c) => f(`${c.name} ${c.label ?? ''}`).includes(qq)))
+      .slice(0, 80);
   }, [catalog.data, catQ]);
 
   const q = draft.queries[active];
@@ -123,7 +142,8 @@ export function SqlSourceDialog({
       if (!KEY_RE.test(x.key)) out.push(`Mã truy vấn “${x.key}” chỉ gồm chữ thường, số, gạch dưới và bắt đầu bằng chữ`);
       if (keys.has(x.key)) out.push(`Trùng mã truy vấn “${x.key}”`);
       keys.add(x.key);
-      if (!x.sql.trim()) out.push(`Truy vấn “${x.key}” đang trống`);
+      if (x.builder) out.push(...builderProblems(x.builder, x.key, params.map((p) => p.name)));
+      else if (!x.sql.trim()) out.push(`Truy vấn “${x.key}” đang trống`);
     }
     const names = new Set<string>();
     for (const p of params) {
@@ -134,6 +154,24 @@ export function SqlSourceDialog({
     }
     return out;
   }, [draft, params, catalog.data]);
+
+  // Cột + nhãn tiếng Việt của bản nháp (không đọc dữ liệu) — dùng khi chèn bảng và xem SQL sinh ra
+  const draftFields = usePrintFields(null, problems.length ? null : draft, open && canAuthor);
+  const fieldsOf = (key: string) => draftFields.data?.groups.find((g) => g.id === `ds.${key}`)?.fields ?? [];
+  const sqlOf = (key: string) => draftFields.data?.groups.find((g) => g.id === `one.${key}`)?.sql ?? result?.queries.find((x) => x.key === key)?.sql ?? '';
+
+  /** Đổi cách soạn truy vấn đang chọn: chọn bảng ⇄ viết SQL (giữ câu SQL máy chủ đã sinh) */
+  const switchMode = (mode: 'builder' | 'sql') => {
+    if (!q) return;
+    if (mode === 'sql' && q.builder) {
+      const generated = sqlOf(q.key);
+      setDraft({ ...draft, queries: draft.queries.map((x, i) => (i === active ? { key: x.key, label: x.label, sql: generated } : x)) });
+      if (!generated) toast.message('Chưa sinh được SQL — hãy chọn bảng/cột trước hoặc viết mới');
+    } else if (mode === 'builder' && !q.builder) {
+      if (q.sql.trim()) toast.message('Câu SQL đang viết sẽ được thay bằng cấu hình chọn bảng');
+      setDraft({ ...draft, queries: draft.queries.map((x, i) => (i === active ? { ...x, sql: '', builder: { table: '', columns: [] } } : x)) });
+    }
+  };
 
   const test = async () => {
     setRunning(true);
@@ -172,40 +210,27 @@ export function SqlSourceDialog({
   };
 
   const insertTable = (key: string) => {
-    const cols = columnsOf(key);
-    if (!cols.length) return toast.warning('Hãy chạy thử để biết các cột trước khi chèn bảng');
-    const width = Math.max(10, Math.floor((190 - 10) / cols.length));
-    onInsert([
-      {
-        id: nextId('table'),
-        type: 'table',
-        name: `Bảng ${key}`,
-        x: 10,
-        y: 40,
-        w: 190,
-        h: 20,
-        table: {
-          dataSource: `ds.${key}`,
-          repeatHeader: true,
-          minRowHeight: 6,
-          columns: [
-            { id: nextId('col'), title: 'STT', width: 10, align: 'center', binding: { source: 'system', path: 'index' } },
-            ...cols.map((c) => ({ id: nextId('col'), title: c, width, align: 'left' as const, binding: { source: 'row', path: c } })),
-          ],
-        },
-        style: { fontSize: 10, wrap: true, verticalAlign: 'middle' },
-      },
-    ]);
+    const labelled = fieldsOf(key);
+    const cols = labelled.length ? labelled.map((f) => ({ key: f.key, label: f.label, type: f.type })) : columnsOf(key).map((c) => ({ key: c, label: c, type: 'text' }));
+    if (!cols.length) return toast.warning('Chưa có cột — chọn cột hoặc bấm Chạy thử trước khi chèn bảng');
+    onInsert([makeTableElement(`ds.${key}`, cols, { name: `Bảng ${draft.queries.find((x) => x.key === key)?.label || key}` })]);
     toast.success(`Đã chèn bảng lấy dữ liệu từ ds.${key}`);
   };
   const insertField = (key: string, col: string) => {
-    onInsert([{ id: nextId('field'), type: 'field', name: `${key}.${col}`, x: 10, y: 20, w: 60, h: 7, binding: { source: 'field', path: `one.${key}.${col}` }, style: { fontSize: 11 } }]);
+    const label = draftFields.data?.groups.find((g) => g.id === `one.${key}`)?.fields.find((f) => f.column === col)?.label;
+    onInsert([{ id: nextId('field'), type: 'field', name: label || `${key}.${col}`, x: 10, y: 20, w: 60, h: 7, binding: { source: 'field', path: `one.${key}.${col}` }, style: { fontSize: 11 } }]);
   };
 
   const save = () => {
     if (problems.length) return toast.error(problems[0]!);
     const cleaned: SqlSource = {
-      queries: draft.queries.map((x) => ({ key: x.key, sql: x.sql.trim(), ...(x.label?.trim() ? { label: x.label.trim() } : {}) })),
+      queries: draft.queries.map((x) => ({
+        key: x.key,
+        // Truy vấn chọn bảng: máy chủ sinh lại SQL khi lưu/chạy (giữ bản đã sinh để mẫu dùng được ngay)
+        sql: x.builder ? sqlOf(x.key) : x.sql.trim(),
+        ...(x.label?.trim() ? { label: x.label.trim() } : {}),
+        ...(x.builder ? { builder: x.builder } : {}),
+      })),
       params: params.map((p) => ({ name: p.name, type: p.type, ...(p.label ? { label: p.label } : {}), ...(p.required ? { required: true } : {}), ...(p.default ? { default: p.default } : {}) })),
     };
     onChange(cleaned.queries.length ? cleaned : null);
@@ -218,8 +243,8 @@ export function SqlSourceDialog({
       open={open}
       onClose={onClose}
       size="full"
-      title="Nguồn dữ liệu SQL của mẫu in"
-      description="Chỉ cho phép SELECT/WITH, chạy chỉ-đọc, tối đa 15 giây và 5.000 dòng. Dùng :ten_tham_so trong câu lệnh; tham số tự động: :nguoi_dung_id, :khoa_id, :pham_vi_khoa (NULL = toàn viện)."
+      title="Nguồn dữ liệu của mẫu in"
+      description="Chọn bảng trên giao diện (không cần SQL) hoặc tự viết SELECT. Luôn chạy chỉ-đọc, tối đa 15 giây và 5.000 dòng; tự giới hạn theo phạm vi khoa của người in khi bật."
       footer={
         <>
           {editable && source ? <Button variant="ghost" className="mr-auto text-red-600" onClick={() => { onChange(null); onClose(); }}><Trash2 /> Bỏ nguồn SQL</Button> : null}
@@ -237,7 +262,7 @@ export function SqlSourceDialog({
               </button>
             ))}
             {editable && draft.queries.length < 10 ? (
-              <Button size="sm" variant="ghost" onClick={() => { setDraft({ ...draft, queries: [...draft.queries, { key: `truy_van_${draft.queries.length + 1}`, sql: '' }] }); setActive(draft.queries.length); }}><Plus /> Truy vấn</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setDraft({ ...draft, queries: [...draft.queries, { key: `truy_van_${draft.queries.length + 1}`, sql: '', builder: { table: '', columns: [] } }] }); setActive(draft.queries.length); }}><Plus /> Truy vấn</Button>
             ) : null}
           </div>
           {q ? (
@@ -248,6 +273,29 @@ export function SqlSourceDialog({
             </div>
           ) : null}
           {q ? (
+            <div className="flex flex-wrap items-center gap-1 text-xs">
+              <span className="text-[var(--muted-foreground)]">Cách lấy dữ liệu:</span>
+              <button type="button" disabled={!editable} onClick={() => switchMode('builder')} className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-1', q.builder ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]' : 'hover:bg-[var(--muted)]')}>
+                <MousePointerClick className="size-3.5" /> Chọn bảng (không cần SQL)
+              </button>
+              <button type="button" disabled={!editable} onClick={() => switchMode('sql')} className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-1', !q.builder ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]' : 'hover:bg-[var(--muted)]')}>
+                <Code2 className="size-3.5" /> Viết SQL
+              </button>
+            </div>
+          ) : null}
+          {q?.builder ? (
+            <QueryBuilderEditor
+              spec={q.builder}
+              onChange={(builder) => setQuery({ builder })}
+              catalog={catalog.data?.items ?? []}
+              loading={catalog.isLoading}
+              params={params}
+              setParams={setParams}
+              editable={editable}
+              generatedSql={sqlOf(q.key)}
+            />
+          ) : null}
+          {q && !q.builder ? (
             <textarea
               value={q.sql}
               readOnly={!editable}
@@ -301,7 +349,7 @@ export function SqlSourceDialog({
               </>
             ) : null}
             {problems.length ? <span className="text-xs text-red-600">{problems[0]}</span> : null}
-            {q && result ? (
+            {q && (result || fieldsOf(q.key).length) ? (
               <>
                 <Button size="sm" variant="outline" onClick={() => insertTable(q.key)} disabled={readOnly}><Table2 /> Chèn bảng từ “{q.key}”</Button>
               </>
@@ -354,12 +402,27 @@ export function SqlSourceDialog({
                 <summary className="cursor-pointer font-mono">
                   <span className={cn('mr-1 rounded px-1 text-[9px] uppercase', t.kind === 'view' ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-700')}>{t.kind}</span>
                   {t.name}
+                  {t.label && t.label !== t.name ? <div className="truncate pl-1 font-sans text-[10px] text-[var(--muted-foreground)]">{t.label}</div> : null}
                 </summary>
                 <ul className="mt-1 space-y-0.5 pl-2">
                   {t.columns.map((c) => (
                     <li key={c.name}>
-                      <button type="button" disabled={!editable || !q} className="font-mono hover:text-[var(--primary)]" onClick={() => q && setQuery({ sql: `${q.sql}${q.sql.endsWith(' ') || !q.sql ? '' : ' '}${c.name}` })}>{c.name}</button>{' '}
-                      <span className="text-[var(--muted-foreground)]">{c.type}</span>
+                      <button
+                        type="button"
+                        disabled={!editable || !q || (!!q.builder && !!q.builder.table && q.builder.table !== t.name)}
+                        className="font-mono hover:text-[var(--primary)] disabled:opacity-50"
+                        title={q?.builder ? 'Thêm cột vào truy vấn chọn bảng' : 'Chèn tên cột vào câu SQL'}
+                        onClick={() => {
+                          if (!q) return;
+                          if (q.builder) {
+                            const b = q.builder.table ? q.builder : { table: t.name, columns: [], ...(t.scopeColumn ? { scopeColumn: t.scopeColumn } : {}) };
+                            if (!b.columns.some((x) => x.name === c.name && !x.agg)) setQuery({ builder: { ...b, columns: [...b.columns, { name: c.name, ...(c.label && c.label !== c.name ? { label: c.label } : {}) }] } });
+                          } else setQuery({ sql: `${q.sql}${q.sql.endsWith(' ') || !q.sql ? '' : ' '}${c.name}` });
+                        }}
+                      >
+                        {c.name}
+                      </button>{' '}
+                      <span className="text-[var(--muted-foreground)]">{c.label && c.label !== c.name ? c.label : c.type}</span>
                     </li>
                   ))}
                 </ul>

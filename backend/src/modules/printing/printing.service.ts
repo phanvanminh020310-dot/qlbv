@@ -6,7 +6,10 @@
  * để khôi phục lại thiết kế cũ.
  */
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { PrintSqlService, normalizeSqlSource } from './print-sql-source';
+import { PrintSqlService, normalizeSqlSource, scopeDepartments, type PrintSqlSource } from './print-sql-source';
+import { columnLabel, referencedTables, sqlTypeToFieldType, tableLabel } from './print-query-builder';
+import { PRINT_MODULE_CATALOG, moduleLabel, normalizeModuleCode } from './print-modules';
+import { TABLE_COMMENTS } from '../../db/schema-comments';
 import { and, asc, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { printTemplateVersions, printTemplates } from '../../db/schema';
@@ -151,6 +154,7 @@ export class PrintingService {
   async create(dto: PrintTemplateInput, user?: AccessContext, opts: { copiedFrom?: PrintDocument } = {}) {
     // Nhân bản giữ nguyên SQL đã được người có quyền soạn — chỉ chặn khi SQL khác bản gốc
     if (user && this.sqlSource) this.sqlSource.assertCanSave(user, dto.document, opts.copiedFrom);
+    dto = { ...dto, module: normalizeModuleCode(dto.module), document: withNormalizedSql(dto.document) };
     const [dup] = await this.db.db
       .select({ id: printTemplates.id })
       .from(printTemplates)
@@ -199,6 +203,8 @@ export class PrintingService {
   async update(id: number, dto: Partial<PrintTemplateInput>, user?: AccessContext) {
     const current = await this.findOne(id);
     if (user && this.sqlSource && dto.document !== undefined) this.sqlSource.assertCanSave(user, dto.document, current.document);
+    if (dto.document !== undefined) dto = { ...dto, document: withNormalizedSql(dto.document) };
+    if (dto.module !== undefined) dto = { ...dto, module: normalizeModuleCode(dto.module, current.module) };
     const documentChanged =
       dto.document !== undefined &&
       JSON.stringify(dto.document) !== JSON.stringify(current.document);
@@ -360,19 +366,180 @@ export class PrintingService {
     };
   }
 
-  /** View/bảng (không nhạy cảm) cùng cột — gợi ý cho trình soạn SQL mẫu in. Ưu tiên view tiếng Việt v_*. */
-  async sqlCatalog(): Promise<Array<{ name: string; kind: string; columns: Array<{ name: string; type: string }> }>> {
+  /**
+   * View/bảng (không nhạy cảm) cùng cột — dùng cho trình soạn SQL và trình chọn bảng.
+   * Nhãn lấy từ từ điển dữ liệu tiếng Việt (hoặc COMMENT trong CSDL). Bảng mới tạo sau này
+   * tự xuất hiện vì đọc trực tiếp từ information_schema.
+   */
+  async sqlCatalog(): Promise<CatalogTable[]> {
     const res = await this.db.db.execute(sql`
-      select c.table_name as name, t.table_type as kind, json_agg(json_build_object('name', c.column_name, 'type', c.data_type) order by c.ordinal_position) as columns
+      select c.table_name as name, t.table_type as kind,
+             obj_description(format('%I.%I', c.table_schema, c.table_name)::regclass, 'pg_class') as comment,
+             json_agg(json_build_object(
+               'name', c.column_name, 'type', c.data_type,
+               'comment', col_description(format('%I.%I', c.table_schema, c.table_name)::regclass, c.ordinal_position::int)
+             ) order by c.ordinal_position) as columns
         from information_schema.columns c
         join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name
        where c.table_schema = 'public'
-         and c.table_name not in ('user_biometrics', 'integration_keys', 'settings', 'login_logs', '_qlbs_migrations', 'user_sessions', 'refresh_tokens')
+         and c.table_name not in ('user_biometrics', 'integration_keys', 'settings', 'login_logs', '_qlbs_migrations', '__drizzle_migrations', 'user_sessions', 'refresh_tokens')
          and c.column_name not in ('password_hash', 'two_factor_secret', 'key_hash', 'secret_hash', 'telegram_chat_id', 'token_hash')
-       group by c.table_name, t.table_type
+       group by c.table_schema, c.table_name, t.table_type
        order by (t.table_type = 'VIEW') desc, c.table_name`);
-    const rows = ((res as unknown as { rows?: unknown[] }).rows ?? (res as unknown as unknown[])) as Array<{ name: string; kind: string; columns: Array<{ name: string; type: string }> }>;
-    return rows.map((r) => ({ name: r.name, kind: r.kind === 'VIEW' ? 'view' : 'table', columns: r.columns }));
+    const rows = ((res as unknown as { rows?: unknown[] }).rows ?? (res as unknown as unknown[])) as Array<{
+      name: string;
+      kind: string;
+      comment: string | null;
+      columns: Array<{ name: string; type: string; comment: string | null }>;
+    }>;
+    return rows.map((r) => {
+      const columns = r.columns.map((c) => ({
+        name: c.name,
+        type: c.type,
+        fieldType: sqlTypeToFieldType(c.type),
+        label: columnLabel(c.name, [r.name]) || c.name,
+      }));
+      const scope = columns.find((c) => ['khoa_id', 'department_id'].includes(c.name))?.name ?? null;
+      return {
+        name: r.name,
+        kind: r.kind === 'VIEW' ? ('view' as const) : ('table' as const),
+        label: TABLE_COMMENTS[r.name] ? tableLabel(r.name) : (r.comment?.split(/[—–(]| - /)[0]?.trim().slice(0, 80) || tableLabel(r.name)),
+        scopeColumn: scope,
+        columns,
+      };
+    });
+  }
+
+  /** Danh mục phân hệ (gợi ý + mã đã dùng trong CSDL) và loại chứng từ theo phân hệ. */
+  async modules(): Promise<Array<{ code: string; label: string; docTypes: string[]; templates: number }>> {
+    const res = await this.db.db
+      .select({ module: printTemplates.module, docType: printTemplates.docType, n: sql<number>`count(*)::int` })
+      .from(printTemplates)
+      .groupBy(printTemplates.module, printTemplates.docType);
+    const map = new Map<string, { code: string; label: string; docTypes: Set<string>; templates: number }>();
+    for (const m of PRINT_MODULE_CATALOG) map.set(m.code, { code: m.code, label: m.label, docTypes: new Set(), templates: 0 });
+    for (const r of res) {
+      const cur = map.get(r.module) ?? { code: r.module, label: moduleLabel(r.module), docTypes: new Set<string>(), templates: 0 };
+      if (r.docType) cur.docTypes.add(r.docType);
+      cur.templates += Number(r.n);
+      map.set(r.module, cur);
+    }
+    return [...map.values()].map((m) => ({ code: m.code, label: m.label, docTypes: [...m.docTypes].sort(), templates: m.templates }));
+  }
+
+  /**
+   * Danh sách “Trường dữ liệu” cho trình thiết kế, theo đúng nguồn dữ liệu của mẫu:
+   * mỗi truy vấn → nhóm trường một dòng (`one.<mã>.<cột>`) và danh sách cho bảng (`ds.<mã>`),
+   * tham số người in (`params.<tên>`). Không đọc dữ liệu (chạy `limit 0`).
+   * Người không có quyền soạn SQL chỉ xem được trường của SQL đã lưu trong mẫu.
+   */
+  async fields(user: AccessContext, input: { templateId?: number | null; sqlSource?: unknown }): Promise<PrintFieldsResult> {
+    let source: PrintSqlSource | null = null;
+    const errors: string[] = [];
+    const fromSaved = async () => {
+      if (!input.templateId) return null;
+      const tpl = await this.findOne(Number(input.templateId));
+      try {
+        return normalizeSqlSource((tpl.document as { sqlSource?: unknown }).sqlSource);
+      } catch (err) {
+        errors.push((err as Error).message);
+        return null;
+      }
+    };
+    if (this.sqlSource?.canAuthor(user) && input.sqlSource !== undefined) {
+      try {
+        source = normalizeSqlSource(input.sqlSource);
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
+    } else {
+      source = await fromSaved();
+    }
+    const groups: PrintFieldGroup[] = [];
+    if (source && this.sqlSource) {
+      const catalog = await this.sqlCatalog().catch(() => [] as CatalogTable[]);
+      const known = catalog.map((t) => t.name);
+      const described = await this.sqlSource.describe(user, source);
+      for (const d of described) {
+        const query = source.queries.find((x) => x.key === d.key);
+        if (d.error) errors.push(`Truy vấn “${d.key}”: ${d.error}`);
+        const builderLabels = new Map((query?.builder?.columns ?? []).map((c) => [c.alias ?? (c.agg ? (c.name === '*' ? 'so_luong' : `${c.agg}_${c.name}`) : c.name), c.label]));
+        const tables = query?.builder ? [query.builder.table] : referencedTables(query?.sql ?? '', known);
+        const columns = d.columns.map((c) => ({
+          name: c.name,
+          type: c.type,
+          label: builderLabels.get(c.name) || columnLabel(c.name, tables),
+        }));
+        const title = d.label || query?.label || d.key;
+        groups.push({
+          id: `one.${d.key}`,
+          kind: 'record',
+          label: `${title} — dòng đầu`,
+          query: d.key,
+          // SQL đã chuẩn hoá — chỉ trả cho người được soạn SQL (xem trước câu lệnh do trình chọn bảng sinh)
+          ...(this.sqlSource.canAuthor(user) ? { sql: query?.sql ?? '' } : {}),
+          fields: columns.map((c) => ({ key: `one.${d.key}.${c.name}`, label: c.label, type: c.type, column: c.name })),
+        });
+        groups.push({
+          id: `ds.${d.key}`,
+          kind: 'list',
+          label: `${title} — danh sách (bảng)`,
+          query: d.key,
+          dataSource: `ds.${d.key}`,
+          fields: columns.map((c) => ({ key: c.name, label: c.label, type: c.type, column: c.name })),
+        });
+      }
+      if (source.params?.length) {
+        groups.push({
+          id: 'params',
+          kind: 'params',
+          label: 'Tham số người in nhập',
+          fields: source.params.map((p) => ({ key: `params.${p.name}`, label: p.label || p.name, type: p.type === 'number' ? 'number' : p.type === 'date' ? 'date' : 'text' })),
+        });
+      }
+    }
+    return { groups, errors, hasSql: !!source, scope: scopeDepartments(user) === null ? 'ALL' : 'LIMITED' };
+  }
+
+  /**
+   * Mẫu in dùng được ở “In ấn” của từng phân hệ: đang ban hành, có nguồn dữ liệu SQL (tự lấy
+   * dữ liệu), áp dụng toàn viện hoặc cho khoa của người in. Trả kèm tham số cần nhập.
+   */
+  async available(user: AccessContext, module?: string | null) {
+    const where: SQL[] = [eq(printTemplates.active, true), sql`jsonb_typeof(${printTemplates.document}->'sqlSource'->'queries') = 'array'`];
+    if (module) where.push(eq(printTemplates.module, normalizeModuleCode(module)));
+    const rows = await this.db.db
+      .select({
+        id: printTemplates.id,
+        code: printTemplates.code,
+        name: printTemplates.name,
+        description: printTemplates.description,
+        module: printTemplates.module,
+        docType: printTemplates.docType,
+        departmentId: printTemplates.departmentId,
+        paperSize: printTemplates.paperSize,
+        orientation: printTemplates.orientation,
+        document: printTemplates.document,
+      })
+      .from(printTemplates)
+      .where(and(...where))
+      .orderBy(asc(printTemplates.module), asc(printTemplates.name));
+    const scope = scopeDepartments(user);
+    return rows
+      .filter((r) => r.departmentId === null || scope === null || scope.includes(r.departmentId) || r.departmentId === user.departmentId)
+      .flatMap((r) => {
+        let params: PrintSqlSource['params'] = [];
+        try {
+          const src = normalizeSqlSource((r.document as { sqlSource?: unknown }).sqlSource);
+          if (!src) return [];
+          params = src.params ?? [];
+        } catch {
+          return [];
+        }
+        const { document: _doc, ...rest } = r;
+        void _doc;
+        return [{ ...rest, moduleLabel: moduleLabel(r.module), params }];
+      });
   }
 
   /**
@@ -391,4 +558,39 @@ export class PrintingService {
     const out = await this.sqlSource.run(sqlContext.user, source, sqlContext.params ?? {}, { meta: sqlContext.meta, templateId });
     return { data: { ...data, ...out.data }, rows: rows.length ? rows : out.rows };
   }
+}
+
+export interface CatalogTable {
+  name: string;
+  kind: 'view' | 'table';
+  label: string;
+  scopeColumn: string | null;
+  columns: Array<{ name: string; type: string; fieldType: string; label: string }>;
+}
+
+export interface PrintFieldGroup {
+  id: string;
+  kind: 'record' | 'list' | 'params';
+  label: string;
+  query?: string;
+  dataSource?: string;
+  sql?: string;
+  fields: Array<{ key: string; label: string; type: string; column?: string }>;
+}
+
+export interface PrintFieldsResult {
+  groups: PrintFieldGroup[];
+  errors: string[];
+  hasSql: boolean;
+  scope: 'ALL' | 'LIMITED';
+}
+
+/** Lưu nguồn SQL ở dạng đã chuẩn hoá (truy vấn chọn bảng luôn mang SQL do máy chủ sinh). */
+function withNormalizedSql(document: PrintDocument): PrintDocument {
+  const raw = (document as { sqlSource?: unknown }).sqlSource;
+  if (raw === undefined) return document;
+  const normalized = normalizeSqlSource(raw);
+  const { sqlSource: _old, ...rest } = document as PrintDocument & { sqlSource?: unknown };
+  void _old;
+  return (normalized ? { ...rest, sqlSource: normalized } : rest) as PrintDocument;
 }

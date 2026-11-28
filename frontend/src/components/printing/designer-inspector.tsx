@@ -6,6 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { BUILTIN_FONTS, FALLBACK_VARIABLES, canonicalFont, nextId, type PrintDocument, type PrintElement } from './print-types';
+import { tableColumnFor, type FieldItem } from './print-fields';
+
+/** Nguồn danh sách cho bảng (vd `ds.<mã>` của nguồn dữ liệu) cùng các cột */
+export interface ListSource {
+  value: string;
+  label: string;
+  fields: Array<{ key: string; label: string; type: string }>;
+}
 import { cssFontFamily } from './print-fonts';
 
 type Tab = 'position' | 'style' | 'box' | 'data' | 'advanced';
@@ -35,6 +43,10 @@ interface InspectorProps {
   onCommit: () => void;
   /** Danh sách họ font (GET /print/fonts) */
   fonts?: string[];
+  /** Trường dữ liệu theo nguồn của mẫu (thay cho danh sách cố định) */
+  fieldOptions?: FieldItem[];
+  /** Nguồn danh sách cho bảng */
+  listSources?: ListSource[];
 }
 
 function FontOptions({ fonts }: { fonts: string[] }) {
@@ -51,7 +63,7 @@ function FontOptions({ fonts }: { fonts: string[] }) {
 }
 
 /** Bảng thuộc tính chi tiết cho phần tử đang chọn (và cho toàn trang khi chưa chọn gì). */
-export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fontList }: InspectorProps) {
+export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fontList, fieldOptions, listSources }: InspectorProps) {
   const [tab, setTab] = useState<Tab>('position');
   const fonts = fontList?.length ? fontList : BUILTIN_FONTS;
 
@@ -70,7 +82,7 @@ export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fon
   const setBorder = (side: 'top' | 'right' | 'bottom' | 'left', patch: Record<string, unknown>): void =>
     setStyle({ border: { ...border, [side]: { ...(border[side] ?? { width: 0.3, style: 'solid', color: '#111827' }), ...patch } } });
 
-  const variables = doc.variables?.length ? doc.variables : FALLBACK_VARIABLES;
+  const variables = fieldOptions ?? (doc.variables?.length ? doc.variables : FALLBACK_VARIABLES);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -313,10 +325,19 @@ export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fon
                 onChange={(e) => { setBinding({ path: e.target.value }); onCommit(); }}
               >
                 <option value="">— Chọn trường —</option>
-                {variables.map((v) => (
-                  <option key={v.key} value={v.key}>
-                    {v.label} ({v.key})
-                  </option>
+                {element.binding?.path && !variables.some((v) => v.key === element.binding?.path) ? (
+                  <option value={element.binding.path}>{element.binding.path}</option>
+                ) : null}
+                {Array.from(new Set(variables.map((v) => v.group ?? 'Khác'))).map((g) => (
+                  <optgroup key={g} label={g}>
+                    {variables
+                      .filter((v) => (v.group ?? 'Khác') === g)
+                      .map((v) => (
+                        <option key={v.key} value={v.key}>
+                          {v.label} ({v.key})
+                        </option>
+                      ))}
+                  </optgroup>
                 ))}
               </Select>
             </Row>
@@ -326,7 +347,7 @@ export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fon
                 value={element.binding?.path ?? ''}
                 onChange={(e) => setBinding({ path: e.target.value })}
                 onBlur={onCommit}
-                placeholder="patientName / signature.KHTB.fullName"
+                placeholder="one.du_lieu.ho_ten / params.tu_ngay"
               />
             </Row>
             <div className="grid grid-cols-2 gap-2">
@@ -380,7 +401,7 @@ export function DesignerInspector({ doc, element, onChange, onCommit, fonts: fon
               />
             </Row>
 
-            {element.type === 'table' ? <TableEditor element={element} onChange={onChange} onCommit={onCommit} /> : null}
+            {element.type === 'table' ? <TableEditor element={element} onChange={onChange} onCommit={onCommit} listSources={listSources ?? []} /> : null}
           </>
         ) : null}
 
@@ -538,17 +559,29 @@ function DocumentInspector({
 
 /* ------------------------------------------------------------- Sửa bảng động */
 
+const LEGACY_SOURCES: Array<{ value: string; label: string }> = [
+  { value: 'rows', label: 'Danh sách dòng báo cáo' },
+  { value: 'entries', label: 'Ô số liệu' },
+  { value: 'signatures', label: 'Chữ ký' },
+  { value: 'custom', label: 'Dữ liệu truyền vào' },
+];
+
 function TableEditor({
   element,
   onChange,
   onCommit,
+  listSources,
 }: {
   element: PrintElement;
   onChange: (id: string, patch: Partial<PrintElement>) => void;
   onCommit: () => void;
+  listSources: ListSource[];
 }) {
   const table = element.table;
   if (!table) return null;
+  const current = listSources.find((s) => s.value === table.dataSource);
+  const known = [...listSources.map((s) => s.value), ...LEGACY_SOURCES.map((s) => s.value)];
+  const datalistId = `cols-${element.id}`;
   const setTable = (patch: Record<string, unknown>): void =>
     onChange(element.id, { table: { ...table, ...patch } });
 
@@ -559,12 +592,34 @@ function TableEditor({
       </div>
       <Row label="Nguồn dòng">
         <Select className="h-8 text-xs" value={table.dataSource} onChange={(e) => { setTable({ dataSource: e.target.value }); onCommit(); }}>
-          <option value="rows">Danh sách dòng báo cáo</option>
-          <option value="entries">Ô số liệu</option>
-          <option value="signatures">Chữ ký</option>
-          <option value="custom">Dữ liệu truyền vào</option>
+          {listSources.length ? (
+            <optgroup label="Nguồn dữ liệu của mẫu">
+              {listSources.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label} ({s.value})
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+          {!known.includes(table.dataSource) ? <option value={table.dataSource}>{table.dataSource}</option> : null}
+          <optgroup label="Dữ liệu do màn hình nghiệp vụ gửi">
+            {LEGACY_SOURCES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </optgroup>
         </Select>
       </Row>
+      {current?.fields.length ? (
+        <datalist id={datalistId}>
+          {current.fields.map((f) => (
+            <option key={f.key} value={f.key}>
+              {f.label}
+            </option>
+          ))}
+        </datalist>
+      ) : null}
       <div className="flex flex-wrap gap-3">
         <Check label="Lặp tiêu đề mỗi trang" checked={table.repeatHeader !== false} onChange={(v) => { setTable({ repeatHeader: v }); onCommit(); }} />
         <Check label="Có dòng tổng" checked={!!table.totalRow} onChange={(v) => { setTable({ totalRow: v }); onCommit(); }} />
@@ -649,7 +704,9 @@ function TableEditor({
                   setTable({ columns });
                 }}
                 onBlur={onCommit}
-                placeholder="rowLabel / value / index"
+                list={current?.fields.length ? datalistId : undefined}
+                title={current?.fields.find((f) => f.key === col.binding?.path)?.label}
+                placeholder={current?.fields.length ? 'Chọn cột dữ liệu…' : 'rowLabel / value / index'}
               />
             </div>
           </div>
@@ -666,6 +723,25 @@ function TableEditor({
         >
           <Plus /> Thêm cột
         </Button>
+        {current?.fields.length ? (
+          <Select
+            className="h-8 text-xs"
+            value=""
+            onChange={(e) => {
+              const f = current.fields.find((x) => x.key === e.target.value);
+              if (!f) return;
+              setTable({ columns: [...table.columns, tableColumnFor(f, 30)] });
+              onCommit();
+            }}
+          >
+            <option value="">＋ Thêm cột từ “{current.label}”…</option>
+            {current.fields.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.label} ({f.key})
+              </option>
+            ))}
+          </Select>
+        ) : null}
       </div>
     </div>
   );

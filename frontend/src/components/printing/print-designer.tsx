@@ -73,6 +73,7 @@ import {
   StretchVertical,
   Strikethrough,
   Table2,
+  Columns3,
   Trash2,
   Type,
   Underline,
@@ -96,11 +97,11 @@ import { cssFontFamily, usePrintFonts } from './print-fonts';
 import { buildSampleData } from './print-format';
 import { PreviewDialog } from './preview-dialog';
 import { SqlSourceDialog, SqlSourceSummary, defaultParamValues, readSqlSource, type SqlSource } from './sql-source-panel';
+import { buildFieldCatalog, makeTableElement, moduleFields, tableColumnFor, usePrintFields, type ServerFieldGroup } from './print-fields';
 import { useAuth } from '@/lib/auth';
 import {
   DEFAULT_FONT,
   ELEMENT_TYPES,
-  FALLBACK_VARIABLES,
   PAPER_SIZES_MM,
   canonicalFont,
   emptyDocument,
@@ -133,6 +134,10 @@ interface DesignerProps {
   infoOpen?: boolean;
   setInfoOpen?: (open: boolean) => void;
   canManageFonts?: boolean;
+  /** ID mẫu đã lưu — để lấy trường dữ liệu theo nguồn đã lưu (người không có quyền SQL) */
+  templateId?: number | null;
+  /** Phân hệ của mẫu — chỉ dùng để gợi ý trường riêng của phân hệ có dữ liệu truyền sẵn (HSBA) */
+  module?: string | null;
 }
 
 type LeftTab = 'tools' | 'fields' | 'layers' | 'pages' | 'sql' | 'json';
@@ -157,16 +162,6 @@ const TYPE_ICON: Record<string, ReactNode> = {
 
 const TYPE_NAME: Record<string, string> = Object.fromEntries(ELEMENT_TYPES.map((t) => [t.type, t.label]));
 
-const SYSTEM_FIELDS = [
-  { key: 'system.date', label: 'Ngày in (dd/MM/yyyy)', type: 'text', group: 'Hệ thống' },
-  { key: 'system.datetime', label: 'Ngày giờ in', type: 'text', group: 'Hệ thống' },
-  { key: 'system.day', label: 'Ngày', type: 'text', group: 'Hệ thống' },
-  { key: 'system.month', label: 'Tháng', type: 'text', group: 'Hệ thống' },
-  { key: 'system.year', label: 'Năm', type: 'text', group: 'Hệ thống' },
-  { key: 'system.page', label: 'Trang hiện tại', type: 'text', group: 'Hệ thống' },
-  { key: 'system.pages', label: 'Tổng số trang', type: 'text', group: 'Hệ thống' },
-];
-
 const FONT_SIZES = [7, 8, 9, 10, 10.5, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 32, 36, 48, 60, 72];
 
 const MARGIN_PRESETS = [
@@ -175,6 +170,14 @@ const MARGIN_PRESETS = [
   { label: 'Hẹp (10 mm)', values: { top: 10, right: 10, bottom: 10, left: 10 } },
   { label: 'Đóng gáy trái (T35)', values: { top: 15, right: 15, bottom: 15, left: 35 } },
 ];
+
+/** So khớp tìm kiếm không dấu */
+const foldVi = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase();
 
 function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...a };
@@ -209,6 +212,8 @@ export function PrintDesigner({
   setInfoOpen: setInfoOpenProp,
   canManageFonts = true,
   extraDirty = false,
+  templateId = null,
+  module = null,
 }: DesignerProps) {
   const [doc, setDocState] = useState<PrintDocument>(() => normalizeDocument(initial));
   const docRef = useRef(doc);
@@ -237,7 +242,7 @@ export function PrintDesigner({
   const infoOpen = infoOpenProp ?? infoOpenLocal;
   const setInfoOpen = setInfoOpenProp ?? setInfoOpenLocal;
   const [helpOpen, setHelpOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<string>(() => JSON.stringify(buildSampleData(normalizeDocument(initial)), null, 2));
+  const [previewData, setPreviewData] = useState<string>(() => JSON.stringify(buildSampleData(normalizeDocument(initial), moduleFields(module)), null, 2));
   const [jsonText, setJsonText] = useState('');
   const canAuthorSql = useAuth((s) => s.can)('print.datasource.sql');
   const [sqlOpen, setSqlOpen] = useState(false);
@@ -344,7 +349,7 @@ export function PrintDesigner({
   const sampleData = useMemo(() => {
     if (!showData) return null;
     // Dữ liệu tự sinh theo thiết kế hiện tại, ghi đè bằng JSON người dùng nhập (nếu hợp lệ)
-    const base = buildSampleData(doc);
+    const base = buildSampleData(doc, moduleFields(module));
     try {
       return deepMerge(base, JSON.parse(previewData) as Record<string, unknown>);
     } catch {
@@ -638,7 +643,7 @@ export function PrintDesigner({
     } catch {
       /* JSON hỏng: dùng dữ liệu tự sinh */
     }
-    setPreviewData(JSON.stringify(deepMerge(buildSampleData(docRef.current), parsed), null, 2));
+    setPreviewData(JSON.stringify(deepMerge(buildSampleData(docRef.current, moduleFields(module)), parsed), null, 2));
     setPreviewOpen(true);
   };
 
@@ -791,15 +796,41 @@ export function PrintDesigner({
   const st: ElementStyle = { ...(doc.defaultStyle ?? {}), ...(primary?.style ?? {}) };
   const curFont = canonicalFont(st.fontFamily ?? DEFAULT_FONT);
   const curSize = st.fontSize ?? 12;
+  // Trường dữ liệu theo nguồn của chính mẫu này (SQL/chọn bảng, tham số, biến, trường đang dùng) — không gắn cứng HSBA
+  const sqlSourceNow = readSqlSource(doc);
+  const serverFields = usePrintFields(templateId, canAuthorSql ? sqlSourceNow : templateId ? { saved: true } : null, !!sqlSourceNow);
+  const fieldsData = sqlSourceNow ? serverFields.data : undefined;
+  const fieldCatalog = useMemo(() => buildFieldCatalog(doc, module, fieldsData), [doc, module, fieldsData]);
+  const listGroups: ServerFieldGroup[] = useMemo(() => (fieldsData?.groups ?? []).filter((g) => g.kind === 'list'), [fieldsData]);
+  const listSources = useMemo(
+    () => listGroups.map((g) => ({ value: g.dataSource ?? g.id, label: g.label.replace(/ — danh sách \(bảng\)$/, ''), fields: g.fields })),
+    [listGroups],
+  );
   const variables = useMemo(() => {
-    const list = doc.variables?.length ? doc.variables : FALLBACK_VARIABLES;
-    const q = fieldQuery.trim().toLowerCase();
-    const all = [...list.map((v) => ({ ...v, group: v.group ?? 'Khác' })), ...SYSTEM_FIELDS];
-    const filtered = q ? all.filter((v) => v.key.toLowerCase().includes(q) || v.label.toLowerCase().includes(q)) : all;
+    const q = foldVi(fieldQuery.trim());
+    const filtered = q ? fieldCatalog.filter((v) => foldVi(`${v.key} ${v.label}`).includes(q)) : fieldCatalog;
     const groups = new Map<string, typeof filtered>();
     filtered.forEach((v) => groups.set(v.group, [...(groups.get(v.group) ?? []), v]));
     return Array.from(groups.entries());
-  }, [doc.variables, fieldQuery]);
+  }, [fieldCatalog, fieldQuery]);
+  const shownLists = useMemo(() => {
+    const q = foldVi(fieldQuery.trim());
+    return listGroups
+      .map((g) => ({ ...g, fields: q ? g.fields.filter((f) => foldVi(`${f.key} ${f.label}`).includes(q)) : g.fields }))
+      .filter((g) => !q || g.fields.length || foldVi(g.label).includes(q));
+  }, [listGroups, fieldQuery]);
+  /** Bảng đang chọn dùng nguồn danh sách này → nhấp đúp cột để thêm vào bảng */
+  const selectedTableFor = (dataSource?: string) =>
+    primary?.type === 'table' && primary.table && (!dataSource || primary.table.dataSource === dataSource) ? primary : null;
+  const addColumnToTable = (dataSource: string, f: { key: string; label: string; type: string }) => {
+    const t = selectedTableFor(dataSource);
+    if (!t?.table) {
+      toast.message('Chọn một bảng dùng nguồn này trên trang (hoặc bấm “Chèn bảng”) rồi nhấp đúp cột để thêm');
+      return;
+    }
+    if (t.table.columns.some((c) => c.binding?.path === f.key)) return toast.message(`Bảng đã có cột “${f.label}”`);
+    patchElements({ [t.id]: { table: { ...t.table, columns: [...t.table.columns, tableColumnFor(f, 30)] } } }, true);
+  };
 
   const canUndo = history.current.length > 0 || committed.current !== doc;
   const canRedo = future.current.length > 0;
@@ -1320,6 +1351,54 @@ export function PrintDesigner({
                     <input type="checkbox" checked={withLabel} onChange={(e) => setWithLabel(e.target.checked)} />
                     Chèn kèm nhãn (vd “Họ tên: …”)
                   </label>
+                  {sqlSourceNow && serverFields.isLoading ? <p className="text-[11px] text-[var(--muted-foreground)]">Đang đọc cột của nguồn dữ liệu…</p> : null}
+                  {(fieldsData?.errors ?? []).map((e, i) => (
+                    <p key={i} className="rounded border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
+                      {e}
+                    </p>
+                  ))}
+                  {!sqlSourceNow && !doc.variables?.length ? (
+                    <div className="space-y-1.5 rounded-md border border-dashed p-2 text-[11px] text-[var(--muted-foreground)]">
+                      <p>
+                        Mẫu chưa có <b>nguồn dữ liệu</b>. Thêm nguồn (chọn bảng/view của bất kỳ phân hệ nào, không cần SQL) để có danh sách trường ở đây.
+                      </p>
+                      <Button size="sm" variant="outline" className="w-full" onClick={() => setSqlOpen(true)}>
+                        <Database /> Thêm nguồn dữ liệu
+                      </Button>
+                    </div>
+                  ) : null}
+                  {shownLists.map((g) => (
+                    <div key={g.id} className="rounded-md border bg-[var(--muted)]/30 p-1.5">
+                      <div className="mb-0.5 flex items-center gap-1">
+                        <Table2 className="size-3.5 shrink-0 text-teal-700" />
+                        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]" title={g.dataSource}>
+                          {g.label}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-1.5 text-[10px]"
+                          disabled={readOnly || !g.fields.length}
+                          onClick={() => addToPage([makeTableElement(g.dataSource ?? g.id, g.fields, { x: margins.left, y: Math.round(dims.height / 4), width: Math.min(190, dims.width - margins.left - margins.right), name: g.label })])}
+                          title={`Chèn bảng lấy dữ liệu từ ${g.dataSource}`}
+                        >
+                          Chèn bảng
+                        </Button>
+                      </div>
+                      {g.fields.map((f) => (
+                        <div
+                          key={f.key}
+                          onDoubleClick={() => !readOnly && addColumnToTable(g.dataSource ?? g.id, f)}
+                          className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 text-xs hover:bg-[var(--accent)]', selectedTableFor(g.dataSource) && 'text-[var(--primary)]')}
+                          title={selectedTableFor(g.dataSource) ? 'Nhấp đúp để thêm cột vào bảng đang chọn' : 'Chọn bảng dùng nguồn này rồi nhấp đúp để thêm cột'}
+                        >
+                          <Columns3 className="size-3 shrink-0 text-teal-700" />
+                          <span className="min-w-0 flex-1 truncate">{f.label}</span>
+                          <span className="max-w-[45%] truncate font-mono text-[9px] text-[var(--muted-foreground)]">{f.key}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                   {variables.map(([group, items]) => (
                     <div key={group}>
                       <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">{group}</div>
@@ -1340,7 +1419,8 @@ export function PrintDesigner({
                     </div>
                   ))}
                   <p className="text-[10px] text-[var(--muted-foreground)]">
-                    Trong ô chữ có thể gõ trực tiếp <code>{'{đường.dẫn}'}</code> để chèn dữ liệu. Danh sách trường lấy từ “variables” của mẫu (sửa ở tab JSON).
+                    Trường lấy theo <b>nguồn dữ liệu</b> của mẫu (tab SQL → chọn bảng hoặc viết SELECT). Kéo trường vào trang, hoặc gõ trực tiếp{' '}
+                    <code>{'{đường.dẫn}'}</code> trong ô chữ. Bảng danh sách: bấm “Chèn bảng”, chọn bảng rồi nhấp đúp cột để thêm.
                   </p>
                 </div>
               ) : null}
@@ -1597,6 +1677,8 @@ export function PrintDesigner({
                   doc={doc}
                   element={primary}
                   fonts={fonts.families}
+                  fieldOptions={fieldCatalog}
+                  listSources={listSources}
                   onChange={(id, patch) => {
                     if (id === '__document__') live({ ...docRef.current, ...(patch as unknown as Partial<PrintDocument>) });
                     else patchElements({ [id]: patch }, false);
@@ -1688,7 +1770,7 @@ export function PrintDesigner({
         </div>
       ) : null}
 
-      <PreviewDialog open={previewOpen} onClose={() => setPreviewOpen(false)} doc={doc} data={previewData} setData={setPreviewData} title={title} params={sqlParams} />
+      <PreviewDialog sampleFields={moduleFields(module)} module={module} open={previewOpen} onClose={() => setPreviewOpen(false)} doc={doc} data={previewData} setData={setPreviewData} title={title} params={sqlParams} />
       <SqlSourceDialog
         open={sqlOpen}
         onClose={() => setSqlOpen(false)}

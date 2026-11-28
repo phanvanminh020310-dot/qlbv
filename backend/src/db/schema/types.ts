@@ -76,8 +76,9 @@ export const DATA_SCOPES = ['OWN', 'DEPT', 'ALL'] as const;
 export type DataScope = (typeof DATA_SCOPES)[number];
 
 /* ----------------------------------------------------------------- Mẫu in */
-export const PRINT_MODULES = ['HSBA', 'REPORT', 'ASSET', 'UTILITY', 'TASK', 'GENERIC'] as const;
-export type PrintModule = (typeof PRINT_MODULES)[number];
+/** Phân hệ có sẵn — mã phân hệ mới (vd phân hệ thêm sau này) vẫn hợp lệ, xem printing/print-modules.ts */
+export const PRINT_MODULES = ['HSBA', 'REPORT', 'ASSET', 'UTILITY', 'TASK', 'DUTY', 'DUTY_ATTENDANCE', 'STAFF_LEARNING', 'USER', 'DEPARTMENT', 'GENERIC'] as const;
+export type PrintModule = (typeof PRINT_MODULES)[number] | (string & {});
 
 export const PAPER_SIZES = ['A4', 'A5', 'A3', 'Letter', 'Legal', 'Custom'] as const;
 export type PaperSize = (typeof PAPER_SIZES)[number];

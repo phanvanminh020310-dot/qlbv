@@ -254,7 +254,8 @@ export class PrintingController {
     if (!source) throw new BadRequestException('Chưa có truy vấn nào');
     const out = await this.sqlSource.run(user, source, body.params ?? {}, { maxRows: 100, meta: client, purpose: 'test' });
     return {
-      queries: out.queries.map((q) => ({ ...q, rows: out.data.ds[q.key] ?? [] })),
+      // Kèm câu SQL đã chuẩn hoá (truy vấn chọn bảng: SQL do máy chủ sinh) để người soạn xem/chuyển sang viết SQL
+      queries: out.queries.map((q) => ({ ...q, sql: source.queries.find((x) => x.key === q.key)?.sql ?? '', rows: out.data.ds[q.key] ?? [] })),
       params: out.data.params,
     };
   }
@@ -285,6 +286,27 @@ export class PrintingController {
   @ApiOperation({ summary: 'Danh mục view/bảng gợi ý khi soạn SQL cho mẫu in' })
   sqlCatalog() {
     return this.service.sqlCatalog().then((items) => ({ items, autoParams: AUTO_PARAMS }));
+  }
+
+  @Get('modules')
+  @RequirePermissions('print.template.view')
+  @ApiOperation({ summary: 'Danh mục phân hệ + loại chứng từ đã dùng (mã phân hệ là chuỗi tự do, phân hệ mới tự xuất hiện)' })
+  modules() {
+    return this.service.modules().then((items) => ({ items }));
+  }
+
+  @Post('fields')
+  @RequirePermissions('print.template.view')
+  @ApiOperation({ summary: 'Trường dữ liệu của mẫu theo nguồn SQL/chọn bảng (tên cột, kiểu, nhãn tiếng Việt) — không đọc dữ liệu' })
+  fields(@Body() body: { templateId?: number | null; sqlSource?: unknown }, @CurrentUser() user: AccessContext) {
+    return this.service.fields(user, body ?? {});
+  }
+
+  @Get('available')
+  @RequirePermissions('print.render.view')
+  @ApiOperation({ summary: 'Mẫu in tự lấy dữ liệu (nguồn SQL) dùng được — lọc theo phân hệ' })
+  available(@Query('module') module: string | undefined, @CurrentUser() user: AccessContext) {
+    return this.service.available(user, module || null).then((items) => ({ items }));
   }
 
   /** Mẫu in mặc định theo loại chứng từ — dùng cho các nút "In" ở phân hệ khác */

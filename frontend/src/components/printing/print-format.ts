@@ -3,7 +3,6 @@
  * (backend/src/infra/rendering/pdf-renderer.ts) để khung vẽ khớp bản in.
  */
 import type { FieldFormat, PrintDocument, PrintElement } from './print-types';
-import { FALLBACK_VARIABLES } from './print-types';
 
 export function getByPath(obj: unknown, path: string): unknown {
   if (!path) return undefined;
@@ -132,11 +131,15 @@ function sampleFor(key: string, label: string, type: string): unknown {
 }
 
 /** Sinh dữ liệu mẫu từ danh sách biến + mọi đường dẫn đang dùng trong thiết kế */
-export function buildSampleData(doc: PrintDocument): Record<string, unknown> {
+export function buildSampleData(
+  doc: PrintDocument,
+  /** Trường gợi ý khi mẫu không khai báo `variables` (vd trường riêng của phân hệ HSBA) — mặc định không thêm gì */
+  fallback: Array<{ key: string; label: string; type: string }> = [],
+): Record<string, unknown> {
   const data: Record<string, unknown> = {};
-  const vars = doc.variables?.length ? doc.variables : FALLBACK_VARIABLES;
+  const vars = doc.variables?.length ? doc.variables : fallback;
   for (const v of vars) {
-    if (['index', 'rowLabel', 'value'].includes(v.key)) continue;
+    if (['index', 'rowLabel', 'value'].includes(v.key) || v.key.startsWith('system.')) continue;
     setByPath(data, v.key, sampleFor(v.key, v.label, v.type));
   }
   const elements: PrintElement[] = [

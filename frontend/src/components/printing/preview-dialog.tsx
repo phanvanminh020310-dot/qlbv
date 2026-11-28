@@ -28,6 +28,8 @@ export function PreviewDialog({
   setData,
   title,
   params,
+  sampleFields,
+  module,
 }: {
   open: boolean;
   onClose: () => void;
@@ -37,6 +39,10 @@ export function PreviewDialog({
   title?: string;
   /** Giá trị tham số cho nguồn dữ liệu SQL (nếu mẫu có) */
   params?: Record<string, string>;
+  /** Trường gợi ý khi tạo dữ liệu mẫu (mẫu không khai báo variables) */
+  sampleFields?: Array<{ key: string; label: string; type: string }>;
+  /** Phân hệ của mẫu — chỉ mẫu HSBA mới có mục lấy dữ liệu từ phiếu HSBA */
+  module?: string | null;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -161,7 +167,7 @@ export function PreviewDialog({
               variant="outline"
               className="border-slate-600 bg-slate-700 text-white hover:bg-slate-600"
               onClick={() => {
-                const json = JSON.stringify(buildSampleData(doc), null, 2);
+                const json = JSON.stringify(buildSampleData(doc, sampleFields ?? []), null, 2);
                 setData(json);
                 void render(json);
               }}
@@ -180,6 +186,7 @@ export function PreviewDialog({
               Để trống
             </Button>
           </div>
+          {!module || module.toUpperCase() === 'HSBA' ? (
           <div className="space-y-1.5 rounded-md border border-slate-700 p-2">
             <div className="text-slate-400">Lấy dữ liệu từ phiếu HSBA thật</div>
             <div className="flex gap-1.5">
@@ -213,6 +220,7 @@ export function PreviewDialog({
               )
             ) : null}
           </div>
+          ) : null}
           <div className="text-slate-400">JSON dữ liệu (sửa trực tiếp rồi bấm Cập nhật)</div>
           <textarea
             className="min-h-[240px] flex-1 rounded-md border border-slate-600 bg-slate-950 p-2 font-mono text-[11px] text-emerald-200"

@@ -113,6 +113,7 @@
 | 31 | **SQL Console — lọc nhanh kết quả**: lọc tức thời, không phân biệt hoa/thường hoặc dấu tiếng Việt trong tối đa 1.000 dòng xem trước; hiển thị số dòng khớp/trạng thái rỗng, không gọi lại API, không đổi SQL, dữ liệu CSDL hoặc tệp xuất | `03513a9` |
 | 32 | **Ổn định bố cục iPhone sau đăng nhập**: app shell dùng viewport ổn định `svh`; chỉ vùng nội dung cuộn, header/footer giữ vị trí; chặn Safari tự đổi cỡ chữ gây nhảy bố cục và cuộn ngang; trang đăng nhập/trạng thái nạp cũng dùng `svh` | (commit này) |
 | 33 | **QLBS Kiosk 2.0.6 — cài certificate LAN thuận tiện nhưng an toàn**: chỉ cần chép public `QLBS_Server_Trust.cer` vào ZIP gốc rồi chạy BAT; script kiểm tra certificate không có private key/còn hạn, trust vào LocalMachine Root rồi mở luồng Kiosk có TLS chuẩn. Vẫn hỗ trợ gói riêng pin SHA-256/URL/phòng để triển khai hàng loạt; không tải certificate qua LAN và không bỏ TLS validation | (commit này) |
+| 34 | **Menu trái thu gọn theo phân hệ + bản in chung cho mọi phân hệ/bảng**: nhóm phân hệ bấm để mở/đóng, nhớ trạng thái, tự mở nhóm hiện tại, tìm chức năng; nguồn dữ liệu “Chọn bảng” không cần SQL (máy chủ sinh SQL an toàn), tab Trường theo đúng nguồn của mẫu (hết trường HSBA ở mẫu công việc), mã phân hệ/loại chứng từ tự do, trang `/in-an` liệt kê mẫu tự lấy dữ liệu; không migration, mẫu cũ không đổi | (commit này) |
 
 Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-label].json.gz` v2.
 
@@ -149,6 +150,12 @@ Sao lưu: job `BACKUP_HANG_NGAY` 23:30, giữ 14 bản, tệp `qlbs-<stamp>[-lab
   - `print-designer.tsx` — khung toàn màn hình (`fixed inset-0 z-[45]`): ribbon Trang chủ/Chèn/Bố trí/Trang in/Xem, cột trái (Công cụ/Trường/Đối tượng/Trang/JSON), inspector phải, thanh trạng thái, phím tắt, menu chuột phải, history (apply/live/commit), clipboard localStorage `qlbs.print.clipboard`.
   - `designer-canvas.tsx` (thước, lưới, marquee, smart guides, resize, sửa chữ trực tiếp, `DND_MIME`), `element-view.tsx` (vẽ phần tử giống PDF), `designer-inspector.tsx`, `preview-dialog.tsx` (dữ liệu mẫu/phiếu HSBA thật/JSON), `font-manager.tsx`, `print-fonts.ts` (`usePrintFonts`), `print-format.ts` (`buildSampleData`, format), `print-types.ts`.
   - Trang `frontend/src/app/(app)/quan-tri/mau-in/page.tsx`: danh sách mẫu + mở designer; "Thông tin mẫu" là dialog; lưu giữ designer mở.
+- **Nguồn dữ liệu chung cho mọi phân hệ (không gắn cứng):**
+  - `backend/src/modules/printing/print-query-builder.ts`: truy vấn `builder` (bảng → cột/agg → lọc giá trị|`:param` → sort/limit/`scopeColumn`) — máy chủ sinh SQL (định danh `^[a-z_][a-z0-9_]*$` luôn quote, giá trị escape), vẫn qua `assertSafePrintSql`. `normalizeSqlSource` luôn sinh lại `sql` từ `builder`; lưu mẫu lưu bản đã chuẩn hoá. Nhãn cột tiếng Việt: `schema-comments` → PHRASES/WORDS.
+  - API: `POST /print/fields` (trường theo nguồn của mẫu, `limit 0`, người không có `print.datasource.sql` chỉ xem SQL đã lưu), `GET /print/modules` (mã phân hệ tự do — `print-modules.ts normalizeModuleCode`), `GET /print/available?module=` (mẫu ban hành có nguồn SQL, lọc theo khoa), `GET /print/sql/catalog` có `label/fieldType/scopeColumn`.
+  - Frontend: `print-fields.ts` (`buildFieldCatalog`, `usePrintFields`, `makeTableElement`; trường HSBA chỉ khi module=HSBA), `query-builder-editor.tsx`, `module-print-center.tsx` + trang `/in-an`. `PrintModule` là chuỗi tự do — **không thêm danh sách cứng phân hệ/loại chứng từ ở frontend**.
+  - Test: `backend/test/print-query-builder.test.ts`.
+- **Sidebar**: mỗi `NAV_GROUPS` (có `icon`, `collapsible`) là nhóm thu gọn; nhớ trong localStorage `qlbs.sidebar.open` khoá `group:<label>`; tự mở nhóm chứa trang hiện tại; ô tìm chức năng (không dấu).
 
 ### Lịch trực khám bệnh — tham chiếu nhanh
 - Lõi thuần `backend/src/modules/duty/duty-rules.ts` (`evaluateCandidate`, `shiftInterval`, `isNightWindow`, `normalizeRules`): mọi thời điểm theo Asia/Bangkok (+07:00); kiểm thử `backend/test/duty-rules.test.ts` (`npm test`).

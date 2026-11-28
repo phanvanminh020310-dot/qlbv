@@ -40,8 +40,21 @@ interface PrintTemplateDetail extends PrintTemplateRow {
   pageMargins?: Record<string, number>;
 }
 
-const MODULES = ['HSBA', 'REPORT', 'ASSET', 'TASK', 'UTILITY', 'GENERIC'];
-const DOC_TYPES = ['PHIEU_SUA_HSBA', 'BAO_CAO_KHOA', 'BAO_CAO_TONG_HOP', 'TEM_TAI_SAN', 'CV_PHIEU_GIAO_VIEC', 'CV_BAO_CAO_TINH_HINH', 'CV_HIEU_SUAT_NHAN_VIEN', 'GENERIC'];
+/** Phân hệ/loại chứng từ lấy từ máy chủ (gợi ý + mã đã dùng) — nhập mã mới cho phân hệ thêm sau này */
+interface PrintModuleOption {
+  code: string;
+  label: string;
+  docTypes: string[];
+  templates: number;
+}
+const toCode = (v: string) =>
+  v
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'D')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, '_')
+    .replace(/^_+/, '');
 
 interface TemplateForm {
   code: string;
@@ -56,8 +69,8 @@ const EMPTY_FORM: TemplateForm = {
   code: '',
   name: '',
   description: '',
-  module: 'HSBA',
-  docType: 'PHIEU_SUA_HSBA',
+  module: 'GENERIC',
+  docType: 'GENERIC',
   departmentId: null,
 };
 
@@ -93,6 +106,15 @@ export default function PrintTemplatesPage() {
         { id: number; version: number; note: string; createdByName?: string; createdAt: string }[]
       >(`/print/templates/${versionsOf?.id}/versions`),
   });
+
+  const modules = useQuery({
+    queryKey: ['print-modules'],
+    queryFn: () => apiFetch<{ items: PrintModuleOption[] }>('/print/modules').then((r) => r.items),
+    staleTime: 120_000,
+  });
+  const moduleOptions = modules.data ?? [];
+  const moduleLabel = (code: string) => moduleOptions.find((m) => m.code === code)?.label ?? code;
+  const [moduleFilter, setModuleFilter] = useState<string>('');
 
   const departments = useQuery({
     queryKey: ['departments-options'],
@@ -223,23 +245,45 @@ export default function PrintTemplatesPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="t-module">Phân hệ</Label>
-          <Select id="t-module" value={form.module} onChange={(e) => setForm({ ...form, module: e.target.value })}>
-            {MODULES.map((m) => (
-              <option key={m} value={m}>
-                {m}
+          <Input
+            id="t-module"
+            list="print-module-options"
+            value={form.module}
+            onChange={(e) => setForm({ ...form, module: toCode(e.target.value) })}
+            placeholder="TASK / ASSET / mã phân hệ mới"
+          />
+          <datalist id="print-module-options">
+            {moduleOptions.map((m) => (
+              <option key={m.code} value={m.code}>
+                {m.label}
               </option>
             ))}
-          </Select>
+          </datalist>
+          <p className="text-[11px] text-[var(--muted-foreground)]">
+            {moduleLabel(form.module) !== form.module ? moduleLabel(form.module) : 'Phân hệ mới — nhập mã in hoa không dấu (vd KHO_DUOC)'}
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="t-doc">Loại chứng từ</Label>
-          <Select id="t-doc" value={form.docType} onChange={(e) => setForm({ ...form, docType: e.target.value })}>
-            {DOC_TYPES.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+          <Input
+            id="t-doc"
+            list="print-doctype-options"
+            value={form.docType}
+            onChange={(e) => setForm({ ...form, docType: toCode(e.target.value) })}
+            placeholder="vd CV_BAO_CAO_TINH_HINH"
+          />
+          <datalist id="print-doctype-options">
+            {Array.from(
+              new Set([
+                ...(moduleOptions.find((m) => m.code === form.module)?.docTypes ?? []),
+                ...moduleOptions.flatMap((m) => m.docTypes),
+                'GENERIC',
+              ]),
+            ).map((d) => (
+              <option key={d} value={d} />
             ))}
-          </Select>
+          </datalist>
+          <p className="text-[11px] text-[var(--muted-foreground)]">Nút “In” ở màn hình nghiệp vụ tìm mẫu theo loại chứng từ này.</p>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="t-dept">Áp dụng cho khoa</Label>
@@ -287,6 +331,8 @@ export default function PrintTemplatesPage() {
         infoOpen={infoOpen}
         setInfoOpen={setInfoOpen}
         canManageFonts={can('print.template.update') || can('print.template.create')}
+        templateId={editing === 'new' ? null : editing}
+        module={form.module}
         onClose={() => {
           setEditing(null);
           setInfoOpen(false);
@@ -318,6 +364,20 @@ export default function PrintTemplatesPage() {
             value={deepFilters}
             onChange={setDeepFilters}
           />
+          {moduleOptions.some((m) => m.templates > 0) ? (
+            <div className="mt-2 flex flex-wrap gap-1 text-xs">
+              {[{ code: '', label: 'Tất cả', templates: data?.items.length ?? 0 }, ...moduleOptions.filter((m) => m.templates > 0)].map((m) => (
+                <button
+                  key={m.code || 'all'}
+                  type="button"
+                  onClick={() => setModuleFilter(m.code)}
+                  className={`rounded-full border px-2.5 py-0.5 ${moduleFilter === m.code ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]' : 'hover:bg-[var(--muted)]'}`}
+                >
+                  {m.label} <span className="opacity-70">{m.templates}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -349,7 +409,7 @@ export default function PrintTemplatesPage() {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((row) => (
+              {data.items.filter((row) => !moduleFilter || row.module === moduleFilter).map((row) => (
                 <Tr key={row.id}>
                   <Td>
                     <div className="flex items-center gap-2">
@@ -361,7 +421,7 @@ export default function PrintTemplatesPage() {
                     </div>
                   </Td>
                   <Td>
-                    <Badge tone="info">{row.module}</Badge>
+                    <Badge tone="info">{moduleLabel(row.module)}</Badge>
                     <div className="mt-0.5 font-mono text-[10px] text-[var(--muted-foreground)]">{row.docType}</div>
                   </Td>
                   <Td className="text-xs">

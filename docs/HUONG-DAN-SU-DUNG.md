@@ -197,6 +197,11 @@ kiểu dữ liệu và danh mục giá trị do hệ thống tự cung cấp (AP
 mọi màn hình đều có cùng cách lọc. Bấm **Lưu bộ lọc** để đặt tên và dùng lại bộ điều kiện
 này về sau. Các màn *Người dùng*, *Tiện ích*, *Mẫu in*, *Nhật ký* cũng có thanh lọc này.
 
+**Menu bên trái quá dài?** Mỗi phân hệ là một nhóm thu gọn: bấm tên phân hệ (vd *Quản lý
+tài sản*) để mở/đóng các chức năng bên trong; nhóm của trang đang xem tự mở; hệ thống nhớ
+nhóm bạn đã mở. Ô **Tìm chức năng…** ở đầu menu lọc nhanh theo tên (gõ không dấu cũng
+được); nút ⇕ cạnh đó thu gọn tất cả.
+
 **Thiết kế bản in ở đâu?** Vào **Quản trị → Mẫu in**, bấm **Thiết kế** ở một mẫu. Trình
 thiết kế mở **toàn màn hình** theo kiểu phần mềm thương mại:
 
@@ -217,6 +222,27 @@ Phím tắt chính: Ctrl+Z/Y, Ctrl+C/X/V/D, Ctrl+A, Delete, mũi tên (Shift ×1
 Ctrl+B/I/U, Ctrl+L (khoá), Ctrl+S (lưu), Ctrl+P (xem trước PDF), F1 (bảng phím tắt đầy đủ).
 Nút **Thông tin mẫu** để sửa mã/tên/loại chứng từ/khoa áp dụng; đóng trình thiết kế khi còn
 thay đổi chưa lưu, hệ thống sẽ hỏi lại.
+
+**Thiết kế bản in cho bất kỳ phân hệ/bảng nào (không cần lập trình):**
+
+1. *Quản trị → Mẫu in → Thêm mẫu in*. Ô **Phân hệ** gợi ý sẵn (Công việc, Tài sản, Lịch khám,
+   Chấm công…) và **nhập được mã mới** (vd `KHO_DUOC`) cho phân hệ thêm sau này; **Loại
+   chứng từ** cũng nhập tự do.
+2. Trong trình thiết kế, tab **SQL** → **Thêm nguồn dữ liệu** → chọn **Chọn bảng (không cần
+   SQL)**: chọn bảng/view (có tên tiếng Việt; bảng mới tạo trong CSDL tự xuất hiện) → tick
+   các cột cần in (đổi tên cột, Đếm/Tổng/Trung bình nếu cần) → thêm **điều kiện lọc** (giá
+   trị cố định, *người in nhập khi in* — vd “Từ ngày/Đến ngày”, hoặc *tự động* theo người
+   in) → **sắp xếp**. Nên để tick **Chỉ lấy dữ liệu trong phạm vi khoa của người in**.
+   Người rành SQL vẫn chọn **Viết SQL** như trước.
+3. Tab **Trường** tự liệt kê đúng các cột của nguồn dữ liệu mẫu đó (nhãn tiếng Việt): kéo
+   trường “dòng đầu” vào trang, hoặc bấm **Chèn bảng** ở nhóm “danh sách”; chọn bảng trên
+   trang rồi nhấp đúp một cột để thêm cột. Mẫu không phải HSBA không còn hiện trường của
+   phiếu HSBA.
+4. Lưu và **ban hành** mẫu. Mẫu tự lấy dữ liệu sẽ có ngay trong **Tổng quan → In ấn & báo
+   cáo** (lọc theo phân hệ, hỏi tham số rồi mở PDF) và ở nút *In* của màn hình nghiệp vụ dùng
+   cùng *loại chứng từ*.
+
+Mẫu cũ (viết SQL, HSBA, tem tài sản…) giữ nguyên, không cần sửa.
 
 **Xem trước PDF** kết xuất đúng bằng bộ máy in của máy chủ, cho phép chọn *Dữ liệu mẫu*, *Để
 trống*, lấy dữ liệu của **một phiếu HSBA thật** (tìm theo mã/tên) hoặc sửa JSON trực tiếp.

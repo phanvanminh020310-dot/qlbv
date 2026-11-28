@@ -64,6 +64,10 @@ export function navHrefs(items: NavItem[]): string[] {
 
 export interface NavGroup {
   label: string;
+  /** Biểu tượng của phân hệ (hiện ở tiêu đề nhóm thu gọn được) */
+  icon: LucideIcon;
+  /** false = luôn mở (không thu gọn), mặc định thu gọn được */
+  collapsible?: boolean;
   items: NavItem[];
 }
 
@@ -74,13 +78,17 @@ export interface NavGroup {
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Tổng quan',
+    icon: LayoutDashboard,
+    collapsible: false,
     items: [
       { href: '/dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard, permission: 'dashboard.view' },
       { href: '/thong-bao', label: 'Thông báo', icon: Bell },
+      { href: '/in-an', label: 'In ấn & báo cáo', icon: Printer, permission: 'print.render.export' },
     ],
   },
   {
     label: 'Quản lý công việc',
+    icon: FolderKanban,
     items: [
       { href: '/cong-viec', label: 'Tổng quan công việc', icon: ListTodo },
       { href: '/cong-viec/danh-sach', label: 'Danh sách công việc', icon: ListChecks },
@@ -94,6 +102,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Hồ sơ bệnh án',
+    icon: ClipboardList,
     items: [
       { href: '/ho-so-benh-an', label: 'Phiếu đề nghị sửa', icon: ClipboardList, permission: 'hsba.request.view' },
       { href: '/ho-so-benh-an/tao-moi', label: 'Tạo phiếu mới', icon: PenLine, permission: 'hsba.request.create' },
@@ -102,6 +111,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Báo cáo khoa',
+    icon: BarChart3,
     items: [
       { href: '/bao-cao/nhap-lieu', label: 'Nhập số liệu', icon: FileSpreadsheet, permission: 'report.entry.view' },
       { href: '/bao-cao', label: 'Xem báo cáo', icon: BarChart3, permission: 'report.view.view' },
@@ -112,6 +122,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Quản lý tài sản',
+    icon: Boxes,
     items: [
       { href: '/tai-san', label: 'Tổng quan tài sản', icon: Boxes, permission: 'asset.view' },
       { href: '/tai-san/danh-sach', label: 'Danh sách tài sản', icon: PackageSearch, permission: 'asset.view' },
@@ -127,6 +138,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Lịch khám bệnh',
+    icon: CalendarDays,
     items: [
       { href: '/lich-truc', label: 'Lịch bác sĩ khám', icon: CalendarDays, permission: 'duty.view' },
       { href: '/lich-truc/lich-hoc', label: 'Lịch học cán bộ nhân viên', icon: GraduationCap, permission: 'staff-learning.view' },
@@ -139,6 +151,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Chấm công',
+    icon: CalendarClock,
     items: [
       { href: '/cham-cong-truc', label: 'Chấm công trực và khác', icon: CalendarDays, permission: 'duty-attendance.view' },
       { href: '/cham-cong-truc/danh-muc', label: 'Khai báo - Quy ước', icon: Settings2, permission: 'duty-attendance.catalog.manage' },
@@ -146,6 +159,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Quản trị hệ thống',
+    icon: ShieldCheck,
     items: [
       {
         label: 'Danh mục',

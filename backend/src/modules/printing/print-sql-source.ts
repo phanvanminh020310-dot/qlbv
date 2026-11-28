@@ -25,6 +25,7 @@ import type { AccessContext, ClientMeta } from '../../common/types/access-contex
 import { DbService } from '../../db/db.service';
 import { AuditService } from '../audit/audit.service';
 import { sqlTokens, validateSql } from '../sql-console/sql-console.policy';
+import { buildSqlFromSpec, normalizeBuilderSpec, pgTypeToFieldType, type QueryBuilderSpec } from './print-query-builder';
 
 export const PRINT_SQL_PERMISSION = 'print.datasource.sql';
 export const PRINT_SQL_MAX_ROWS = 5000;
@@ -44,6 +45,8 @@ export interface PrintSqlQuery {
   key: string;
   label?: string;
   sql: string;
+  /** Truy vấn dựng bằng giao diện chọn bảng (không viết SQL) — máy chủ tự sinh `sql` từ đây */
+  builder?: QueryBuilderSpec;
 }
 export interface PrintSqlSource {
   queries: PrintSqlQuery[];
@@ -98,7 +101,13 @@ export function normalizeSqlSource(input: unknown): PrintSqlSource | null {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(key)) throw new BadRequestException(`Khoá truy vấn #${i + 1} chỉ gồm chữ không dấu, số, gạch dưới`);
     if (keys.has(key)) throw new BadRequestException(`Khoá truy vấn “${key}” bị trùng`);
     keys.add(key);
-    return { key, label: String(item['label'] ?? '').slice(0, 200), sql: assertSafePrintSql(String(item['sql'] ?? '')) };
+    const label = String(item['label'] ?? '').slice(0, 200);
+    if (item['builder'] !== undefined && item['builder'] !== null) {
+      // Không tin `sql` gửi kèm: luôn sinh lại từ cấu hình chọn bảng
+      const builder = normalizeBuilderSpec(item['builder']);
+      return { key, label, sql: assertSafePrintSql(buildSqlFromSpec(builder)), builder };
+    }
+    return { key, label, sql: assertSafePrintSql(String(item['sql'] ?? '')) };
   });
   const names = new Set<string>();
   const outParams: PrintSqlParam[] = paramsIn.map((p, i) => {
@@ -340,6 +349,49 @@ export class PrintSqlService {
     }
     out.rows = out.data.ds[source.queries[0]!.key] ?? [];
     this.log(user, opts, source, params, { ok: true, ms: Date.now() - started, rows: out.queries.map((q) => `${q.key}:${q.rowCount}`).join(', ') });
+    return out;
+  }
+
+  /**
+   * Lấy danh sách cột (tên + kiểu) của từng truy vấn mà KHÔNG đọc dữ liệu: chạy `limit 0`,
+   * tham số người in để trống (NULL). Dùng để hiện “Trường dữ liệu” trong trình thiết kế.
+   */
+  async describe(
+    user: AccessContext,
+    source: PrintSqlSource,
+  ): Promise<Array<{ key: string; label: string; columns: Array<{ name: string; type: string }>; error?: string }>> {
+    const bindings: Record<string, { value: unknown; cast: string }> = {
+      nguoi_dung_id: { value: user.id, cast: AUTO_PARAMS['nguoi_dung_id']!.cast },
+      khoa_id: { value: user.departmentId ?? null, cast: AUTO_PARAMS['khoa_id']!.cast },
+      pham_vi_khoa: { value: scopeDepartments(user), cast: AUTO_PARAMS['pham_vi_khoa']!.cast },
+    };
+    for (const p of source.params ?? []) bindings[p.name] = { value: null, cast: CASTS[p.type] };
+    const out: Array<{ key: string; label: string; columns: Array<{ name: string; type: string }>; error?: string }> = [];
+    await this.db.withClient(async (client: QueryClient) => {
+      await client.query('begin read only');
+      try {
+        await client.query(`set local statement_timeout = '${PRINT_SQL_TIMEOUT_MS}ms'`);
+        await client.query(`set local lock_timeout = '3000ms'`);
+        for (const q of source.queries) {
+          await client.query('savepoint qlbs_describe');
+          try {
+            const bound = bindNamedParams(assertSafePrintSql(q.sql), bindings);
+            const res = (await client.query(`select * from (${bound.text}) as "__qlbs_print_sql" limit 0`, bound.values)) as {
+              fields?: Array<{ name: string; dataTypeID?: number }>;
+            };
+            out.push({ key: q.key, label: q.label ?? '', columns: (res.fields ?? []).map((f) => ({ name: f.name, type: pgTypeToFieldType(f.dataTypeID) })) });
+            await client.query('release savepoint qlbs_describe');
+          } catch (err) {
+            await client.query('rollback to savepoint qlbs_describe').catch(() => undefined);
+            out.push({ key: q.key, label: q.label ?? '', columns: [], error: (err as Error).message });
+          }
+        }
+        await client.query('commit');
+      } catch (err) {
+        await client.query('rollback').catch(() => undefined);
+        throw err;
+      }
+    });
     return out;
   }
 
