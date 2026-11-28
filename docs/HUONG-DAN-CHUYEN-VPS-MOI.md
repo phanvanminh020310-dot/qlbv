@@ -160,6 +160,7 @@ Thường sau 1–5 phút, các máy sẽ tự vào VPS mới. Người dùng, k
   ```bash
   sudo rm -f /etc/cron.d/qlbs-letsencrypt-renew
   ```
+- Truy cập từ xa: cài Tailscale cho VPS mới theo [HUONG-DAN-TAILSCALE.md](HUONG-DAN-TAILSCALE.md) (dùng lại Gmail cũ; trên VPS cũ chạy `sudo tailscale logout` và Remove máy cũ trên Admin console).
 
 ---
 
